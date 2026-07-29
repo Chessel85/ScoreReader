@@ -1,0 +1,1 @@
+print("QuickScore environment is working!")
