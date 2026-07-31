@@ -1,3 +1,7 @@
 .venv/ 
 __pycache__/ 
 .vscode/ 
+files/ 
+output.txt
+Product Definition Document.html
+
