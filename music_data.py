@@ -1,60 +1,270 @@
 # music_data.py
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Dict, List, Optional, Tuple
+import xml.etree.ElementTree as ET
 import music21
 
 
 @dataclass
+class NoteData:
+    step_name: str          # e.g., "F sharp" or "E" (no octave)
+    octave: int             # e.g., 4
+    midi_pitch: int         # e.g., 66
+    measure: int            # 0 for pickup, 1+ for full measures
+    beat_position: float    # 1-based decimal position (e.g. 4.0, 4.5)
+    ts_duration: float      # Relative to TS denominator (1.0 = beat unit)
+    quarter_length: float   # Quarter length for playback timing
+    part_name: str          # Part name
+    staff: int              # Staff number
+    voice: int              # Voice number
+    fret: Optional[int] = None
+    string: Optional[int] = None
+
+
+@dataclass
+class EventSlice:
+    measure: int
+    beat_position: float
+    quarter_length: float
+    notes: List[NoteData] = field(default_factory=list)
+
+
+@dataclass
+class PartStructureInfo:
+    name: str = "Classical Guitar"
+    gmidi_program: int = 25  # 1-indexed General MIDI program (25 = Nylon Guitar)
+    staves_clefs: Dict[int, str] = field(default_factory=dict)
+    staves_voices: Dict[int, List[int]] = field(default_factory=dict)
+
+
+@dataclass
 class MusicData:
-    # Region 1: Dynamic dictionary of all credit-type entries
     credits: Dict[str, str] = field(default_factory=dict)
+    parts_info: List[PartStructureInfo] = field(default_factory=list)
+    file_path: str = ""
+    score: Optional[music21.stream.Score] = None
+    tempo_bpm: int = 120
 
-    # Region 2 structural data: {part_name: {staff_id: [voice_ids]}}
-    structure: Dict[str, Dict[int, List[int]]] = field(default_factory=dict)
-
-    # Internal music21 score reference
-    score: music21.stream.Score | None = None
-
-    # Timeline event state tracking
-    timeline_notes: List[music21.note.Note] = field(default_factory=list)
-    active_note_index: int = 0
+    timeline_slices: List[EventSlice] = field(default_factory=list)
+    active_event_index: int = 0
 
     def __post_init__(self):
-        self._build_timeline()
+        if self.file_path:
+            self._build_timeline_from_xml()
 
-    def _build_timeline(self):
-        """Flattens all note elements in the score into a sequential timeline list."""
-        if self.score is None:
-            self.timeline_notes = []
+    def _build_timeline_from_xml(self):
+        """ DOM parser handling pickup bars, TS-relative durations, and chord attributes."""
+        try:
+            tree = ET.parse(self.file_path)
+            root = tree.getroot()
+        except Exception as e:
+            print(f"[ERROR] Failed to parse XML for timeline: {e}")
             return
 
-        notes = []
-        for element in self.score.recurse().notes:
-            if element.isChord:
-                notes.append(element.notes[0])
-            elif element.isNote:
-                notes.append(element)
+        default_part_name = self.parts_info[0].name if self.parts_info else "Classical Guitar"
 
-        self.timeline_notes = notes
-        self.active_note_index = 0
+        # 1. Read Time Signature
+        time_sig_num = 4
+        time_sig_den = 4
+        ts_elem = root.find(".//attributes/time")
+        if ts_elem is not None:
+            b = ts_elem.find("beats")
+            bt = ts_elem.find("beat-type")
+            if b is not None and b.text:
+                time_sig_num = int(b.text.strip())
+            if bt is not None and bt.text:
+                time_sig_den = int(bt.text.strip())
 
-    def get_current_note(self) -> music21.note.Note | None:
-        """Returns the note element at the current active timeline index."""
-        if 0 <= self.active_note_index < len(self.timeline_notes):
-            return self.timeline_notes[self.active_note_index]
+        divisions = 1
+        div_elem = root.find(".//attributes/divisions")
+        if div_elem is not None and div_elem.text:
+            divisions = int(div_elem.text.strip())
+
+        beat_unit_quarter_len = 4.0 / time_sig_den
+        full_bar_quarters = time_sig_num * beat_unit_quarter_len
+
+        # 2. Inspect first measure for pickup bar detection
+        first_measure = root.find(".//part/measure")
+        is_pickup = False
+        pickup_filled_quarters = 0.0
+
+        if first_measure is not None:
+            # Explicit attribute check
+            if first_measure.attrib.get("implicit") == "yes":
+                is_pickup = True
+
+            # Calculate actual note duration in Voice 1 / Staff 1 of Measure 1
+            m1_divs = 0
+            curr_offset = 0
+            max_offset = 0
+
+            for elem in first_measure:
+                if elem.tag == "backup":
+                    dur = elem.find("duration")
+                    if dur is not None and dur.text:
+                        curr_offset -= int(dur.text.strip())
+                elif elem.tag == "forward":
+                    dur = elem.find("duration")
+                    if dur is not None and dur.text:
+                        curr_offset += int(dur.text.strip())
+                elif elem.tag == "note":
+                    # Only track primary voice/staff progression to get bar duration
+                    staff = elem.find("staff")
+                    staff_id = int(staff.text.strip()) if staff is not None and staff.text else 1
+                    
+                    dur_el = elem.find("duration")
+                    dur_divs = int(dur_el.text.strip()) if (dur_el is not None and dur_el.text) else 0
+                    
+                    is_chord = elem.find("chord") is not None
+                    if not is_chord:
+                        curr_offset += dur_divs
+                        if staff_id == 1:
+                            max_offset = max(max_offset, curr_offset)
+
+            pickup_filled_quarters = max_offset / divisions
+
+            # If measure 1 has positive duration less than a full bar, it is a pickup bar
+            if 0 < pickup_filled_quarters < full_bar_quarters:
+                is_pickup = True
+
+        buckets: Dict[Tuple[int, float], List[NoteData]] = {}
+
+        # 3. Parse all measures across parts
+        for part in root.findall("part"):
+            for m in part.findall("measure"):
+                m_attr_num = m.attrib.get("number", "1")
+                try:
+                    raw_m_num = int(m_attr_num)
+                except ValueError:
+                    raw_m_num = 1
+
+                # Re-index measure numbers if pickup bar is present
+                if is_pickup:
+                    m_num = raw_m_num - 1  # Measure 1 becomes 0, Measure 2 becomes 1, etc.
+                else:
+                    m_num = raw_m_num
+
+                current_offset_divs = 0
+
+                for elem in m:
+                    if elem.tag == "forward":
+                        dur = elem.find("duration")
+                        if dur is not None and dur.text:
+                            current_offset_divs += int(dur.text.strip())
+                    elif elem.tag == "backup":
+                        dur = elem.find("duration")
+                        if dur is not None and dur.text:
+                            current_offset_divs -= int(dur.text.strip())
+                    elif elem.tag == "note":
+                        is_rest = elem.find("rest") is not None
+                        is_chord = elem.find("chord") is not None
+                        dur_el = elem.find("duration")
+                        dur_divs = int(dur_el.text.strip()) if (dur_el is not None and dur_el.text) else 0
+
+                        if is_chord:
+                            note_offset_divs = current_offset_divs - dur_divs
+                        else:
+                            note_offset_divs = current_offset_divs
+                            current_offset_divs += dur_divs
+
+                        if is_rest:
+                            continue
+
+                        pitch_el = elem.find("pitch")
+                        if pitch_el is None:
+                            continue
+
+                        step = pitch_el.find("step").text.strip() if pitch_el.find("step") is not None else "C"
+                        octave = int(pitch_el.find("octave").text.strip()) if pitch_el.find("octave") is not None else 4
+                        alter_el = pitch_el.find("alter")
+                        alter = int(alter_el.text.strip()) if (alter_el is not None and alter_el.text) else 0
+
+                        acc_words = {1: " sharp", -1: " flat", 2: " double sharp", -2: " double flat", 0: ""}
+                        step_name = f"{step}{acc_words.get(alter, '')}"
+
+                        step_offsets = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
+                        midi_pitch = (octave + 1) * 12 + step_offsets.get(step, 0) + alter
+
+                        staff = int(elem.find("staff").text.strip()) if elem.find("staff") is not None else 1
+                        voice = int(elem.find("voice").text.strip()) if elem.find("voice") is not None else 1
+
+                        fret = None
+                        string_num = None
+                        tech_el = elem.find("notations/technical")
+                        if tech_el is not None:
+                            f_el = tech_el.find("fret")
+                            s_el = tech_el.find("string")
+                            if f_el is not None and f_el.text:
+                                fret = int(f_el.text.strip())
+                            if s_el is not None and s_el.text:
+                                string_num = int(s_el.text.strip())
+
+                        offset_q = note_offset_divs / divisions
+                        quarter_len = dur_divs / divisions
+                        ts_duration = round(quarter_len / beat_unit_quarter_len, 2)
+
+                        # Compute beat position based on measure type
+                        if m_num == 0:
+                            # Start beat position so that the pickup ends at the end of the measure
+                            start_beat = 1.0 + ((full_bar_quarters - pickup_filled_quarters) / beat_unit_quarter_len)
+                            beat_pos = start_beat + (offset_q / beat_unit_quarter_len)
+                        else:
+                            beat_pos = 1.0 + (offset_q / beat_unit_quarter_len)
+
+                        note_obj = NoteData(
+                            step_name=step_name,
+                            octave=octave,
+                            midi_pitch=midi_pitch,
+                            measure=m_num,
+                            beat_position=round(beat_pos, 2),
+                            ts_duration=ts_duration,
+                            quarter_length=quarter_len,
+                            part_name=default_part_name,
+                            staff=staff,
+                            voice=voice,
+                            fret=fret,
+                            string=string_num,
+                        )
+
+                        key = (m_num, round(offset_q, 4))
+                        if key not in buckets:
+                            buckets[key] = []
+                        buckets[key].append(note_obj)
+
+        sorted_keys = sorted(buckets.keys(), key=lambda k: (k[0], k[1]))
+
+        slices = []
+        for m_num, offset_q in sorted_keys:
+            notes = buckets[(m_num, offset_q)]
+            q_len = min(n.quarter_length for n in notes) if notes else 1.0
+            beat_pos = notes[0].beat_position if notes else 1.0
+
+            slices.append(
+                EventSlice(
+                    measure=m_num,
+                    beat_position=beat_pos,
+                    quarter_length=q_len,
+                    notes=notes,
+                )
+            )
+
+        self.timeline_slices = slices
+        self.active_event_index = 0
+
+    def get_current_slice(self) -> Optional[EventSlice]:
+        if 0 <= self.active_event_index < len(self.timeline_slices):
+            return self.timeline_slices[self.active_event_index]
         return None
 
     def move_timeline_left(self) -> bool:
-        """Move one event backward along the timeline. Returns True if position changed."""
-        if self.active_note_index > 0:
-            self.active_note_index -= 1
+        if self.active_event_index > 0:
+            self.active_event_index -= 1
             return True
         return False
 
     def move_timeline_right(self) -> bool:
-        """Move one event forward along the timeline. Returns True if position changed."""
-        if self.active_note_index < len(self.timeline_notes) - 1:
-            self.active_note_index += 1
+        if self.active_event_index < len(self.timeline_slices) - 1:
+            self.active_event_index += 1
             return True
         return False
 
@@ -63,70 +273,74 @@ class MusicData:
 
     def get_region_2_data(self) -> Dict[str, str]:
         region_2_dict = {}
-        for part_name, staves in self.structure.items():
-            if staves:
-                staff_labels = [f"Staff {s}" for s in sorted(staves.keys())]
-                region_2_dict[part_name] = ", ".join(staff_labels)
-            else:
-                region_2_dict[part_name] = "Staff 1"
 
-            for staff_id in sorted(staves.keys()):
-                voices = staves[staff_id]
-                voice_label = (
-                    f"Voices {', '.join(map(str, voices))}"
-                    if len(voices) > 1
-                    else f"Voice {voices[0]}" if voices else "Voice 1"
-                )
-                region_2_dict[f"  └─ Staff {staff_id}"] = voice_label
+        for p_idx, p_info in enumerate(self.parts_info, start=1):
+            region_2_dict[f"Part {p_idx}"] = f"{p_info.name} (GM Prog {p_info.gmidi_program})"
+
+            for s_id in sorted(p_info.staves_voices.keys()):
+                clef_desc = p_info.staves_clefs.get(s_id, "Standard Clef")
+                voices = p_info.staves_voices[s_id]
+
+                region_2_dict[f"Staff {s_id}"] = clef_desc
+                for v in voices:
+                    region_2_dict[f"  Voice {v}"] = "on"
 
         return region_2_dict
 
-    def _format_note_name_for_speech(self, note: music21.note.Note) -> str:
-        """Formats pitch name with explicit words ('sharp', 'flat') for screen reader clarity."""
-        step = note.pitch.step
-        accidental = note.pitch.accidental
-
-        if accidental is None or accidental.name == "natural":
-            return step
-
-        accidental_name = accidental.name.lower()
-        if accidental_name == "sharp":
-            return f"{step} sharp"
-        elif accidental_name == "flat":
-            return f"{step} flat"
-        else:
-            return f"{step} {accidental_name}"
-
     def get_region_3_data(self) -> List[str]:
-        """Returns a single clean note name string for Region 3."""
-        note = self.get_current_note()
-        if note is None:
-            return ["No events"]
+        current = self.get_current_slice()
+        if not current or not current.notes:
+            return ["None"]
 
-        return [self._format_note_name_for_speech(note)]
+        return [n.step_name for n in current.notes]
 
     def get_region_4_data(self) -> Dict[str, str]:
-        """Returns detailed metadata properties for the active timeline note."""
-        note = self.get_current_note()
-        if note is None:
+        current = self.get_current_slice()
+        if not current or not current.notes:
             return {"Status": "No note selected"}
 
-        pitch = note.pitch
+        data = {}
+        is_chord = len(current.notes) > 1
 
-        # 1-based measure calculation
-        measure_num = note.measureNumber
-        if measure_num is None:
-            measure_num = 1
+        for idx, n in enumerate(current.notes, start=1):
+            prefix = f"note {idx} " if is_chord else ""
 
-        # 1-based position offset calculation
-        one_based_position = note.offset + 1.0
+            dur_str = str(int(n.ts_duration)) if n.ts_duration.is_integer() else str(n.ts_duration)
 
-        return {
-            "Step": pitch.step,
-            "Octave": str(pitch.octave),
-            "MIDI Pitch": str(pitch.midi),
-            "Measure": str(measure_num),
-            "Position (Beats)": str(one_based_position),
-            "Duration (Quarter)": str(note.duration.quarterLength),
-            "Type": note.duration.type.capitalize(),
-        }
+            data[f"{prefix}step"] = n.step_name
+            data[f"{prefix}octave"] = str(n.octave)
+            data[f"{prefix}midi"] = str(n.midi_pitch)
+            data[f"{prefix}measure"] = str(n.measure)
+            data[f"{prefix}beat position"] = str(n.beat_position)
+            data[f"{prefix}duration"] = dur_str
+            data[f"{prefix}part"] = n.part_name
+            data[f"{prefix}stave"] = str(n.staff)
+            data[f"{prefix}voice"] = str(n.voice)
+
+            if n.string is not None:
+                data[f"{prefix}string"] = str(n.string)
+            if n.fret is not None:
+                data[f"{prefix}fret"] = str(n.fret)
+
+        return data
+
+    def get_current_gmidi_program(self) -> int:
+        if self.parts_info:
+            return self.parts_info[0].gmidi_program
+        return 25
+
+    def get_current_midi_notes(self) -> List[int]:
+        current = self.get_current_slice()
+        if not current:
+            return []
+        return [n.midi_pitch for n in current.notes]
+
+    def get_current_program_and_midi_notes(self) -> Tuple[int, List[int]]:
+        return self.get_current_gmidi_program(), self.get_current_midi_notes()
+
+    def get_current_duration_ms(self) -> int:
+        current = self.get_current_slice()
+        if not current:
+            return 500
+        ms = (current.quarter_length * 60000.0) / float(self.tempo_bpm)
+        return max(100, int(ms))

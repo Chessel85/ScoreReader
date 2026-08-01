@@ -1,4 +1,5 @@
 # main_window.py
+import traceback
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
@@ -15,10 +16,11 @@ from PySide6.QtWidgets import (
 
 from music_data import MusicData
 from musicXML_reader import MusicXMLReader
+from synth_engine import SynthEngine
 
 
 class RegionTableWidget(QTableWidget):
-    """Custom QTableWidget that forwards Tab/Shift+Tab to top-level window focus loop."""
+    """Custom QTableWidget forwarding Tab/Shift+Tab to top-level focus loop."""
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Tab:
@@ -58,6 +60,7 @@ class MainWindow(QMainWindow):
         self.resize(800, 600)
 
         self._music_data: MusicData | None = None
+        self.synth = SynthEngine()
 
         self.setup_ui()
         self.setup_menu()
@@ -140,9 +143,13 @@ class MainWindow(QMainWindow):
             self.load_score_from_file(file_path)
 
     def load_score_from_file(self, file_path: str):
-        reader = MusicXMLReader(file_path)
-        self._music_data = reader.load()
-        self._update_ui_regions()
+        try:
+            reader = MusicXMLReader(file_path)
+            self._music_data = reader.load()
+            self._update_ui_regions()
+        except Exception as e:
+            print(f"[ERROR] Failed to load score file: {e}")
+            traceback.print_exc()
 
     def navigate_timeline_left(self):
         """Handler for Left Arrow key in Region 3."""
@@ -155,7 +162,7 @@ class MainWindow(QMainWindow):
             self._update_timeline_views()
 
     def _update_timeline_views(self):
-        """Updates Region 3 and Region 4 on timeline position change."""
+        """Updates Region 3, Region 4, and triggers audio playback with program change."""
         if not self._music_data:
             return
 
@@ -168,6 +175,20 @@ class MainWindow(QMainWindow):
 
         # Update Region 4 (Table)
         self._populate_table(self.region_4, self._music_data.get_region_4_data())
+
+        # Trigger MIDI sound playback with General MIDI Program Change
+        gmidi_prog, midi_notes = self._music_data.get_current_program_and_midi_notes()
+        duration_ms = self._music_data.get_current_duration_ms()
+
+        # Convert 1-indexed GM program to 0-indexed byte value (25 -> 24)
+        zero_based_program = max(0, gmidi_prog - 1)
+
+        self.synth.play_notes(
+            midi_notes=midi_notes,
+            duration_ms=duration_ms,
+            channel=0,
+            program=zero_based_program,
+        )
 
     def _populate_table(self, table: QTableWidget, data_dict: dict):
         items = list(data_dict.items())
@@ -182,11 +203,16 @@ class MainWindow(QMainWindow):
         if not self._music_data:
             return
 
-        # Region 1: Score Metadata & Credits
+        # Region 1: Metadata & Tempo
         self._populate_table(self.region_1, self._music_data.get_region_1_data())
 
         # Region 2: Score Hierarchy
         self._populate_table(self.region_2, self._music_data.get_region_2_data())
 
-        # Regions 3 & 4: Timeline & Detail View
+        # Regions 3 & 4: Timeline View & Audio Pulse
         self._update_timeline_views()
+
+    def closeEvent(self, event):
+        """Cleanly releases MIDI resources when closing the window."""
+        self.synth.close()
+        super().closeEvent(event)
