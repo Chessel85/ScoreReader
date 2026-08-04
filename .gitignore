@@ -1,7 +1,9 @@
-.venv/ 
-__pycache__/ 
-.vscode/ 
-files/ 
+.venv/
+__pycache__/
+.vscode/
+bin/
+files/
+soundfonts/
 output.txt
 Product Definition Document.html
 *.png

@@ -1,9 +1,11 @@
-# musicXML_reader.py
+# parsers/musicXML_reader.py
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Tuple
-import music21
-from music_data import MusicData, PartStructureInfo
 
+import music21
+
+from models.music_data import MusicData
+from models.parts_structure import PartStructureInfo
 
 class MusicXMLReader:
     """Parses MusicXML metadata via ElementTree and streams via music21 into MusicData."""

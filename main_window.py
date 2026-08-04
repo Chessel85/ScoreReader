@@ -1,12 +1,12 @@
 # main_window.py
 import traceback
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QFileDialog,
     QGridLayout,
     QHeaderView,
-    QListWidget,
     QListWidgetItem,
     QMainWindow,
     QTableWidget,
@@ -14,42 +14,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from music_data import MusicData
-from musicXML_reader import MusicXMLReader
-from synth_engine import SynthEngine
-
-
-class RegionTableWidget(QTableWidget):
-    """Custom QTableWidget forwarding Tab/Shift+Tab to top-level focus loop."""
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_Tab:
-            self.window().focusNextChild()
-        elif event.key() == Qt.Key.Key_Backtab:
-            self.window().focusPreviousChild()
-        else:
-            super().keyPressEvent(event)
-
-
-class TimelineListWidget(QListWidget):
-    """Single-column QListWidget for Region 3 supporting Left/Right timeline traversal."""
-
-    def keyPressEvent(self, event):
-        key = event.key()
-        main_win = self.window()
-
-        if key == Qt.Key.Key_Left:
-            if hasattr(main_win, "navigate_timeline_left"):
-                main_win.navigate_timeline_left()
-        elif key == Qt.Key.Key_Right:
-            if hasattr(main_win, "navigate_timeline_right"):
-                main_win.navigate_timeline_right()
-        elif key == Qt.Key.Key_Tab:
-            main_win.focusNextChild()
-        elif key == Qt.Key.Key_Backtab:
-            main_win.focusPreviousChild()
-        else:
-            super().keyPressEvent(event)
+from audio.synth_engine import SynthEngine
+from models.music_data import MusicData
+from parsers.musicXML_reader import MusicXMLReader
+from widgets.region_table_widget import RegionTableWidget
+from widgets.timeline_list_widget import TimelineListWidget
 
 
 class MainWindow(QMainWindow):
@@ -71,27 +40,39 @@ class MainWindow(QMainWindow):
 
         grid_layout = QGridLayout(central_widget)
 
+        # Region 1: Property List
         self.region_1 = self.create_property_list([])
-        self.region_2 = self.create_property_list([])
 
+        # Region 2: Custom RegionTableWidget for Parts/Staves/Voices hierarchy
+        self.region_2 = RegionTableWidget()
+        self.region_2.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.region_2.verticalHeader().setVisible(False)
+        self.region_2.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.region_2.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self.region_2.filter_changed.connect(self._on_region_2_filter_changed)
+
+        # Region 3: Timeline List
         self.region_3 = TimelineListWidget()
+        self.region_3.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.region_3.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self.region_3.itemSelectionChanged.connect(self._on_region_3_selection_changed)
 
+        self.select_all_shortcut = QShortcut(QKeySequence("Ctrl+A"), self.region_3)
+        self.select_all_shortcut.activated.connect(self.select_all_region_3)
+
+        # Region 4: Property List
         self.region_4 = self.create_property_list([])
 
-        # Grid positioning
         grid_layout.addWidget(self.region_1, 0, 0)
         grid_layout.addWidget(self.region_2, 0, 1)
         grid_layout.addWidget(self.region_3, 1, 0)
         grid_layout.addWidget(self.region_4, 1, 1)
 
-        # 1:1 proportional stretching
         grid_layout.setRowStretch(0, 1)
         grid_layout.setRowStretch(1, 1)
         grid_layout.setColumnStretch(0, 1)
         grid_layout.setColumnStretch(1, 1)
 
-        # Tab navigation order
         QWidget.setTabOrder(self.region_1, self.region_2)
         QWidget.setTabOrder(self.region_2, self.region_3)
         QWidget.setTabOrder(self.region_3, self.region_4)
@@ -116,7 +97,7 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(exit_action)
 
-    def create_property_list(self, items: list) -> QTableWidget:
+    def create_property_list(self, items: list) -> RegionTableWidget:
         table = RegionTableWidget(len(items), 2)
         table.setHorizontalHeaderLabels(["Property", "Value"])
 
@@ -152,35 +133,45 @@ class MainWindow(QMainWindow):
             traceback.print_exc()
 
     def navigate_timeline_left(self):
-        """Handler for Left Arrow key in Region 3."""
         if self._music_data and self._music_data.move_timeline_left():
-            self._update_timeline_views()
+            self._update_timeline_views(play_all=True)
 
     def navigate_timeline_right(self):
-        """Handler for Right Arrow key in Region 3."""
         if self._music_data and self._music_data.move_timeline_right():
-            self._update_timeline_views()
+            self._update_timeline_views(play_all=True)
 
-    def _update_timeline_views(self):
-        """Updates Region 3, Region 4, and triggers audio playback with program change."""
+    def select_all_region_3(self):
+        self.region_3.selectAll()
+        self._play_selected_region_3_notes()
+
+    def on_region_3_vertical_move(self):
+        self._play_selected_region_3_notes()
+
+    def _on_region_2_filter_changed(self, active_voice_tuples: set):
+        if self._music_data and hasattr(self._music_data, "set_active_voice_filter"):
+            self._music_data.set_active_voice_filter(active_voice_tuples)
+            self._update_timeline_views(play_all=False)
+
+    def _on_region_3_selection_changed(self):
         if not self._music_data:
             return
 
-        # Update Region 3 (List)
-        self.region_3.clear()
-        for item in self._music_data.get_region_3_data():
-            self.region_3.addItem(QListWidgetItem(item))
-        if self.region_3.count() > 0:
-            self.region_3.setCurrentRow(0)
+        selected_indices = [item.row() for item in self.region_3.selectedIndexes()]
+        region_4_data = self._music_data.get_region_4_data_for_indices(selected_indices)
+        self._populate_table(self.region_4, region_4_data)
 
-        # Update Region 4 (Table)
-        self._populate_table(self.region_4, self._music_data.get_region_4_data())
+    def _play_selected_region_3_notes(self):
+        if not self._music_data:
+            return
 
-        # Trigger MIDI sound playback with General MIDI Program Change
-        gmidi_prog, midi_notes = self._music_data.get_current_program_and_midi_notes()
+        selected_indices = [item.row() for item in self.region_3.selectedIndexes()]
+        midi_notes = self._music_data.get_midi_notes_for_indices(selected_indices)
+
+        if not midi_notes:
+            return
+
+        gmidi_prog = self._music_data.get_current_gmidi_program()
         duration_ms = self._music_data.get_current_duration_ms()
-
-        # Convert 1-indexed GM program to 0-indexed byte value (25 -> 24)
         zero_based_program = max(0, gmidi_prog - 1)
 
         self.synth.play_notes(
@@ -189,6 +180,24 @@ class MainWindow(QMainWindow):
             channel=0,
             program=zero_based_program,
         )
+
+    def _update_timeline_views(self, play_all: bool = True):
+        if not self._music_data:
+            return
+
+        self.region_3.blockSignals(True)
+        self.region_3.clear()
+
+        for item in self._music_data.get_region_3_data():
+            self.region_3.addItem(QListWidgetItem(item))
+
+        self.region_3.selectAll()
+        self.region_3.blockSignals(False)
+
+        self._on_region_3_selection_changed()
+
+        if play_all:
+            self._play_selected_region_3_notes()
 
     def _populate_table(self, table: QTableWidget, data_dict: dict):
         items = list(data_dict.items())
@@ -203,16 +212,16 @@ class MainWindow(QMainWindow):
         if not self._music_data:
             return
 
-        # Region 1: Metadata & Tempo
         self._populate_table(self.region_1, self._music_data.get_region_1_data())
 
-        # Region 2: Score Hierarchy
-        self._populate_table(self.region_2, self._music_data.get_region_2_data())
+        if hasattr(self._music_data, "get_score_structure"):
+            parts_data = self._music_data.get_score_structure()
+            self.region_2.load_score_structure(parts_data)
+        else:
+            self._populate_table(self.region_2, self._music_data.get_region_2_data())
 
-        # Regions 3 & 4: Timeline View & Audio Pulse
-        self._update_timeline_views()
+        self._update_timeline_views(play_all=True)
 
     def closeEvent(self, event):
-        """Cleanly releases MIDI resources when closing the window."""
         self.synth.close()
         super().closeEvent(event)

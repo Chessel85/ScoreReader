@@ -1,48 +1,19 @@
-# music_data.py
+# models/music_data.py
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
-import music21
 
-
-@dataclass
-class NoteData:
-    step_name: str          # e.g., "F sharp" or "E" (no octave)
-    octave: int             # e.g., 4
-    midi_pitch: int         # e.g., 66
-    measure: int            # 0 for pickup, 1+ for full measures
-    beat_position: float    # 1-based decimal position (e.g. 4.0, 4.5)
-    ts_duration: float      # Relative to TS denominator (1.0 = beat unit)
-    quarter_length: float   # Quarter length for playback timing
-    part_name: str          # Part name
-    staff: int              # Staff number
-    voice: int              # Voice number
-    fret: Optional[int] = None
-    string: Optional[int] = None
-
-
-@dataclass
-class EventSlice:
-    measure: int
-    beat_position: float
-    quarter_length: float
-    notes: List[NoteData] = field(default_factory=list)
-
-
-@dataclass
-class PartStructureInfo:
-    name: str = "Classical Guitar"
-    gmidi_program: int = 25  # 1-indexed General MIDI program (25 = Nylon Guitar)
-    staves_clefs: Dict[int, str] = field(default_factory=dict)
-    staves_voices: Dict[int, List[int]] = field(default_factory=dict)
+from models.event_slice import EventSlice
+from models.note_data import NoteData
+from models.parts_structure import PartStructureInfo
 
 
 @dataclass
 class MusicData:
+    score: Optional[Any] = None
     credits: Dict[str, str] = field(default_factory=dict)
     parts_info: List[PartStructureInfo] = field(default_factory=list)
     file_path: str = ""
-    score: Optional[music21.stream.Score] = None
     tempo_bpm: int = 120
 
     timeline_slices: List[EventSlice] = field(default_factory=list)
@@ -53,7 +24,6 @@ class MusicData:
             self._build_timeline_from_xml()
 
     def _build_timeline_from_xml(self):
-        """ DOM parser handling pickup bars, TS-relative durations, and chord attributes."""
         try:
             tree = ET.parse(self.file_path)
             root = tree.getroot()
@@ -63,7 +33,6 @@ class MusicData:
 
         default_part_name = self.parts_info[0].name if self.parts_info else "Classical Guitar"
 
-        # 1. Read Time Signature
         time_sig_num = 4
         time_sig_den = 4
         ts_elem = root.find(".//attributes/time")
@@ -83,18 +52,14 @@ class MusicData:
         beat_unit_quarter_len = 4.0 / time_sig_den
         full_bar_quarters = time_sig_num * beat_unit_quarter_len
 
-        # 2. Inspect first measure for pickup bar detection
         first_measure = root.find(".//part/measure")
         is_pickup = False
         pickup_filled_quarters = 0.0
 
         if first_measure is not None:
-            # Explicit attribute check
             if first_measure.attrib.get("implicit") == "yes":
                 is_pickup = True
 
-            # Calculate actual note duration in Voice 1 / Staff 1 of Measure 1
-            m1_divs = 0
             curr_offset = 0
             max_offset = 0
 
@@ -108,7 +73,6 @@ class MusicData:
                     if dur is not None and dur.text:
                         curr_offset += int(dur.text.strip())
                 elif elem.tag == "note":
-                    # Only track primary voice/staff progression to get bar duration
                     staff = elem.find("staff")
                     staff_id = int(staff.text.strip()) if staff is not None and staff.text else 1
                     
@@ -123,13 +87,11 @@ class MusicData:
 
             pickup_filled_quarters = max_offset / divisions
 
-            # If measure 1 has positive duration less than a full bar, it is a pickup bar
             if 0 < pickup_filled_quarters < full_bar_quarters:
                 is_pickup = True
 
         buckets: Dict[Tuple[int, float], List[NoteData]] = {}
 
-        # 3. Parse all measures across parts
         for part in root.findall("part"):
             for m in part.findall("measure"):
                 m_attr_num = m.attrib.get("number", "1")
@@ -138,12 +100,7 @@ class MusicData:
                 except ValueError:
                     raw_m_num = 1
 
-                # Re-index measure numbers if pickup bar is present
-                if is_pickup:
-                    m_num = raw_m_num - 1  # Measure 1 becomes 0, Measure 2 becomes 1, etc.
-                else:
-                    m_num = raw_m_num
-
+                m_num = raw_m_num - 1 if is_pickup else raw_m_num
                 current_offset_divs = 0
 
                 for elem in m:
@@ -203,9 +160,7 @@ class MusicData:
                         quarter_len = dur_divs / divisions
                         ts_duration = round(quarter_len / beat_unit_quarter_len, 2)
 
-                        # Compute beat position based on measure type
                         if m_num == 0:
-                            # Start beat position so that the pickup ends at the end of the measure
                             start_beat = 1.0 + ((full_bar_quarters - pickup_filled_quarters) / beat_unit_quarter_len)
                             beat_pos = start_beat + (offset_q / beat_unit_quarter_len)
                         else:
@@ -273,38 +228,38 @@ class MusicData:
 
     def get_region_2_data(self) -> Dict[str, str]:
         region_2_dict = {}
-
         for p_idx, p_info in enumerate(self.parts_info, start=1):
             region_2_dict[f"Part {p_idx}"] = f"{p_info.name} (GM Prog {p_info.gmidi_program})"
-
             for s_id in sorted(p_info.staves_voices.keys()):
                 clef_desc = p_info.staves_clefs.get(s_id, "Standard Clef")
                 voices = p_info.staves_voices[s_id]
-
                 region_2_dict[f"Staff {s_id}"] = clef_desc
                 for v in voices:
                     region_2_dict[f"  Voice {v}"] = "on"
-
         return region_2_dict
 
     def get_region_3_data(self) -> List[str]:
         current = self.get_current_slice()
         if not current or not current.notes:
             return ["None"]
-
         return [n.step_name for n in current.notes]
 
-    def get_region_4_data(self) -> Dict[str, str]:
+    def get_region_4_data_for_indices(self, selected_indices: List[int]) -> Dict[str, str]:
         current = self.get_current_slice()
-        if not current or not current.notes:
+        if not current or not current.notes or not selected_indices:
+            return {"Status": "No note selected"}
+
+        selected_notes = [
+            current.notes[i] for i in selected_indices if 0 <= i < len(current.notes)
+        ]
+        if not selected_notes:
             return {"Status": "No note selected"}
 
         data = {}
-        is_chord = len(current.notes) > 1
+        is_chord = len(selected_notes) > 1
 
-        for idx, n in enumerate(current.notes, start=1):
+        for idx, n in enumerate(selected_notes, start=1):
             prefix = f"note {idx} " if is_chord else ""
-
             dur_str = str(int(n.ts_duration)) if n.ts_duration.is_integer() else str(n.ts_duration)
 
             data[f"{prefix}step"] = n.step_name
@@ -324,19 +279,20 @@ class MusicData:
 
         return data
 
+    def get_midi_notes_for_indices(self, selected_indices: List[int]) -> List[int]:
+        current = self.get_current_slice()
+        if not current or not selected_indices:
+            return []
+        return [
+            current.notes[i].midi_pitch 
+            for i in selected_indices 
+            if 0 <= i < len(current.notes)
+        ]
+
     def get_current_gmidi_program(self) -> int:
         if self.parts_info:
             return self.parts_info[0].gmidi_program
         return 25
-
-    def get_current_midi_notes(self) -> List[int]:
-        current = self.get_current_slice()
-        if not current:
-            return []
-        return [n.midi_pitch for n in current.notes]
-
-    def get_current_program_and_midi_notes(self) -> Tuple[int, List[int]]:
-        return self.get_current_gmidi_program(), self.get_current_midi_notes()
 
     def get_current_duration_ms(self) -> int:
         current = self.get_current_slice()
