@@ -1,0 +1,373 @@
+###
+RECALL SCORE - DEVELOPMENT TASK CATALOGUE
+Derived from "Product Definition Document.md"   |   Created 2026-08-04
+###
+
+HOW TO USE THIS FILE
+  - One line per task. Mark progress by changing [ ] to [x], or [~] for
+    in progress. Add notes under a task with a "  > " prefix.
+  - "Ref N" points at the numbered functional requirements table in the
+    Product Definition Document; "NFR-N" at the non-functional table.
+    Go and read the acceptance criteria there before starting a task.
+  - Near-term phases (A-C) carry detail. Later phases are deliberately one
+    line each - their detail depends on decisions not yet made. Expand them
+    when we get there.
+  - This file is tracked in git (since 2026-08-05) so it is backed up.
+    Commit it along with the code changes each task produces.
+
+PHASE ORDER RATIONALE
+  Phase A comes first because four defects in the timeline model gate large
+  parts of the spec: notes are not attributed to their real part (blocks
+  Ref 7), rests are discarded (blocks Refs 14 and 16), and divisions and
+  time signature are read once from the first match (breaks Ref 18 on any
+  score that changes either mid-piece). Building playback or filtering on
+  top of these means reworking that code later.
+
+  A2 lands before A3-A5 on purpose. Those three all rewrite
+  _build_timeline_from_xml, and Refs 17 and 18 are correct today. The
+  characterisation tests are what prove they are still correct afterwards.
+
+CURRENT STATE
+  Done      : Ref 18 (TS-relative beat units - verified on 6/8)
+  Broken    : Ref 17 - pickup numbering is wrong on scores MuseScore exports
+              with number="0" implicit="yes" (see A3)
+  Partial   : Ref 1 (no announcements), Ref 2 (Region 3 only, no boundary
+              cue), Refs 8/9 (audition fires, latency unmeasured, wrong
+              instrument), Ref 16 (no rests), Ref 20 (string/fret only),
+              Ref 25 (MusicXML only)
+  Built but : Ref 7 - widgets/region2_manager.py is complete, but
+  not wired    MusicData lacks get_score_structure() and
+               set_active_voice_filter(), so Region 2 falls back to a flat
+               table and Spacebar toggling does nothing.
+
+TEST SCORES (files/)
+  bach-bourree-tab short  4/4, guitar, notation staff + TAB staff duplicating
+                          it, pickup exported as number="1"
+  Chessel Duet            6/8, TWO parts (Piano GM 1 with 2 staves + voices
+                          1/5/6, Classical Guitar GM 25 with voices 1/2),
+                          pickup exported as number="0" implicit="yes",
+                          tempo eighth=96. Exercises multi-part, compound
+                          time and the second pickup convention - it is
+                          currently mis-parsed in several ways.
+
+
+###
+PHASE A - FOUNDATIONS AND MULTI-PART CORRECTNESS         (10 tasks)
+###
+[ ] A1  Test harness: pytest + pytest-qt, tests/ tree, requirements files
+        - NFR-03 AC-03.3
+        > DEPENDENCIES
+          pytest, pytest-qt (Qt widget and signal testing), pytest-cov
+          (NFR-03 asks for high coverage, so measure it from day one).
+        > REQUIREMENTS FILES - split them
+          requirements.txt      PySide6, music21, pyfluidsynth  (runtime)
+          requirements-dev.txt  pytest, pytest-qt, pytest-cov   (test only)
+          Keeps the runtime list clean for the NFR-02 installer work later.
+          Do NOT list mido - nothing imports it since the FluidSynth switch.
+        > LAYOUT - mirrors the package tree, one test module per source module
+              tests/conftest.py
+              tests/fixtures/                     see A1 fixture decision D-6
+              tests/models/test_music_data.py
+              tests/parsers/test_musicxml_reader.py
+              tests/widgets/test_region2_manager.py
+              tests/audio/test_synth_engine.py
+        > SPEED - this one matters
+          MusicData(file_path=...) builds the timeline with ElementTree alone:
+          ~1 ms. MusicXMLReader.load() also runs music21: ~460 ms. That is a
+          460x difference. Timeline tests must construct MusicData directly;
+          only the reader tests should pay for music21.
+        > NO AUDIO IN TESTS
+          MainWindow.__init__ (main_window.py:32) constructs SynthEngine(),
+          which starts a WASAPI device. Tests must not open audio hardware -
+          slow, noisy, and fails on machines without the DLLs. See D-7.
+        > HEADLESS QT
+          Set QT_QPA_PLATFORM=offscreen for the test session in pytest.ini so
+          no window ever appears. pytest-qt supplies the qapp/qtbot fixtures.
+        > CONFTEST FIXTURES to provide
+          score_bourree / score_duet  paths to the two sample scores
+          timeline(path)              MusicData built without music21
+          null_synth                  SynthEngine stand-in recording calls
+        > RUN
+          .venv\Scripts\python.exe -m pytest
+          single: ... -m pytest tests/models/test_music_data.py::test_pickup
+          coverage: ... -m pytest --cov=models --cov=parsers --cov=widgets
+        > DONE WHEN
+          pytest runs green from a clean checkout, no window opens, no audio
+          device is touched, and the run takes under ~5 seconds.
+
+[ ] A2  Characterisation tests for the current parser - NFR-03, locks Ref 18
+        > Cover: quarter note = ts_duration 1.0 in 4/4 and 2.0 in 6/8; eighth
+          note = 1.0 in 6/8; chord grouping into one EventSlice; string/fret
+          capture from notations/technical; slice ordering by (measure, offset).
+        > Write these BEFORE A3-A6 - all four rewrite _build_timeline_from_xml
+          and these tests are what prove nothing regressed.
+        > Record the currently-wrong pickup numbers as known-bad with an
+          xfail marker, then flip them to expected in A3.
+
+[ ] A3  FIX pickup numbering when the file already numbers the pickup 0
+        - Ref 17, currently broken
+        > Bourree exports the pickup as number="1", so the code's
+          "subtract one from every measure" is right. Chessel Duet exports it
+          as number="0" implicit="yes", so subtracting again gives measure -1,
+          and real measure 1 becomes 0 and then wrongly gets the pickup's
+          end-of-bar beat positions (beats 4,5,6 instead of 1,2,3).
+        > Only re-index when the pickup is not already numbered 0.
+        > Test both conventions: pickup must be measure 0 and the first full
+          bar must be measure 1 in each.
+
+[ ] A4  Add part_id to NoteData; stamp each note with its real <part> id and
+        that part's name - prerequisite for Ref 7
+        > models/music_data.py:177 sets part_name from parts_info[0].name for
+          every note. On Chessel Duet every guitar note is labelled "Piano".
+        > Worse, (staff, voice) collides across parts: Piano staff 1 voice 1
+          and Guitar staff 1 voice 1 are indistinguishable today.
+        > Region2HierarchyModel.get_active_voice_tuples() returns
+          (part_id, staff, voice) - the ids must match.
+
+[ ] A5  Explicit rests become timeline events - Ref 16 AC2
+        > step_name "rest"; octave and midi_pitch become Optional[int] = None.
+        > Only <note><rest/> elements. Gaps from <forward> or backup offsets
+          do NOT become events.
+        > Region 3 displays "rest". Region 4 omits the octave and midi rows.
+          get_midi_notes_for_indices (music_data.py:282) must drop None
+          pitches so playback stays silent on a rest.
+
+[ ] A6  Track divisions and time signature as they change through the score
+        instead of first-match - Ref 18
+        > music_data.py:38 and :48 use .//attributes/... which finds only the
+          first occurrence in the whole file.
+
+[ ] A7  Measure index helpers over timeline_slices - prerequisite for Refs 3, 5, 6
+        > first_event_index_of_measure(n), measure_numbers(), last_event_index().
+
+[ ] A8  FIX playback instrument per part/voice instead of always parts_info[0]
+        - Ref 8, Ref 9 AC2, reported bug. Depends on A4.
+        > get_current_gmidi_program() (music_data.py:292) always returns the
+          first part's program, so Chessel Duet plays the guitar as piano.
+        > Needs a MIDI channel per part; SynthEngine.play_notes already takes
+          a channel argument. See D-5.
+
+[ ] A9  FIX tempo display so it reflects the time signature - reported bug
+        > Chessel Duet is eighth=96 and displays "48 BPM" because music21's
+          getQuarterBPM() converts to quarter-note BPM. Strictly true but not
+          what a musician reads.
+        > Show the score's own beat-unit and per-minute, e.g. "96 eighth notes
+          per minute". Keep the quarter BPM internally for playback timing.
+        > Wording interacts with the UK/US vocabulary option - see D-6.
+
+[ ] A10 Extract timeline building from MusicData into
+        parsers/timeline_builder.py, one class per file - NFR-03 AC-03.1
+        > MusicData currently parses, models and formats for the view.
+
+
+###
+PHASE B - FINISH REGION 2 FILTERING                       (4 tasks)   Ref 7
+###
+[ ] B1  MusicData.get_score_structure() emitting the parts_data shape that
+        Region2HierarchyModel.build_from_score() documents - Ref 7
+[ ] B2  MusicData.set_active_voice_filter(); filter Region 3, Region 4 and
+        playback by the active (part_id, staff, voice) tuples - Ref 7 AC1/AC2
+[ ] B3  Remove the hasattr guards in main_window.py:151 and :217; confirm
+        Spacebar toggling works and timeline position is retained - Ref 7 AC3
+[ ] B4  Test: toggling the TAB staff off removes the duplicate notes on the
+        Bourree sample (first slice is E,G,E,G today) - Refs 7, 8
+
+
+###
+PHASE C - NAVIGATION AND WINDOW CHROME                    (7 tasks)
+###
+[ ] C1  Global navigation: handle nav keys at MainWindow level so they work
+        from all four regions and keep focus where it is - Ref 4, see D-2
+[ ] C2  Ctrl+Left / Ctrl+Right jump by measure - Ref 3
+[ ] C3  Home / End jump to first and last event - Ref 5
+[ ] C4  Type digits then Enter to jump to a bar; Escape clears; unknown bar
+        plays an error sound and does not move - Ref 6
+[ ] C5  Audible boundary notification at start and end of score - Ref 2 AC4
+        > move_timeline_left/right already return False at the boundary.
+[ ] C6  Status bar showing current measure and beat - Functional Spec
+[ ] C7  Menu bar: add Edit, View, Options and Help menus - Functional Spec
+
+
+###
+PHASE D - SCREEN READER ANNOUNCEMENTS                     (4 tasks)
+###
+[ ] D1  Spike: how to force an NVDA / VoiceOver announcement from PySide6.
+        Decide the mechanism and record it as D-3 below - Ref 1 AC4
+[ ] D2  Announcement service module; announce region name on region change
+        - Ref 1 AC4
+[ ] D3  Announce measure number on measure jump and bar goto - Refs 3, 5, 6
+[ ] D4  Interrupt in-progress speech when navigation keys are held
+        - NFR-05 AC-05.2
+
+
+###
+PHASE E - PLAYBACK ENGINE                                 (10 tasks)
+###
+[ ] E1  Separate playback tempo from score tempo; enforce 30-300 bpm - Ref 12 AC1/AC2
+[ ] E2  Tempo up/down in 10 bpm steps and a reset control - Ref 12 AC3/AC4
+[ ] E3  Tempo dialog accepting decimal values - Ref 12 AC5
+[ ] E4  Sequencer: schedule events over time from a start index, with
+        stop/pause/resume. Foundation for E5-E9.
+[ ] E5  Play / pause / stop keystrokes; pause refreshes the regions to the
+        new position; stop reverts to the original start - Ref 10
+[ ] E6  Two-bar phrase audition on Enter; re-trigger while playing stops it - Ref 11
+[ ] E7  Chord audition on Shift+Space, holding until released or re-pressed - Ref 13
+[ ] E8  Metronome: click every beat, accented click on beat 1, tick when
+        stepping onto a beat position - Ref 14 AC1-AC3
+[ ] E9  With metronome on, beat positions become navigable events even where
+        no note sounds - Ref 14 AC4, depends on A4
+[ ] E10 Latency harness; verify audition stays within 25 ms - Ref 9 AC3, NFR-04
+        > Recover the old benchmark: git show 520f743:test_midi_latency.py
+
+
+###
+PHASE F - NOTE DISPLAY CONFIGURATION                      (3 tasks)
+###
+[ ] F1  Formatting layer building the Region 3 label from a configurable
+        attribute list, e.g. "C, string 5, fret 1" - Ref 15
+[ ] F2  Options > Note Display dialog; scope global / part / staff / voice;
+        control attribute ordering - Ref 15 AC4
+[ ] F3  Capture further attributes from the source file: dynamics, staccato,
+        fingering - Ref 16 AC3
+[ ] F4  UK / US music vocabulary toggle: bar vs measure, crotchet vs quarter
+        note, quaver vs eighth note - Discussion Points, see D-6
+
+
+###
+PHASE G - PER-SCORE PERSISTENCE                           (2 tasks)   Ref 27
+###
+[ ] G1  Persist part/staff/voice toggles and metronome state per score file
+        - Ref 27 AC1
+[ ] G2  Persist note display configuration per scope - Ref 27 AC2
+
+
+###
+PHASE H - TABLATURE                                       (4 tasks)
+###
+[ ] H1  Left and right hand finger attributes on notes - Ref 20
+[ ] H2  Capo: raise playback pitch, show note names and frets relative to it - Ref 21
+[ ] H3  Identify the chord sounding at the cursor and name it - Ref 22 AC1/AC3
+[ ] H4  Describe fretboard shapes in words, e.g. "barred G at 3rd fret" - Ref 22 AC2
+
+
+###
+PHASE I - ROBUSTNESS AND ERROR HANDLING                   (2 tasks)
+###
+[ ] I1  Accessible error dialog for corrupt or unreadable files, replacing the
+        [ERROR] prints in main_window.py:132 and music_data.py:31
+        - Ref 25 AC3, NFR-06 AC-06.1
+[ ] I2  Preserve unhandled custom MusicXML tags through save and export
+        - NFR-06 AC-06.2
+
+
+###
+PHASE J - FILE I/O                                        (6 tasks)
+###
+[ ] J1  Import MIDI, types 1 and 2 - Ref 25
+[ ] J2  Import Guitar Pro (needs PyGuitarPro) - Ref 25
+[ ] J3  Import Braille Music Editor - Ref 25
+[ ] J4  Export MusicXML, preserving bars, notes, string and fret data - Ref 26
+[ ] J5  Export MIDI - Ref 26
+[ ] J6  Export Guitar Pro and Braille Music Editor - Ref 26
+
+
+###
+PHASE K - EDITING MODES                                   (2 tasks)
+###
+[ ] K1  Ctrl+Shift+E toggles Read-Only / Edit mode with an announcement;
+        editing controls locked in Read-Only - Ref 23
+[ ] K2  Edit note attributes by typing over a value or stepping it; play the
+        updated note immediately - Ref 24
+
+
+###
+PHASE L - VOICE CONTROL                                   (3 tasks)   Ref 19
+###
+[ ] L1  Spike: Windows SAPI 5.4 / Windows.Media.SpeechRecognition - Ref 19
+[ ] L2  Command grammar (Tab, Next, Previous, Next Bar, Play Bar...) plus the
+        Ctrl+Shift+Enter toggle - Ref 19
+[ ] L3  macOS speech recognition equivalent - Ref 19, see D-4
+
+
+###
+PHASE M - CROSS-PLATFORM AND PACKAGING                    (4 tasks)
+###
+[ ] M1  macOS audio driver selection (coreaudio in place of wasapi) and
+        keyboard/focus parity with Windows - NFR-01
+[ ] M2  Windows installer (.exe / .msi) with bundled runtime - NFR-02 AC-02.1/AC-02.3
+[ ] M3  macOS signed .dmg or .app bundle - NFR-02 AC-02.2
+[ ] M4  Audit for zero network calls in core features - NFR-07
+
+
+###
+OPEN DESIGN DECISIONS
+Mirrors the Discussion Points table in the Product Definition Document.
+Add to this as decisions come up; move the outcome into the spec once settled.
+###
+
+D-1  Rests in one voice alongside sounding notes in another
+     Decided 2026-08-04: an explicit rest in the score is an event with a
+     step of "rest" and shows as "rest" in the Note region.
+     Still open: when voice 1 sounds and voice 2 rests at the same position,
+     should the rest appear in Region 3 next to the notes, or only when its
+     voice is soloed via Region 2? Revisit during B2.
+
+D-2  Global navigation keystrokes vs per-widget handling
+     Already flagged in the spec's own Discussion Points. Navigation should
+     work from anywhere in the main application area, but Qt widgets consume
+     arrow keys natively. Options: an application-level event filter, or
+     QShortcut with WindowShortcut context. Decide in C1.
+
+D-3  Mechanism for forcing screen reader announcements from PySide6
+     Needed for Ref 1 AC4, Ref 3 AC3 and Ref 5. Candidates: QAccessible
+     alert events, live-region style updates, or driving the screen reader
+     API directly. Decide in D1.
+
+D-4  macOS speech recognition API
+     Listed as TBC in the spec. Windows path is SAPI 5.4 /
+     Windows.Media.SpeechRecognition. Decide in L3.
+
+D-5  Multi-part GM programs and MIDI channel allocation
+     Confirmed on Chessel Duet: the guitar part plays as piano because
+     get_current_gmidi_program() (music_data.py:292) always returns
+     parts_info[0]. Open: allocate one MIDI channel per part, or per
+     (part, staff)? Channel 10 is percussion and must be skipped. 16
+     channels is the hard ceiling. Decide in A8.
+
+D-6  UK vs US music vocabulary
+     From the spec's Discussion Points: bar/measure, crotchet/quarter note,
+     quaver/eighth note. Open: which is the default, does the toggle affect
+     screen reader announcements as well as on-screen labels, and does it
+     reach Region 4 attribute names ("measure" is currently a literal key).
+     Interacts with A9's tempo wording. Decide in F4.
+
+D-7  How tests avoid opening audio hardware
+     DECIDED 2026-08-05: constructor injection. MainWindow(synth=None)
+     defaults to a real SynthEngine but accepts a stand-in, so tests can
+     assert which notes, channel and program would have played - needed by
+     Refs 8, 9, 13 and 14. Also makes the engine swappable for the macOS
+     driver work in NFR-01.
+
+D-8  Where test sample scores live
+     DECIDED 2026-08-05: both. files/ is now tracked in git (66 KB) so the
+     real MuseScore exports are backed up and usable as integration
+     fixtures, plus hand-written minimal MusicXML under tests/fixtures/ for
+     unit tests that need to isolate one behaviour.
+
+
+###
+COVERAGE CHECK - every requirement appears at least once
+  Ref  1 D2        Ref  8 A8,B4     Ref 15 F1,F2     Ref 22 H3,H4
+  Ref  2 C5        Ref  9 A8,E10    Ref 16 A5,F3     Ref 23 K1
+  Ref  3 C2,D3     Ref 10 E5        Ref 17 A3        Ref 24 K2
+  Ref  4 C1        Ref 11 E6        Ref 18 A2,A6,A9  Ref 25 I1,J1,J2,J3
+  Ref  5 C3,D3     Ref 12 E1,E2,E3  Ref 19 L1,L2,L3  Ref 26 J4,J5,J6
+  Ref  6 C4,D3     Ref 13 E7        Ref 20 H1        Ref 27 G1,G2
+  Ref  7 B1-B4     Ref 14 E8,E9     Ref 21 H2
+
+  NFR-01 M1     NFR-02 M2,M3     NFR-03 A1,A2,A10    NFR-04 E10
+  NFR-05 D4     NFR-06 I1,I2     NFR-07 M4
+
+  Reported bugs: tempo units A9, playback instrument A8
+  Discussion Points: global nav keys D-2/C1, UK-US vocabulary D-6/F4
+###

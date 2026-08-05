@@ -136,6 +136,9 @@ Much of the contents of this document are based on good experience of applicatio
 | Item | Details |
 | :--- | :--- |
 | global navvigation keystrokes | To make navigation quick and easy as possible the navigation keystrokes should be global whenever focus is with the main application area i.e. Not in a menu or dialogue.  This may not be practical for simple implementation of controls/widgets for the regions. |
+| UK or US terminology | There is a US and UK vocab in music (not sure if that is a totally fair way of defining it.) US measure, quarter note, eighth note are bar, crotchet and quaver in UK vocab.  There should be an option to toggle between these (and any others that exist) and defining where this surfaces needs working through. |
 
- 
+## Known bugs
 
+* The tempo in the score region does not reflect the time signature correctly.  When opening a score in 6/8 and where the tempo was 96 quavers a minute, the tempo was displayed as 48bpm.  Strictly speaking correct, but it should display 96 quavers / eighth notes, or whatever the standard way of writing this is for musicians.
+* When auditioning individual notes by moving up and down the note region, all notes play with the same instrument.  They need to reflect the instrument for the voice.  This probably is true for all playback.
