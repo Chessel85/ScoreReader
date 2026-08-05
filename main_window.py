@@ -23,13 +23,20 @@ from widgets.timeline_list_widget import TimelineListWidget
 
 class MainWindow(QMainWindow):
 
-    def __init__(self):
+    def __init__(self, synth=None):
+        """Create the main window.
+
+        synth: any object exposing the SynthEngine interface
+        (play_notes / stop_all_notes / set_program / close). Defaults to a
+        real SynthEngine. Tests pass a stand-in so no audio device is
+        opened, and so they can assert what would have sounded.
+        """
         super().__init__()
         self.setWindowTitle("Score View & Editor")
         self.resize(800, 600)
 
         self._music_data: MusicData | None = None
-        self.synth = SynthEngine()
+        self.synth = synth if synth is not None else SynthEngine()
 
         self.setup_ui()
         self.setup_menu()

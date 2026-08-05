@@ -1,0 +1,8 @@
+# Test-only dependencies. Install both files for development:
+#   .venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt
+
+-r requirements.txt
+
+pytest==9.1.1
+pytest-qt==4.5.0
+pytest-cov==7.1.0

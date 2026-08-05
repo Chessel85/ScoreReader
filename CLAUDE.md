@@ -17,9 +17,21 @@ Windows, Python 3.13, dependencies in the checked-out `.venv` (not tracked):
 .venv\Scripts\Activate.ps1                # then plain `python main.py`
 ```
 
-No requirements.txt, test suite, or linter is configured. Key installed libs: PySide6 6.11, music21 10.5, pyfluidsynth 1.4. `mido` is no longer used or installed.
+Dependencies are split: `requirements.txt` (runtime — PySide6 6.11, music21 10.5, pyfluidsynth 1.4) and `requirements-dev.txt` (pytest, pytest-qt, pytest-cov). `mido` is no longer used or installed. No linter is configured.
 
-For a non-GUI smoke test, set `QT_QPA_PLATFORM=offscreen` and construct `MainWindow()` directly, then call `load_score_from_file(...)` and `navigate_timeline_right()` — this exercises parsing, widget wiring, and the synth without opening a window.
+```powershell
+.venv\Scripts\python.exe -m pytest                    # whole suite (~0.6s)
+.venv\Scripts\python.exe -m pytest -m "not slow"      # skip music21 tests
+.venv\Scripts\python.exe -m pytest tests/models/test_music_data.py::test_name
+.venv\Scripts\python.exe -m pytest --cov=models --cov=parsers --cov=widgets
+```
+
+Two invariants the harness enforces, both guarded by tests in `tests/test_harness.py`:
+
+- **No window opens.** `tests/conftest.py` sets `QT_QPA_PLATFORM=offscreen` before PySide6 is imported.
+- **No audio device opens.** An autouse fixture blocks `SynthEngine._init_engine`, so constructing a real engine in a test fails with a pointer to the fix. `MainWindow(synth=...)` accepts any object with the `SynthEngine` interface; `tests/support/null_synth.py` records calls so tests can assert what *would* have sounded.
+
+Timeline tests must build `MusicData(file_path=...)` directly — that walks the XML with ElementTree in ~1 ms. Going through `MusicXMLReader.load()` also runs music21 at ~460 ms; those tests carry the `slow` marker.
 
 VS Code launch config is "Python: Current File" (debugpy) — debug by opening `main.py` and pressing F5.
 
