@@ -51,6 +51,7 @@ Package-per-domain layout; each module holds one class. Data flows one way:
 
 - **`models/`** — `note_data.py` (`NoteData`), `event_slice.py` (`EventSlice`), `parts_structure.py` (`PartStructureInfo`), and `music_data.py` (`MusicData`, the aggregate + timeline builder).
 - **`parsers/musicXML_reader.py`** — `MusicXMLReader` builds header/metadata: credits, key, time signature, tempo, per-part structure (staff→clef, staff→voices, GM program). It parses the file **twice**: raw `ElementTree` for credits/part-list/clefs, and `music21.converter.parse` for tempo/key/time, with the ElementTree values as fallback when music21 returns nothing.
+- **`parsers/timeline_builder.py`** — `TimelineBuilder` owns the hand-rolled `ElementTree` walk that builds `timeline_slices` (see Timeline model below). `MusicData.__post_init__` calls `TimelineBuilder(file_path, parts_info).build()`; timeline tests construct `MusicData(file_path=...)` directly, which still hits only this ElementTree pass, not music21.
 - **`audio/synth_engine.py`** — in-process FluidSynth. At import it prepends `<root>/bin` via `os.add_dll_directory` + `PATH` and pre-loads the glib/gobject/gthread/fluidsynth DLLs with `ctypes.CDLL` before `import fluidsynth`; that ordering is required on Windows and is why the module has side effects at import time. The synth runs on the WASAPI driver at 48 kHz with a 128-frame period and 2 periods — low-latency settings chosen for Ref 9; don't raise them without cause. Note-off is scheduled by a single-shot `QTimer`, so playback timing rides the Qt event loop.
 - **`widgets/`** — `region_table_widget.py` (`RegionTableWidget`, used by regions 1, 2 and 4), `timeline_list_widget.py` (`TimelineListWidget`, region 3), and `region2_manager.py` (`Region2HierarchyModel` / `Region2Node`, pure state — no Qt).
 - **`main_window.py`** — 2x2 `QGridLayout`. Region 1 = score info, 2 = parts/staves/voices, 3 = note list at the cursor, 4 = note attributes for the *selected* notes.
@@ -63,7 +64,7 @@ GM programs are **1-indexed in the model** (25 = nylon guitar, from MusicXML `<m
 
 The timeline is a flat, sorted list of `EventSlice` — one entry per distinct `(measure, offset_in_quarters)` with at least one sounding note. Rests are skipped, so navigation lands only on attacks. `active_event_index` is the cursor; `move_timeline_left/right` return `bool` (False at the boundaries, where the spec wants an audible boundary cue that isn't implemented yet).
 
-`MusicData._build_timeline_from_xml` is a third hand-rolled `ElementTree` pass. music21's stream is stored on `MusicData.score` but is **not** the source of truth for notes — the DOM walk is, because it handles `<backup>`/`<forward>` offsets, `<chord>` grouping, and `notations/technical` string/fret data explicitly.
+`TimelineBuilder.build()` (`parsers/timeline_builder.py`) is a third hand-rolled `ElementTree` pass, separate from `MusicXMLReader`. music21's stream is stored on `MusicData.score` but is **not** the source of truth for notes — the DOM walk is, because it handles `<backup>`/`<forward>` offsets, `<chord>` grouping, and `notations/technical` string/fret data explicitly.
 
 Two conventions the parser enforces, both spec requirements:
 

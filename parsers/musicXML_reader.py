@@ -12,6 +12,21 @@ class MusicXMLReader:
 
     PLACEHOLDERS = {"untitled score", "composer / arranger", "subtitle"}
 
+    DURATION_TYPE_NAMES = {
+        "whole": "whole",
+        "half": "half",
+        "quarter": "quarter",
+        "eighth": "eighth",
+        "16th": "sixteenth",
+        "32nd": "thirty-second",
+        "64th": "sixty-fourth",
+        "128th": "hundred-twenty-eighth",
+        "breve": "double whole",
+        "longa": "longa",
+    }
+
+    DOTS_PREFIX = {0: "", 1: "dotted ", 2: "double-dotted ", 3: "triple-dotted "}
+
     FIFTHS_MAP = {
         0: "C major / A minor",
         1: "G major / E minor",
@@ -47,13 +62,13 @@ class MusicXMLReader:
         except Exception as e:
             print(f"[ERROR] music21 parse failed: {e}")
 
-        tempo_bpm = self._extract_tempo(score) if score else 120
+        tempo_bpm, tempo_display = self._extract_tempo(score) if score else (120, "120 quarter notes per minute")
         key_sig = self._extract_key(score) or etree_key
         time_sig = self._extract_time(score) or etree_time
 
         credits_dict["Key Signature"] = key_sig
         credits_dict["Time Signature"] = time_sig
-        credits_dict["Tempo"] = f"{tempo_bpm} BPM"
+        credits_dict["Tempo"] = tempo_display
 
         return MusicData(
             credits=credits_dict,
@@ -63,16 +78,31 @@ class MusicXMLReader:
             tempo_bpm=tempo_bpm,
         )
 
-    def _extract_tempo(self, score: music21.stream.Score) -> int:
+    def _extract_tempo(self, score: music21.stream.Score) -> Tuple[int, str]:
+        """Returns (quarter-note BPM for playback timing, display string in the
+        score's own beat unit - e.g. "96 eighth notes per minute" for a score
+        marked eighth=96, rather than music21's quarter-converted "48 BPM")."""
         try:
             tempos = score.flatten().getElementsByClass(music21.tempo.MetronomeMark)
             if tempos:
-                bpm = tempos[0].getQuarterBPM()
-                if bpm:
-                    return int(bpm)
+                mm = tempos[0]
+                quarter_bpm = mm.getQuarterBPM()
+                if quarter_bpm and mm.number and mm.referent:
+                    beat_unit = self._beat_unit_name(mm.referent)
+                    number = self._format_number(mm.number)
+                    return int(quarter_bpm), f"{number} {beat_unit} notes per minute"
         except Exception as e:
             print(f"[WARN] Error reading tempo: {e}")
-        return 120
+        return 120, "120 quarter notes per minute"
+
+    def _beat_unit_name(self, duration: music21.duration.Duration) -> str:
+        base = self.DURATION_TYPE_NAMES.get(duration.type, duration.type)
+        dots_prefix = self.DOTS_PREFIX.get(duration.dots, f"{duration.dots}x-dotted ")
+        return f"{dots_prefix}{base}"
+
+    @staticmethod
+    def _format_number(n: float) -> str:
+        return str(int(n)) if float(n).is_integer() else str(n)
 
     def _extract_key(self, score: music21.stream.Score) -> Optional[str]:
         try:

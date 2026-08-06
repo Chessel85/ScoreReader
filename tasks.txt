@@ -244,17 +244,50 @@ PHASE A - FOUNDATIONS AND MULTI-PART CORRECTNESS         (10 tasks)
           end and confirms the guitar note now carries program 24 (GM 25)
           on its own channel, not the piano's. Full suite: 46 passed, 0.67s.
 
-[ ] A9  FIX tempo display so it reflects the time signature - reported bug
+[x] A9  FIX tempo display so it reflects the time signature - reported bug
         > Chessel Duet is eighth=96 and displays "48 BPM" because music21's
           getQuarterBPM() converts to quarter-note BPM. Strictly true but not
           what a musician reads.
         > Show the score's own beat-unit and per-minute, e.g. "96 eighth notes
           per minute". Keep the quarter BPM internally for playback timing.
         > Wording interacts with the UK/US vocabulary option - see D-6.
+        > DONE 2026-08-06. parsers/musicXML_reader.py: _extract_tempo now
+          returns (quarter_bpm, display_string) instead of just an int -
+          quarter_bpm still comes from MetronomeMark.getQuarterBPM() and
+          feeds MusicData.tempo_bpm unchanged (playback timing at
+          music_data.py:416 is untouched), but display_string is built from
+          the mark's own referent/number via new _beat_unit_name() /
+          _format_number() helpers, e.g. "96 eighth notes per minute" for
+          Chessel Duet instead of "48 BPM". No metronome mark (Bourree,
+          minimal fixtures) falls back to "120 quarter notes per minute"
+          rather than a bare "120 BPM". Updated
+          test_reader_extracts_key_time_and_tempo's assertion to match, and
+          added test_tempo_display_reflects_the_scores_own_beat_unit on
+          score_duet reproducing the exact reported bug end to end. Full
+          suite: 47 passed, 0.68s.
+        > UK/US wording (crotchet vs quarter note) deferred to F4/D-6 as
+          planned - this task only fixes the beat-unit mismatch.
 
-[ ] A10 Extract timeline building from MusicData into
+[x] A10 Extract timeline building from MusicData into
         parsers/timeline_builder.py, one class per file - NFR-03 AC-03.1
         > MusicData currently parses, models and formats for the view.
+        > DONE 2026-08-06. New parsers/timeline_builder.py: TimelineBuilder
+          class takes (file_path, parts_info) and its build() method holds
+          the entire ~225-line ElementTree walk moved verbatim out of
+          MusicData._build_timeline_from_xml (pickup detection, per-part
+          divisions/time-signature tracking, chord/rest handling, string/
+          fret capture, slice bucketing and sorting) - logic unchanged, only
+          relocated. models/music_data.py: __post_init__ now does
+          self.timeline_slices = TimelineBuilder(self.file_path,
+          self.parts_info).build(); the private method and its now-unused
+          ET/NoteData imports are gone, dropping music_data.py from ~417 to
+          ~191 lines. No circular import (timeline_builder.py only imports
+          from models.event_slice/note_data/parts_structure, not
+          models.music_data). CLAUDE.md's parsers/ and Timeline model
+          sections updated to describe the new file. Full suite still 47
+          passed, 0.70s - no test changed since tests build
+          MusicData(file_path=...) and never called the private method by
+          name.
 
 
 ###
