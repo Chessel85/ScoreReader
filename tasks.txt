@@ -39,10 +39,10 @@ CURRENT STATE
               Ref 25 (MusicXML only)
 
 TEST SCORES (files/)
-  Use these three real MuseScore exports for functional/integration testing -
-  each exercises a different set of requirements no hand-written fixture
-  covers on its own. See tests/conftest.py for the score_* fixtures that
-  expose them (score_bourree, score_duet, score_way_to_go).
+  Use these real MuseScore exports for functional/integration testing - each
+  exercises a different set of requirements no hand-written fixture covers
+  on its own. See tests/conftest.py for the score_* fixtures that expose
+  them (score_bourree, score_duet, score_way_to_go, score_long_tune).
   bach-bourree-tab short  4/4, guitar, notation staff + TAB staff duplicating
                           it, pickup exported as number="1"
   Chessel Duet            6/8, TWO parts (Piano GM 1 with 2 staves + voices
@@ -56,6 +56,13 @@ TEST SCORES (files/)
                           and key signature changes mid-piece (fifths 1 -> 2
                           -> 1). The score to use for A6 (divisions/time
                           signature tracked as they change, not first-match).
+  long tune               4/4, one part, 130 measures on paper (real notes
+                          end around measure 112 - measures 113-130 are
+                          trailing empty bars padding the final system, the
+                          same rest-only-tail pattern _sounding_bounds
+                          excludes elsewhere, see C5). Provided by the user
+                          for C4 (digit-entry bar jump, Ref 6), to exercise a
+                          real multi-digit measure number end to end.
 
 
 ###
@@ -394,7 +401,7 @@ PHASE B - FINISH REGION 2 FILTERING AND UX REWRITE         (5 tasks)   Ref 7
 
 
 ###
-PHASE C - NAVIGATION AND WINDOW CHROME                    (7 tasks)
+PHASE C - NAVIGATION AND WINDOW CHROME                    (8 tasks)
 ###
 [x] C1  Confirm/lock in Note-region-scoped navigation - Ref 4, D-2 RESOLVED
         > DONE 2026-08-06. No new MainWindow-level handling needed -
@@ -439,8 +446,62 @@ PHASE C - NAVIGATION AND WINDOW CHROME                    (7 tasks)
           in widgets/timeline_list_widget.py (Key_Home/Key_End) and
           main_window.py. No screen-reader measure announcement yet - that's
           D3.
-[ ] C4  Type digits then Enter to jump to a bar; Escape clears; unknown bar
+[x] C4  Type digits then Enter to jump to a bar; Escape clears; unknown bar
         plays an error sound and does not move - Ref 6
+        > State lives in widgets/timeline_list_widget.py (TimelineListWidget),
+          same file C1-C3 already extended - consistent with D-2 (timeline
+          nav is per-widget, scoped to the Note region, not global).
+        > self._pending_digits: str = "". Key_0..Key_9 (no modifiers) append.
+        > Enter: buffer non-empty -> new MainWindow.navigate_to_typed_measure()
+          parses int(buffer), clears it, calls new MusicData.jump_to_measure(n)
+          -> bool (reuses first_visible_event_index_of_measure from C2, so it
+          respects the Region 2 filter the same way Ctrl+Right does). True ->
+          _update_timeline_views(play_all=True) (plays first note/chord, AC3
+          minus the announcement - D2/D3 cover that generically now, see PDD
+          Ref 6 AC3 rewording). False -> _play_boundary_cue() (reuse as-is;
+          confirmed: same cue as moving beyond the extent of the score) and
+          position unchanged (AC4). Buffer empty -> Enter is a no-op; E6 (2-bar
+          audition on Enter) isn't built yet, so this key is reserved but inert.
+        > Escape: buffer non-empty -> clear silently, no cue, no position
+          change (AC5). Buffer empty -> no-op.
+        > Any other key already handled here (Left/Right/Ctrl+Left/Right/
+          Home/End/Up/Down) clears the pending buffer first - stale typed
+          digits silently waiting for a future Enter would be confusing.
+        > Feedback while typing: Phase D announcements don't exist yet, so
+          while digits are pending, the status bar's position field (C6)
+          shows "Go to bar: {digits}" in place of "Measure X beat Y",
+          reverting on Enter/Escape/any clearing key.
+        > DEPENDENCY: user is providing a new 'Long tune' sample score
+          (files/) for realistic multi-digit measure numbers. Until it lands,
+          tests/fixtures/many_measures.musicxml (~12 one-beat bars) covers
+          the multi-digit case at unit level; add a score_long_tune fixture
+          to tests/conftest.py once the real file exists.
+        > TESTS: tests/models/test_music_data.py (jump_to_measure - valid,
+          unknown measure, pickup bar numbered 0 on score_duet);
+          tests/test_main_window.py (digits+Enter jumps; unknown number+Enter
+          plays the boundary cue and doesn't move; Escape clears without
+          moving; an arrow key clears pending digits).
+        > DONE 2026-08-06. Built exactly as planned above:
+          MusicData.jump_to_measure() (models/music_data.py) bounds against
+          _sounding_bounds() the same way move_timeline_*_by_measure already
+          does, so a bar that's only trailing rest padding is not a valid
+          target either. TimelineListWidget tracks _pending_digits and clears
+          it on Enter/Escape/any other handled key. New fixture
+          tests/fixtures/many_measures.musicxml (12 one-beat bars) covers the
+          multi-digit case at unit level. 7 new tests (3
+          tests/models/test_music_data.py beyond the plan's list -
+          multi-digit, voice-filter-respecting, rest-padded-bar cases - plus
+          4 in tests/test_main_window.py). Full suite: 82 passed after this
+          task alone.
+        > FOLLOW-UP 2026-08-06: the user's real 'Long tune' score landed
+          (files/long tune/, 130 measures on paper, 4/4, no pickup, one
+          part). Added the score_long_tune conftest fixture and
+          test_jump_to_measure_reaches_a_multi_digit_bar_number_on_a_real_long_score.
+          Its real notes end around measure 112 - measures 113-130 are
+          trailing empty bars padding the final system, the same rest-only-
+          tail pattern _sounding_bounds already excludes (C5) - so the test
+          targets measure 100, not the highest-numbered measure on the page.
+          Full suite: 100 passed.
 [x] C5  Audible boundary notification ("doh" sound) - Ref 2 AC4, Ref 3 AC4
         > DONE 2026-08-06. Decided D-9 as: synthesize through the existing
           SynthEngine rather than a new asset - a short, quiet, low note
@@ -481,8 +542,257 @@ PHASE C - NAVIGATION AND WINDOW CHROME                    (7 tasks)
         > Also changed on request: boundary cue is now C#2 (was E2) at
           100ms (was 200ms, "half the length") - BOUNDARY_MIDI_PITCH=37,
           BOUNDARY_DURATION_MS=100 in main_window.py.
-[ ] C6  Status bar showing current measure and beat - Functional Spec
-[ ] C7  Menu bar: add Edit, View, Options and Help menus - Functional Spec
+[x] C6  Status bar: measure/beat/key/time-signature at the current cursor
+        position, backed by new per-event key+time-signature tracking -
+        Functional Spec, resolves the "Status bar" Discussion Point
+        > New per-event tracking, mirroring how A6 already tracks time
+          signature as it changes through the score.
+        > models/event_slice.py: add time_sig: Tuple[int, int] = (4, 4) and
+          key_fifths: int = 0 to EventSlice.
+        > parsers/timeline_builder.py: _apply_attributes and
+          _MeasureOffsetWalker already carry ts_num/ts_den state through the
+          walk - extend both to also read attrs_elem.find("key/fifths") and
+          carry fifths the same way. Stamp each built EventSlice with the
+          walker's live (ts_num, ts_den) and fifths at that point.
+        > FIFTHS_MAP currently lives in parsers/musicXML_reader.py - move it
+          to new models/key_signatures.py (plain module-level dict, not a
+          class) so both musicXML_reader.py (Region 1's opening-of-score key)
+          and music_data.py (the live-position key) import the same mapping
+          without a parsers->models reverse dependency. See D-11.
+        > models/music_data.py: new get_status_bar_fields() -> List[str],
+          exactly 3 strings in Tab order: "Measure {n} beat {b}" (reuse the
+          trailing-.0-stripping pattern already used for ts_duration in
+          get_region_4_data_for_indices, applied to beat_position), "Key:
+          {FIFTHS_MAP[fifths]}" (same "/" format as Region 1, e.g. "G major /
+          E minor" - confirmed, no new wording), "Time: {num}/{den}".
+        > WIDGET: new widgets/status_bar_widget.py - StatusBarWidget(QStatusBar)
+          holding 3 small custom focusable label widgets (QLabel subclass,
+          StrongFocus, visible focus indicator, setAccessibleName/text kept
+          in sync so NVDA announces it on focus). set_fields(list[str])
+          updates the three. Tab/Shift+Tab inside the status bar cycle ONLY
+          among its own 3 fields and wrap - deliberately breaks from every
+          other region widget's Tab-forwards-to-focusNextChild() pattern
+          (region2_list_widget.py), because C7 gives F6/Shift+F6 sole
+          ownership of leaving the status bar pane.
+        > MainWindow.setup_ui(): self.status_bar = StatusBarWidget();
+          self.setStatusBar(self.status_bar) - the real QMainWindow
+          setStatusBar() API is what makes NVDA+End ("report status bar")
+          work automatically, no custom accessibility plumbing needed beyond
+          that. New _update_status_bar() called from both
+          _update_timeline_views() and _update_ui_regions() (initial load).
+        > TESTS: tests/models/test_music_data.py (get_status_bar_fields
+          differs between an early- and late-score position on
+          score_way_to_go, which already changes both time and key signature
+          mid-piece - no new fixture needed); new
+          tests/widgets/test_status_bar_widget.py (pure widget state, mirrors
+          test_region2_manager.py's style - field count, Tab wraps,
+          set_fields updates text + accessible name); tests/test_main_window.py
+          (status bar updates on navigation).
+        > DONE 2026-08-06. Built as planned. One implementation change:
+          _StatusField's Tab/Backtab handling doesn't wait for real Qt focus
+          state - each field is constructed knowing its own index and asks
+          StatusBarWidget.focus_field((index +/- 1) % 3) directly, rather
+          than reading "which field currently has focus" first. Same
+          practical effect, but avoids depending on real focus tracking
+          being correct at the moment the key arrives, so the widget's
+          cycling tests don't need a shown window - they drive
+          _StatusField.event() through qtbot.keyClick and assert on which
+          index focus_field() was called with. Full suite: 90 passed after
+          this task alone.
+[x] C7  F6 / Shift+F6 toggle focus between the regions area (last-focused)
+        and the status bar - Functional Spec
+        > MainWindow tracks self._last_focused_region (default self.region_1),
+          updated via a QApplication.focusChanged connection that only
+          records the widget when it's one of the four regions.
+        > QShortcut(QKeySequence(Qt.Key.Key_F6), self,
+          context=Qt.ShortcutContext.ApplicationShortcut) and a "Shift+F6"
+          counterpart - ApplicationShortcut context is required so it fires
+          regardless of which child list/table widget currently holds focus
+          (a WidgetShortcut-scoped one would be swallowed).
+        > Three panes, in order: menu bar -> last-focused region (or Region 1
+          if none yet) -> status bar's first field -> back to menu bar.
+          Shift+F6 reverses. Determine current pane from self.focusWidget()'s
+          ancestry (menuBar().isAncestorOf(...), one of the 4 regions,
+          status_bar.isAncestorOf(...)).
+        > menuBar().setFocus() moves focus into the menu bar without opening
+          a menu (same effect as pressing Alt) - needs a live check once
+          built. See D-10.
+        > TESTS: tests/test_main_window.py (F6 cycles menu bar -> region ->
+          status bar -> menu bar; F6 restores the last-focused region, not
+          always Region 1; Shift+F6 reverses).
+        > DONE 2026-08-06. Two corrections to the plan above, both found by
+          testing, not assumption:
+          1. menuBar().setFocus() alone does nothing - QMenuBar has no focus
+             policy by default (it normally only gains keyboard focus via
+             the platform's own Alt mechanism, not setFocus()). Fixed with
+             self.menuBar().setFocusPolicy(Qt.FocusPolicy.StrongFocus) in
+             setup_ui(), since here the menu bar is being deliberately used
+             as one of three custom panes, not relying on native Alt
+             behaviour.
+          2. Qt.ShortcutContext.ApplicationShortcut (the plan's original
+             choice) caused ambiguous-shortcut failures once more than one
+             MainWindow instance existed in the same QApplication - exactly
+             what happens across sequential tests in one pytest session, not
+             a real-app scenario, but real all the same. Switched to
+             WindowShortcut (Qt's default context), which still fires
+             regardless of which child widget within THIS window holds
+             focus - the actual requirement - without ApplicationShortcut's
+             app-wide reach.
+          _last_focused_region tracking depends on QApplication.focusChanged
+          having actually been processed - tests that manipulate focus
+          directly (not via a real keypress) need an explicit
+          QApplication.processEvents() call after each .setFocus(), added
+          as a small _focus() test helper.
+          F6/Shift+F6 pane-cycle logic (_cycle_pane_forward/backward) is
+          tested by calling it directly rather than via a simulated F6
+          keypress, plus one separate end-to-end test that does send a real
+          F6 keypress to confirm the QShortcut is actually wired up - real
+          QShortcut activation via a simulated keypress proved less
+          reliable offscreen depending on which widget already had focus
+          when the key arrived (the existing Ctrl+A shortcut has never had
+          a test at all, for the same reason). Full suite: 94 passed after
+          this task alone.
+        > CORRECTION 2026-08-06 (live-tested, reported after the user tried
+          it): the "three panes including the menu bar" design above was
+          the user's own original spec, but after actually using it they
+          reversed that - F6/Shift+F6 now toggle between just two panes,
+          the regions area and the status bar. Menu bar access is left to
+          the OS's native Alt mechanism, not F6, matching ordinary Windows
+          application behaviour. Simplified _cycle_pane_forward/backward
+          into one _toggle_pane() method (a two-state toggle has no
+          separate "reverse"; both shortcuts call it), removed the
+          "menu" branch from _current_pane(), and removed
+          self.menuBar().setFocusPolicy(StrongFocus) - nothing calls
+          menuBar().setFocus() any more, so it was dead weight. See the
+          reworded D-10.
+        > FIX 2026-08-06 (live-tested bug, reported by the user): Tab from
+          Region 4 was landing on the status bar instead of wrapping back
+          to Region 1. Root cause: QWidget.setTabOrder(a, b) splices a link
+          into ONE shared window-wide focus chain, not an isolated loop -
+          the status_bar = StatusBarWidget() call happened AFTER the four
+          setTabOrder() calls that build the region_1->2->3->4->1 loop, so
+          the status bar's three newly-focusable fields got auto-inserted
+          into that same chain wherever Qt naturally placed them, breaking
+          the region_4->region_1 link. Fixed by moving the status bar
+          construction before the setTabOrder() calls, so the loop is
+          re-asserted as the chain's final word. New regression test
+          test_tab_from_region_4_wraps_back_to_region_1_not_the_status_bar.
+          Full suite: 101 passed.
+        > FIX 2026-08-06 (second pass, live-tested bug reported by the
+          user): the diagnosis above was incomplete. Reordering the
+          setTabOrder() calls fixed region_4->region_1 but the user then
+          found Tab from Region 1 landed on the status bar instead of
+          Region 2 - and that pattern (fix the wrap edge, break a forward
+          edge, or vice versa) repeats no matter what order the four calls
+          run in. Root cause, confirmed by direct experiment against Qt's
+          real focus chain (see conversation notes): QWidget.setTabOrder(a,
+          b) works by relocating b's node in ONE shared window-wide ring;
+          relocating a node resets ITS OWN outgoing pointer as a side
+          effect. Closing a 4-widget loop needs all four widgets touched -
+          region_1 both as a source (call 1: region_1->region_2) and as a
+          target (call 4: region_4->region_1) - so whichever of those two
+          calls runs first has its edge silently discarded when the other
+          one relocates region_1 again. With 4 widgets each used once as a
+          source and once as a target, the dependency between the calls
+          (call N's edge only sticks if call N happens after whatever call
+          last used N's source widget as a target) is circular: no call
+          order satisfies it. This isn't a bug in this codebase's usage of
+          setTabOrder, it's a structural limitation of pairwise chain
+          splicing applied to a closed ring - not fixable by reordering,
+          only by not doing it that way.
+          Fix: stopped using QWidget.setTabOrder/focusNextChild/
+          focusPreviousChild for the regions area entirely. Removed the
+          four setTabOrder() calls from setup_ui(). Added
+          MainWindow.focus_next_region(current)/focus_previous_region(current),
+          which index into a fixed [region_1, region_2, region_3, region_4]
+          list and call .setFocus() directly on the neighbour - no chain,
+          no relocation, no circular dependency. RegionTableWidget,
+          Region2ListWidget and TimelineListWidget's Tab/Backtab handlers
+          now call window().focus_next_region(self)/focus_previous_region(self)
+          instead of window().focusNextChild()/focusPreviousChild(). The
+          status bar's own Tab/Backtab handling (_StatusField.event(), C6)
+          was never part of this problem - it already bypassed the global
+          chain by calling StatusBarWidget.focus_field() directly, which is
+          exactly the pattern now applied to the regions area too.
+          Replaced test_tab_from_region_4_wraps_back_to_region_1_not_the_status_bar
+          with test_tab_cycles_through_all_four_regions_and_wraps (checks
+          the full 1->2->3->4->1 loop, not just the one edge that happened
+          to be under test before) and a new
+          test_shift_tab_cycles_through_all_four_regions_in_reverse. Full
+          suite: 102 passed, re-run several times with no flakiness.
+[x] C8  Menu bar: add Navigation menu (First/Last measure, Goto Measure
+        dialog) and Help menu (About); Edit/View/Options deferred to their
+        owning phases - Functional Spec
+        > Navigation menu: "Move to First Measure" -> navigate_timeline_home()
+          then self.region_3.setFocus(); "Move to Last Measure" -> same with
+          navigate_timeline_end(); "Go to Measure..." -> new
+          widgets/goto_measure_dialog.py (small modal QDialog: label +
+          digits-only QLineEdit + OK/Cancel), reusing
+          MusicData.jump_to_measure() from C4 on accept, playing the boundary
+          cue on an invalid number, moving focus to Region 3 on success.
+        > Help menu: "About Recall Score..." -> new widgets/about_dialog.py
+          (AboutDialog(QDialog), not a bare QMessageBox.about() call - the
+          user wants room to add links and formatted text later, e.g. a
+          QLabel with setOpenExternalLinks(True)/rich text and an OK button).
+          Static description for now; no version number exists anywhere in
+          the repo yet, so none is invented here.
+        > Edit/View/Options intentionally NOT added yet. Edit -> lands with
+          K1 (Ctrl+Shift+E mode toggle); Options -> lands with F2 (Note
+          Display dialog). View has no owning task in the catalogue at all -
+          open point, not silently decided (see PDD Open Design Decisions).
+        > TESTS: tests/test_main_window.py (Navigation menu's First/Last
+          actions move focus + position; Goto Measure dialog accepts a valid
+          number and rejects an invalid one with the boundary cue; About
+          action opens without crashing).
+        > DONE 2026-08-06. Built as planned; one fix along the way -
+          _show_goto_measure_dialog() originally compared against
+          GotoMeasureDialog.DialogCode.Accepted, which broke as soon as a
+          test monkeypatched main_window.GotoMeasureDialog to inject a
+          pre-built dialog (the patched name then pointed at a plain
+          function, which has no DialogCode). Switched the comparison to
+          QDialog.DialogCode.Accepted (inherited, unaffected by patching the
+          subclass name) - GotoMeasureDialog/AboutDialog are still
+          constructed by name so tests can monkeypatch main_window's
+          reference to them and inject a pre-configured dialog instead of
+          driving a real exec() event loop. Full suite: 99 passed after this
+          task alone.
+        > FOLLOW-UP 2026-08-06 (live-tested refinements, reported by the
+          user): four small changes after trying C8/C4 for real.
+          1. Go to Measure... now opens on Ctrl+G too (kept as a menu item
+             as well). GotoMeasureDialog gained a current_measure parameter;
+             _show_goto_measure_dialog() reads
+             MusicData.get_current_slice().measure and passes it through, so
+             the field opens pre-filled with the current bar and selected
+             for easy overtyping instead of blank.
+          2. Clarified this dialog is "go to measure", not "go to measure
+             and beat" - the label now reads "Measure number (whole numbers
+             only, no beat position)". The actual rejection of "4.3"-style
+             input was already there (QIntValidator has never accepted a
+             decimal point) - this was a wording gap, not a validation gap.
+          3. "Move to First Measure"/"Move to Last Measure" renamed to
+             "Move to First Note"/"Move to Last Note" - matches what they've
+             always actually done (navigate_timeline_home/end jump to the
+             first/last SOUNDING note via _sounding_bounds(), skipping
+             leading/trailing rest-only padding, not "measure 1" literally).
+             Both gained real keyboard shortcuts, Home and End respectively
+             (previously only a same-menu mnemonic, no actual shortcut) -
+             confirmed by direct testing that these coexist fine with Region
+             3's own Home/End handling (TimelineListWidget's keyPressEvent
+             intercepts the key directly before Qt's shortcut system would
+             fire the QAction, so the region keeps its existing behaviour;
+             the menu shortcut fires when focus is elsewhere, e.g. Region 1).
+          4. QAction/QMenu objects created in setup_menu() were local
+             variables, not attributes - PySide's Python wrapper for one
+             (navigation_menu) got garbage-collected despite the underlying
+             C++ QMenu still being alive and parented, producing "libshiboken:
+             Internal C++ object already deleted" the first time a test
+             tried to inspect it after the fact. Fixed generally, not just
+             worked around: every QAction in setup_menu() (first_measure_
+             action, last_measure_action, goto_measure_action, about_action)
+             is now self.first_measure_action etc., matching how
+             f6_shortcut/select_all_shortcut were already stored.
+          Also: introduced version.py (__version__ = "0.1.1") and put it in
+          the About dialog - see D-13. Full suite: 107 passed.
 
 
 ###
@@ -668,6 +978,67 @@ D-9  Source of the boundary ("doh") sound - Ref 2 AC4, Ref 3 AC4, see C5
      sample - just a low, unobtrusive indicator that a boundary was hit).
      Making it configurable on/off, and choosing a different instrument/
      pitch, is explicitly deferred until it's actually asked for.
+
+D-10 F6 pane-cycling mechanism and scope - Functional Spec, see C7
+     DECIDED 2026-08-06, REVISED 2026-08-06 after live testing: originally
+     three panes (menu bar, regions, status bar) - the user's own initial
+     spec - but after trying it, the user reversed that: F6/Shift+F6 now
+     toggle between just TWO panes, the regions area and the status bar.
+     Menu bar access is left to the OS's native Alt mechanism, not F6,
+     matching ordinary Windows application behaviour instead of adding a
+     bespoke path to something already reachable natively. Mechanism: a
+     WindowShortcut-context QShortcut on MainWindow (not
+     ApplicationShortcut - see C7's DONE note for why that caused ambiguous-
+     shortcut failures) so it fires no matter which child widget holds
+     focus. Tab/Shift+Tab keep their existing job of cycling the four
+     regions (and, new in C6, cycling a pane's own internal fields for the
+     status bar) and stay out of pane-switching entirely. The "regions" stop
+     restores whichever region was last focused (tracked via
+     QApplication.focusChanged), defaulting to Region 1 before anything has
+     been focused - this is a partial answer to the "Focus memory in
+     regions" Discussion Point: it remembers the region, not the row within
+     it. Since a two-pane toggle has no distinct "reverse", both F6 and
+     Shift+F6 call the same _toggle_pane().
+
+D-11 Status bar field tracking and FIFTHS_MAP relocation - Functional Spec,
+     see C6
+     DECIDED 2026-08-06: key signature (fifths) becomes per-EventSlice state,
+     tracked through the score exactly the way A6 already tracks time
+     signature (both can change mid-piece, see score_way_to_go) - not a
+     separate lookup, not read once at file-open like Region 1's summary
+     values. FIFTHS_MAP moves from parsers/musicXML_reader.py to new
+     models/key_signatures.py so models/music_data.py can read the current
+     position's key without a parsers->models reverse import; Region 1's
+     display and the status bar's live display now share one mapping. Status
+     bar key wording keeps the existing "/" format ("G major / E minor"),
+     not the alternate "or" wording floated during planning - no wording
+     change, everywhere stays consistent.
+
+D-12 Region cycle (Tab/Shift+Tab within the MAA) mechanism - Functional
+     Spec, see C1/C7
+     DECIDED 2026-08-06, after a second live-tested Tab bug (see C7's second
+     FIX note): QWidget.setTabOrder cannot reliably close a 4-widget loop at
+     all here - not a matter of getting the call order right, a structural
+     limitation (relocating any one of the four widgets to fix one edge
+     necessarily breaks another, and the four required relocations form a
+     genuine cycle of dependencies). Region cycling now bypasses Qt's global
+     focus chain entirely: MainWindow.focus_next_region/focus_previous_region
+     index into a fixed 4-widget list and call .setFocus() directly, and
+     RegionTableWidget/Region2ListWidget/TimelineListWidget's Tab/Backtab
+     handlers call those instead of window().focusNextChild()/
+     focusPreviousChild(). This is the same pattern C6's status bar fields
+     already used for their own internal Tab cycling (StatusBarWidget.
+     focus_field(), never routed through the global chain) - now applied
+     consistently to the regions area too. No more QWidget.setTabOrder calls
+     anywhere in the app.
+
+D-13 Version numbering - Functional Spec, see C8 (About dialog)
+     DECIDED 2026-08-06: semantic-ish X.Y.Z in version.py, starting at
+     0.1.1, shown in the About dialog. The user owns Y (minor) and X
+     (major) bumps and will say when those change; Z (patch) is bumped by
+     whoever commits+pushes, on every push. Nothing in the codebase
+     automates the bump (no git hook) - it's a manual step to remember when
+     asked to commit and push.
 
 
 ###

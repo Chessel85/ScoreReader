@@ -5,8 +5,12 @@ If any test here opens a window or an audio device, the harness is broken.
 """
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QValidator
+from PySide6.QtWidgets import QApplication, QDialog, QLabel
 
 from main_window import MainWindow
+from widgets.about_dialog import AboutDialog
+from widgets.goto_measure_dialog import GotoMeasureDialog
 
 
 @pytest.fixture
@@ -200,6 +204,325 @@ def test_home_and_end_never_play_the_boundary_cue(window, qtbot, null_synth, min
     qtbot.keyClick(window.region_3, Qt.Key.Key_Home)
 
     assert all(p["channel"] != window.BOUNDARY_CHANNEL for p in null_synth.played)
+
+
+def _show(window, qtbot):
+    """F6 pane cycling (C7) moves real Qt keyboard focus between widgets,
+    which needs a shown, exposed window to behave correctly - unlike every
+    other test in this file, which only exercises keyPressEvent handlers
+    directly and never needed real focus tracking (see the docstring on
+    test_four_distinct_regions_are_tab_focusable)."""
+    window.show()
+    qtbot.waitExposed(window)
+
+
+def _focus(widget):
+    """setFocus() alone only schedules a focusChanged signal - process
+    events so MainWindow._on_focus_changed (which _last_focused_region
+    tracking relies on) has actually run before the next assertion."""
+    widget.setFocus()
+    QApplication.processEvents()
+
+
+def test_f6_activated_moves_focus_from_a_region_to_the_status_bar(
+    window, qtbot, null_synth, minimal_score
+):
+    """End-to-end proof the F6 QShortcut is actually wired to _toggle_pane
+    (as opposed to test_f6_toggles_between_regions_and_status_bar below,
+    which calls that logic directly - real QShortcut activation via a
+    simulated keypress is otherwise untested anywhere in this app, e.g. the
+    existing Ctrl+A shortcut has no test at all, and is flakier to drive
+    reliably offscreen depending on which widget already has focus)."""
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+    _focus(window.region_1)
+
+    qtbot.keyClick(window, Qt.Key.Key_F6)
+
+    assert window.focusWidget() is window.status_bar.first_field()
+
+
+def test_f6_toggles_between_regions_and_status_bar(window, qtbot, null_synth, minimal_score):
+    """Just two panes - menu bar access stays on the OS's native Alt
+    mechanism, not F6 (corrected 2026-08-06 after live testing)."""
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+    _focus(window.region_1)
+
+    window._toggle_pane()
+    assert window.focusWidget() is window.status_bar.first_field()
+
+    window._toggle_pane()
+    assert window.focusWidget() is window.region_1
+
+
+def test_f6_restores_the_last_focused_region_not_always_region_1(
+    window, qtbot, null_synth, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+    _focus(window.region_3)
+    _focus(window.status_bar.first_field())  # simulate having left the regions area
+
+    window._toggle_pane()  # -> regions: should restore region_3
+
+    assert window.focusWidget() is window.region_3
+
+
+def test_shift_f6_also_toggles_between_regions_and_status_bar(
+    window, qtbot, null_synth, minimal_score
+):
+    """A plain two-pane toggle has no real "reverse" - Shift+F6 does the
+    same thing as F6, so it's just as safe/expected to press either way."""
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+    _focus(window.region_1)
+
+    qtbot.keyClick(window, Qt.Key.Key_F6, Qt.KeyboardModifier.ShiftModifier)
+    assert window.focusWidget() is window.status_bar.first_field()
+
+    qtbot.keyClick(window, Qt.Key.Key_F6, Qt.KeyboardModifier.ShiftModifier)
+    assert window.focusWidget() is window.region_1
+
+
+def test_tab_cycles_through_all_four_regions_and_wraps(
+    window, qtbot, null_synth, minimal_score
+):
+    """Regression: Tab used to be forwarded to window().focusNextChild(),
+    relying on QWidget.setTabOrder to have built a clean 4-widget loop.
+    Qt's focus chain is ONE shared window-wide ring, and setTabOrder(a, b)
+    works by relocating b's node into it - closing the loop needs region_1
+    relocated too (the wrap-around region_4->region_1 call), which resets
+    region_1's own outgoing pointer as a side effect, silently breaking the
+    region_1->region_2 edge set by an earlier call. This isn't fixable by
+    reordering the calls: with 4 widgets each used once as a source and once
+    as a target, the dependency between the calls is circular - some edge
+    always breaks. Fixed by having MainWindow.focus_next_region move focus
+    directly instead of going through Qt's global chain at all."""
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+    _focus(window.region_1)
+
+    for expected in (window.region_2, window.region_3, window.region_4, window.region_1):
+        qtbot.keyClick(window.focusWidget(), Qt.Key.Key_Tab)
+        assert window.focusWidget() is expected
+
+
+def test_shift_tab_cycles_through_all_four_regions_in_reverse(
+    window, qtbot, null_synth, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+    _focus(window.region_1)
+
+    for expected in (window.region_4, window.region_3, window.region_2, window.region_1):
+        qtbot.keyClick(window.focusWidget(), Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier)
+        assert window.focusWidget() is expected
+
+
+def test_status_bar_updates_on_load_and_navigation(window, qtbot, null_synth, ts_change_score):
+    """C6: status bar reflects the loaded score and then the new position
+    after Ctrl+Right jumps into the 6/8 measure."""
+    load_and_wait(window, qtbot, ts_change_score)
+
+    fields = window.status_bar._fields
+    assert [f.text() for f in fields] == ["Measure 1 beat 1", "Key: C major / A minor", "Time: 4/4"]
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Right, Qt.KeyboardModifier.ControlModifier)
+
+    assert [f.text() for f in fields] == ["Measure 2 beat 1", "Key: C major / A minor", "Time: 6/8"]
+
+
+def test_status_bar_shows_pending_digits_while_typing_a_bar_number(
+    window, qtbot, null_synth, many_measures_score
+):
+    load_and_wait(window, qtbot, many_measures_score)
+
+    qtbot.keyClicks(window.region_3, "12")
+    assert window.status_bar._fields[0].text() == "Go to bar: 12"
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Return)
+    assert window.status_bar._fields[0].text() == "Measure 12 beat 1"
+
+
+def test_typing_digits_then_enter_jumps_to_that_measure(window, qtbot, null_synth, many_measures_score):
+    """C4, Ref 6: multi-digit bar number typed into the Note region."""
+    load_and_wait(window, qtbot, many_measures_score)
+
+    qtbot.keyClicks(window.region_3, "12")
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Return)
+
+    assert window._music_data.active_event_index == 11  # measure 12's only event
+
+
+def test_typing_an_unknown_bar_number_then_enter_plays_the_boundary_cue_and_does_not_move(
+    window, qtbot, null_synth, many_measures_score
+):
+    load_and_wait(window, qtbot, many_measures_score)
+    null_synth.played.clear()
+
+    qtbot.keyClicks(window.region_3, "99")
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Return)
+
+    assert window._music_data.active_event_index == 0
+    assert null_synth.last_played["channel"] == window.BOUNDARY_CHANNEL
+
+
+def test_escape_clears_pending_digits_without_moving(window, qtbot, null_synth, many_measures_score):
+    load_and_wait(window, qtbot, many_measures_score)
+    null_synth.played.clear()
+
+    qtbot.keyClicks(window.region_3, "5")
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Escape)
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Return)
+
+    assert window._music_data.active_event_index == 0
+    assert null_synth.played == [], "Escape then Enter must not jump nor play the boundary cue"
+
+
+def test_an_arrow_key_clears_any_pending_digits(window, qtbot, null_synth, many_measures_score):
+    """Typing "1" then moving right before pressing Enter must not leave a
+    stale "1" waiting to be actioned by a later, unrelated Enter."""
+    load_and_wait(window, qtbot, many_measures_score)
+
+    qtbot.keyClicks(window.region_3, "1")
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Right)  # measure 2, clears the pending "1"
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Return)  # no digits pending - inert (E6 not built)
+
+    assert window._music_data.active_event_index == 1  # still just one step right from start
+
+
+def test_navigation_menu_first_and_last_measure_move_focus_and_position(
+    window, qtbot, null_synth, ts_change_score
+):
+    load_and_wait(window, qtbot, ts_change_score)
+    window.region_1.setFocus()
+
+    window._navigation_menu_last_measure()
+    assert window._music_data.active_event_index == window._music_data.last_event_index()
+    assert window.focusWidget() is window.region_3
+
+    window.region_1.setFocus()
+    window._navigation_menu_first_measure()
+    assert window._music_data.active_event_index == 0
+    assert window.focusWidget() is window.region_3
+
+
+def test_goto_measure_dialog_accepts_a_valid_measure_number(
+    window, qtbot, null_synth, ts_change_score, monkeypatch
+):
+    load_and_wait(window, qtbot, ts_change_score)
+
+    dialog = GotoMeasureDialog(window)
+    dialog.measure_edit.setText("2")
+    monkeypatch.setattr(dialog, "exec", lambda: GotoMeasureDialog.DialogCode.Accepted)
+    monkeypatch.setattr("main_window.GotoMeasureDialog", lambda parent, current_measure=None: dialog)
+
+    window._show_goto_measure_dialog()
+
+    assert window._music_data.active_event_index == 4  # first event of measure 2
+    assert window.focusWidget() is window.region_3
+
+
+def test_goto_measure_dialog_rejects_an_unknown_measure_with_the_boundary_cue(
+    window, qtbot, null_synth, ts_change_score, monkeypatch
+):
+    load_and_wait(window, qtbot, ts_change_score)
+    null_synth.played.clear()
+
+    dialog = GotoMeasureDialog(window)
+    dialog.measure_edit.setText("99")
+    monkeypatch.setattr(dialog, "exec", lambda: GotoMeasureDialog.DialogCode.Accepted)
+    monkeypatch.setattr("main_window.GotoMeasureDialog", lambda parent, current_measure=None: dialog)
+
+    window._show_goto_measure_dialog()
+
+    assert window._music_data.active_event_index == 0
+    assert null_synth.last_played["channel"] == window.BOUNDARY_CHANNEL
+
+
+def test_goto_measure_dialog_cancelled_does_not_move(
+    window, qtbot, null_synth, ts_change_score, monkeypatch
+):
+    load_and_wait(window, qtbot, ts_change_score)
+    null_synth.played.clear()
+
+    dialog = GotoMeasureDialog(window)
+    dialog.measure_edit.setText("2")
+    monkeypatch.setattr(dialog, "exec", lambda: GotoMeasureDialog.DialogCode.Rejected)
+    monkeypatch.setattr("main_window.GotoMeasureDialog", lambda parent, current_measure=None: dialog)
+
+    window._show_goto_measure_dialog()
+
+    assert window._music_data.active_event_index == 0
+    assert null_synth.played == []
+
+
+def test_goto_measure_dialog_prefilled_with_the_current_measure(
+    window, qtbot, null_synth, ts_change_score
+):
+    load_and_wait(window, qtbot, ts_change_score)
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Right, Qt.KeyboardModifier.ControlModifier)
+    assert window._music_data.get_current_slice().measure == 2
+
+    dialog = GotoMeasureDialog(window, current_measure=window._music_data.get_current_slice().measure)
+
+    assert dialog.measure_edit.text() == "2"
+
+
+def test_goto_measure_dialog_rejects_a_decimal_beat_position(window):
+    """C8 clarification: this is "go to measure", not "go to measure and
+    beat" - "4.3" must never be read as measure 4 beat 3. setText() bypasses
+    the validator (it's only consulted for user keystrokes), so exercise the
+    validator directly rather than through the QLineEdit."""
+    dialog = GotoMeasureDialog(window)
+
+    state, _, _ = dialog.measure_edit.validator().validate("4.3", 3)
+
+    assert state != QValidator.State.Acceptable
+
+
+def test_ctrl_g_shortcut_opens_the_goto_measure_dialog(window, qtbot, null_synth, minimal_score, monkeypatch):
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+    _focus(window.region_1)
+    opened = []
+    monkeypatch.setattr(
+        "main_window.GotoMeasureDialog",
+        lambda parent, current_measure=None: type(
+            "FakeDialog", (), {"exec": lambda self: opened.append(True) or QDialog.DialogCode.Rejected}
+        )(),
+    )
+
+    qtbot.keyClick(window, Qt.Key.Key_G, Qt.KeyboardModifier.ControlModifier)
+
+    assert opened == [True]
+
+
+def test_navigation_menu_items_use_home_and_end_shortcuts(window):
+    assert window.first_measure_action.shortcut() == QKeySequence(Qt.Key.Key_Home)
+    assert window.last_measure_action.shortcut() == QKeySequence(Qt.Key.Key_End)
+    assert window.goto_measure_action.shortcut() == QKeySequence("Ctrl+G")
+
+
+def test_about_dialog_shows_the_version_number(window):
+    from version import __version__
+
+    dialog = AboutDialog(window)
+    labels = dialog.findChildren(QLabel)
+
+    assert any(__version__ in label.text() for label in labels)
+
+
+def test_about_action_opens_without_crashing(window, qtbot, monkeypatch):
+    opened = []
+    monkeypatch.setattr("main_window.AboutDialog", lambda parent: type(
+        "FakeDialog", (), {"exec": lambda self: opened.append(True)}
+    )())
+
+    window._show_about_dialog()
+
+    assert opened == [True]
 
 
 def test_loading_a_missing_file_does_not_crash_or_leave_the_thread_dangling(window, qtbot):

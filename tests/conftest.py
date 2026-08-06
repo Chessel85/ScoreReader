@@ -95,6 +95,16 @@ def flute_crotchets_viola_semibreves_score() -> str:
 
 
 @pytest.fixture
+def many_measures_score() -> str:
+    """One part, twelve complete 1/4 bars, one quarter note each.
+
+    Gives digit-entry bar jump (C4, Ref 6) a real multi-digit measure number
+    (12) to target, without needing the user-provided 'Long tune' score.
+    """
+    return _require(FIXTURES_DIR / "many_measures.musicxml")
+
+
+@pytest.fixture
 def slice_ordering_score() -> str:
     """One complete 4/4 bar written out of offset order via forward/backup."""
     return _require(FIXTURES_DIR / "slice_ordering.musicxml")
@@ -117,6 +127,14 @@ def score_duet() -> str:
     parser currently mishandles (A3).
     """
     return _require(SCORES_DIR / "Chessel Duet" / "score.xml")
+
+
+@pytest.fixture
+def score_long_tune() -> str:
+    """4/4, one part, 130 measures, no pickup - a real score with genuine
+    multi-digit measure numbers, for C4's digit-entry bar jump (Ref 6).
+    """
+    return _require(SCORES_DIR / "long tune" / "score.xml")
 
 
 @pytest.fixture

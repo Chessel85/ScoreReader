@@ -12,10 +12,13 @@ def _duration_divs(elem) -> int:
     return int(dur_el.text.strip()) if (dur_el is not None and dur_el.text) else 0
 
 
-def _apply_attributes(attrs_elem, divisions: int, ts_num: int, ts_den: int) -> Tuple[int, int, int]:
+def _apply_attributes(
+    attrs_elem, divisions: int, ts_num: int, ts_den: int, fifths: int
+) -> Tuple[int, int, int, int]:
     """Ref 18: divisions/time signature can change mid-score, so this is
     called every time an <attributes> element is encountered walking in
-    document order, not just once for the whole file."""
+    document order, not just once for the whole file. Key signature
+    (fifths) is tracked the same way (C6/D-11) for the status bar."""
     div_elem = attrs_elem.find("divisions")
     if div_elem is not None and div_elem.text:
         divisions = int(div_elem.text.strip())
@@ -29,7 +32,11 @@ def _apply_attributes(attrs_elem, divisions: int, ts_num: int, ts_den: int) -> T
         if bt is not None and bt.text:
             ts_den = int(bt.text.strip())
 
-    return divisions, ts_num, ts_den
+    fifths_elem = attrs_elem.find("key/fifths")
+    if fifths_elem is not None and fifths_elem.text:
+        fifths = int(fifths_elem.text.strip())
+
+    return divisions, ts_num, ts_den, fifths
 
 
 class _MeasureOffsetWalker:
@@ -42,10 +49,11 @@ class _MeasureOffsetWalker:
     independently, which meant a fix to one would not apply to the other.
     """
 
-    def __init__(self, divisions: int, ts_num: int, ts_den: int):
+    def __init__(self, divisions: int, ts_num: int, ts_den: int, fifths: int = 0):
         self.divisions = divisions
         self.ts_num = ts_num
         self.ts_den = ts_den
+        self.fifths = fifths
         self.offset_divs = 0
 
     def step(self, elem) -> Optional[Tuple[int, bool]]:
@@ -59,8 +67,8 @@ class _MeasureOffsetWalker:
         effect).
         """
         if elem.tag == "attributes":
-            self.divisions, self.ts_num, self.ts_den = _apply_attributes(
-                elem, self.divisions, self.ts_num, self.ts_den
+            self.divisions, self.ts_num, self.ts_den, self.fifths = _apply_attributes(
+                elem, self.divisions, self.ts_num, self.ts_den, self.fifths
             )
             return None
         if elem.tag == "backup":
@@ -126,12 +134,17 @@ class TimelineBuilder:
         first_measure_number, needs_reindex, pickup_filled_quarters = self._detect_pickup(root)
 
         buckets: Dict[Tuple[int, float], List[NoteData]] = {}
+        # Time signature + key fifths in effect at each (measure, offset) key,
+        # for stamping the built EventSlice (C6/D-11) - tracked alongside the
+        # buckets since a slice's own state isn't known until every part's
+        # notes at that key have been visited.
+        slice_state: Dict[Tuple[int, float], Tuple[Tuple[int, int], int]] = {}
 
         for part in root.findall("part"):
             part_id = part.attrib.get("id", "")
             part_name = part_names.get(part_id, default_part_name)
 
-            divisions, time_sig_num, time_sig_den = 1, 4, 4
+            divisions, time_sig_num, time_sig_den, fifths = 1, 4, 4, 0
             beat_unit_quarter_len = 4.0 / time_sig_den
             full_bar_quarters = time_sig_num * beat_unit_quarter_len
 
@@ -144,7 +157,7 @@ class TimelineBuilder:
 
                 m_num = raw_m_num - 1 if needs_reindex else raw_m_num
 
-                walker = _MeasureOffsetWalker(divisions, time_sig_num, time_sig_den)
+                walker = _MeasureOffsetWalker(divisions, time_sig_num, time_sig_den, fifths)
 
                 for elem in m:
                     result = walker.step(elem)
@@ -226,8 +239,11 @@ class TimelineBuilder:
                     if key not in buckets:
                         buckets[key] = []
                     buckets[key].append(note_obj)
+                    slice_state[key] = ((walker.ts_num, walker.ts_den), walker.fifths)
 
-                divisions, time_sig_num, time_sig_den = walker.divisions, walker.ts_num, walker.ts_den
+                divisions, time_sig_num, time_sig_den, fifths = (
+                    walker.divisions, walker.ts_num, walker.ts_den, walker.fifths
+                )
 
         sorted_keys = sorted(buckets.keys(), key=lambda k: (k[0], k[1]))
 
@@ -236,6 +252,7 @@ class TimelineBuilder:
             notes = buckets[(m_num, offset_q)]
             q_len = min(n.quarter_length for n in notes) if notes else 1.0
             beat_pos = notes[0].beat_position if notes else 1.0
+            time_sig, key_fifths = slice_state.get((m_num, offset_q), ((4, 4), 0))
 
             slices.append(
                 EventSlice(
@@ -243,6 +260,8 @@ class TimelineBuilder:
                     beat_position=beat_pos,
                     quarter_length=q_len,
                     notes=notes,
+                    time_sig=time_sig,
+                    key_fifths=key_fifths,
                 )
             )
 

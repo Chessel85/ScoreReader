@@ -287,6 +287,110 @@ def test_interior_rest_remains_individually_navigable(timeline, rest_score):
     assert md.active_event_index == 3, "F, the real last note - not affected by the interior rest"
 
 
+def test_jump_to_measure_moves_to_the_first_event_of_that_measure(timeline, ts_change_score):
+    """C4, Ref 6: typing a bar number then Enter."""
+    md = timeline(ts_change_score)
+    md.active_event_index = 2  # measure 1, not its first event
+
+    assert md.jump_to_measure(2) is True
+    assert md.active_event_index == 4  # first event of measure 2
+
+
+def test_jump_to_measure_returns_false_for_an_unknown_measure(timeline, ts_change_score):
+    """Ref 6 AC4: an unknown bar plays an error sound and does not move."""
+    md = timeline(ts_change_score)
+    md.active_event_index = 4
+
+    assert md.jump_to_measure(99) is False
+    assert md.active_event_index == 4
+
+
+def test_jump_to_measure_reaches_the_pickup_bar_numbered_zero(timeline, score_duet):
+    """Chessel Duet's pickup is measure 0 (A3) - typing "0" must reach it."""
+    md = timeline(score_duet)
+    md.active_event_index = 3  # measure 1, beat 1
+
+    assert md.jump_to_measure(0) is True
+    assert md.active_event_index == 0
+    assert md.timeline_slices[0].measure == 0
+
+
+def test_jump_to_measure_respects_the_voice_filter(timeline, flute_crotchets_viola_semibreves_score):
+    """Sympathetic to active notes, same as C2's Ctrl+Right/Left."""
+    md = timeline(flute_crotchets_viola_semibreves_score)
+    md.set_active_voice_filter({("P2", 1, 1)})
+
+    assert md.jump_to_measure(2) is True
+    assert md.active_event_index == 4
+
+
+def test_jump_to_measure_reaches_a_multi_digit_bar_number(timeline, many_measures_score):
+    md = timeline(many_measures_score)
+
+    assert md.jump_to_measure(12) is True
+    assert md.active_event_index == 11
+    assert md.timeline_slices[11].measure == 12
+
+
+def test_jump_to_measure_reaches_a_multi_digit_bar_number_on_a_real_long_score(
+    timeline, score_long_tune
+):
+    """The user-provided 'Long tune' score (130 measures on paper, no
+    pickup) - the realistic case many_measures_score's hand-rolled fixture
+    stands in for above. The piece's real notes end around measure 112;
+    measures 113-130 are trailing empty bars padding out the final system,
+    same rest-only-tail pattern _sounding_bounds already excludes elsewhere
+    (C5) - so 100 is used here as a real, safely-reachable multi-digit
+    target rather than the highest-numbered measure on the page."""
+    md = timeline(score_long_tune)
+
+    assert md.jump_to_measure(100) is True
+    landed = md.timeline_slices[md.active_event_index]
+    assert landed.measure == 100
+    assert landed.beat_position == 1.0
+
+    assert md.jump_to_measure(999) is False
+    assert md.timeline_slices[md.active_event_index].measure == 100, "unchanged on an unknown bar"
+
+
+def test_jump_to_measure_on_a_bar_with_trailing_rests_lands_on_its_first_sounding_event(
+    timeline, score_duet
+):
+    """Chessel Duet's measure 3 is a dotted crotchet followed by rests padding
+    the bar - jumping there must land on the crotchet (its real first event),
+    same sounding-bounds rule C5 already applies to Left/Right/Home/End."""
+    md = timeline(score_duet)
+    md.active_event_index = 0
+
+    assert md.jump_to_measure(3) is True
+    assert md.active_event_index == 15
+
+
+def test_status_bar_fields_reflect_the_time_and_key_signature_at_the_current_position(
+    timeline, score_way_to_go
+):
+    """C6/D-11: Way To Go changes both time and key signature mid-piece
+    (4/4 -> 3/4 -> 4/4, fifths 1 -> 2 -> 1) - the status bar must track the
+    cursor's own position, not the score's opening values."""
+    md = timeline(score_way_to_go)
+
+    early_fields = md.get_status_bar_fields()
+    assert early_fields[0].startswith("Measure 1 beat ")
+    assert early_fields[1] == "Key: G major / E minor"
+    assert early_fields[2] == "Time: 4/4"
+
+    assert md.move_timeline_end() is True
+    late_fields = md.get_status_bar_fields()
+
+    assert late_fields != early_fields, "position, key and/or time must differ later in the score"
+
+
+def test_status_bar_fields_before_a_score_is_loaded():
+    md = MusicData()
+
+    assert md.get_status_bar_fields() == ["Measure - beat -", "Key: -", "Time: -"]
+
+
 def test_get_channel_for_part_assigns_one_channel_per_part_in_order():
     md = MusicData(parts_info=[
         PartStructureInfo(part_id="P1", name="Piano", gmidi_program=1),

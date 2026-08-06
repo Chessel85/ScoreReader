@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from models.event_slice import EventSlice
+from models.key_signatures import FIFTHS_MAP
 from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
 from parsers.timeline_builder import TimelineBuilder
@@ -220,6 +221,25 @@ class MusicData:
                 return True
         return False
 
+    def jump_to_measure(self, measure_number: int) -> bool:
+        """Ref 6: jump to the first visible event of measure_number, typed
+        digit-by-digit in the Note region (C4). Bounded by _sounding_bounds()
+        the same way move_timeline_*_by_measure is, so a measure that exists
+        only as trailing rest-only padding is not a valid target either.
+        False (position unchanged) for an unknown measure number - callers
+        play the boundary cue (AC4)."""
+        bounds = self._sounding_bounds()
+        if bounds is None:
+            return False
+        first_idx, last_idx = bounds
+
+        target = self.first_visible_event_index_of_measure(measure_number)
+        if target is None or not (first_idx <= target <= last_idx):
+            return False
+
+        self.active_event_index = target
+        return True
+
     def move_timeline_home(self) -> bool:
         """Home (Ref 5): jump to the first event with a real sounding note.
 
@@ -408,3 +428,23 @@ class MusicData:
             return 500
         ms = (current.quarter_length * 60000.0) / float(self.tempo_bpm)
         return max(100, int(ms))
+
+    def get_status_bar_fields(self) -> List[str]:
+        """C6: three fields in Tab order for the status bar - measure/beat
+        position, key signature, and time signature, all read from the
+        *current* slice rather than the score's opening values, since either
+        can change mid-score (D-11) unlike Region 1's one-off summary."""
+        current = self.get_current_slice()
+        if current is None:
+            return ["Measure - beat -", "Key: -", "Time: -"]
+
+        beat = current.beat_position
+        beat_str = str(int(beat)) if float(beat).is_integer() else str(beat)
+        ts_num, ts_den = current.time_sig
+        key_name = FIFTHS_MAP.get(current.key_fifths, f"{current.key_fifths} sharps/flats")
+
+        return [
+            f"Measure {current.measure} beat {beat_str}",
+            f"Key: {key_name}",
+            f"Time: {ts_num}/{ts_den}",
+        ]

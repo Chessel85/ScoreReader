@@ -13,7 +13,7 @@ class Region2ListWidget(QListWidget):
     focused row on/off - toggling a part or staff off hides its descendants
     from the list without touching their own enabled state, so they come
     back with whatever on/off status they had before (Region2HierarchyModel
-    already guarantees this). Tab/Shift+Tab forward to the global region
+    already guarantees this). Tab/Shift+Tab forward to the region focus
     cycle like every other region widget.
     """
     # Emitted after every rebuild so Region 3 can filter notes (Ref 7)
@@ -60,10 +60,10 @@ class Region2ListWidget(QListWidget):
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Tab:
-            self.window().focusNextChild()
+            self.window().focus_next_region(self)
             return
         elif event.key() == Qt.Key.Key_Backtab:
-            self.window().focusPreviousChild()
+            self.window().focus_previous_region(self)
             return
         elif event.key() == Qt.Key.Key_O:
             curr_row = self.currentRow()

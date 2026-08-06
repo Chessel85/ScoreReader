@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Tuple
 
 import music21
 
+from models.key_signatures import FIFTHS_MAP
 from models.music_data import MusicData
 from models.parts_structure import PartStructureInfo
 
@@ -26,24 +27,6 @@ class MusicXMLReader:
     }
 
     DOTS_PREFIX = {0: "", 1: "dotted ", 2: "double-dotted ", 3: "triple-dotted "}
-
-    FIFTHS_MAP = {
-        0: "C major / A minor",
-        1: "G major / E minor",
-        2: "D major / B minor",
-        3: "A major / F# minor",
-        4: "E major / C# minor",
-        5: "B major / G# minor",
-        6: "F# major / D# minor",
-        7: "C# major / A# minor",
-        -1: "F major / D minor",
-        -2: "Bb major / G minor",
-        -3: "Eb major / C minor",
-        -4: "Ab major / F minor",
-        -5: "Db major / Bb minor",
-        -6: "Gb major / Eb minor",
-        -7: "Cb major / Ab minor",
-    }
 
     def __init__(self, file_path: str):
         self.file_path = file_path
@@ -121,7 +104,7 @@ class MusicXMLReader:
             keys = score.flatten().getElementsByClass(music21.key.KeySignature)
             if keys:
                 ks = keys[0]
-                return self.FIFTHS_MAP.get(ks.sharps, f"{ks.sharps} sharps/flats")
+                return FIFTHS_MAP.get(ks.sharps, f"{ks.sharps} sharps/flats")
             
             explicit_keys = score.flatten().getElementsByClass(music21.key.Key)
             if explicit_keys:
@@ -152,7 +135,7 @@ class MusicXMLReader:
             fifths_elem = root.find(".//attributes/key/fifths")
             if fifths_elem is not None and fifths_elem.text:
                 fifths = int(fifths_elem.text.strip())
-                key_sig = self.FIFTHS_MAP.get(fifths, f"{fifths} sharps/flats")
+                key_sig = FIFTHS_MAP.get(fifths, f"{fifths} sharps/flats")
 
             beats_elem = root.find(".//attributes/time/beats")
             beat_type_elem = root.find(".//attributes/time/beat-type")
