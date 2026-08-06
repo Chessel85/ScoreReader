@@ -266,6 +266,25 @@ class MusicData:
             return True
         return False
 
+    def measure_numbers(self) -> List[int]:
+        """Distinct measure numbers present in the timeline, in ascending order."""
+        return list(dict.fromkeys(s.measure for s in self.timeline_slices))
+
+    def first_event_index_of_measure(self, measure_number: int) -> Optional[int]:
+        """Index of the first timeline event in the given measure.
+
+        None if that measure has no events - e.g. Ref 6: an unknown bar
+        plays an error sound and does not move.
+        """
+        for i, s in enumerate(self.timeline_slices):
+            if s.measure == measure_number:
+                return i
+        return None
+
+    def last_event_index(self) -> int:
+        """Index of the last timeline event, or -1 if the timeline is empty."""
+        return len(self.timeline_slices) - 1
+
     def get_region_1_data(self) -> Dict[str, str]:
         return self.credits
 

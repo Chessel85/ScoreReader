@@ -66,3 +66,37 @@ def test_playback_stays_silent_on_a_rest(timeline, rest_score):
     md.active_event_index = 1
 
     assert md.get_midi_notes_for_indices([0]) == []
+
+
+def test_measure_numbers_lists_each_measure_once_in_order(timeline, ts_change_score):
+    md = timeline(ts_change_score)
+
+    assert md.measure_numbers() == [1, 2, 3]
+
+
+def test_first_event_index_of_measure_finds_the_first_slice_in_that_bar(timeline, ts_change_score):
+    md = timeline(ts_change_score)
+
+    assert md.first_event_index_of_measure(1) == 0
+    assert md.first_event_index_of_measure(2) == 4
+    assert md.first_event_index_of_measure(3) == 8
+
+
+def test_first_event_index_of_measure_returns_none_for_an_unknown_bar(timeline, ts_change_score):
+    """Ref 6: an unknown bar plays an error sound and does not move."""
+    md = timeline(ts_change_score)
+
+    assert md.first_event_index_of_measure(99) is None
+
+
+def test_last_event_index_is_the_final_slice(timeline, ts_change_score):
+    md = timeline(ts_change_score)
+
+    assert md.last_event_index() == len(md.timeline_slices) - 1 == 11
+
+
+def test_last_event_index_is_minus_one_when_timeline_is_empty(timeline):
+    md = timeline("")
+
+    assert md.timeline_slices == []
+    assert md.last_event_index() == -1

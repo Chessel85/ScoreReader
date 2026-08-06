@@ -200,8 +200,18 @@ PHASE A - FOUNDATIONS AND MULTI-PART CORRECTNESS         (10 tasks)
           4/4->3/4->4/4) - a measure-6 whole note correctly resolves to
           ts_duration 4.0. Full suite: 34 passed, 0.6s.
 
-[ ] A7  Measure index helpers over timeline_slices - prerequisite for Refs 3, 5, 6
+[x] A7  Measure index helpers over timeline_slices - prerequisite for Refs 3, 5, 6
         > first_event_index_of_measure(n), measure_numbers(), last_event_index().
+        > DONE 2026-08-06. All three added to models/music_data.py.
+          measure_numbers() dedups timeline_slices measures in order (they
+          are already sorted by (measure, offset), so an adjacent-dedup via
+          dict.fromkeys is exact and O(n)). first_event_index_of_measure(n)
+          returns None for a measure with no events - callers use that for
+          Ref 6's "unknown bar plays an error sound and does not move"
+          instead of raising. last_event_index() returns -1 on an empty
+          timeline. No wiring into MainWindow yet - that lands with C2-C4.
+          New tests in tests/models/test_music_data.py using ts_change_score
+          (3 measures, 4 events each). Full suite: 39 passed, 0.68s.
 
 [ ] A8  FIX playback instrument per part/voice instead of always parts_info[0]
         - Ref 8, Ref 9 AC2, reported bug. Depends on A4.
