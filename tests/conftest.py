@@ -42,6 +42,30 @@ def minimal_score() -> str:
 
 
 @pytest.fixture
+def six_eight_score() -> str:
+    """One part, one complete 6/8 bar: quarter C, quarter D, eighth E, eighth F."""
+    return _require(FIXTURES_DIR / "six_eight.musicxml")
+
+
+@pytest.fixture
+def chord_score() -> str:
+    """One part, one complete 4/4 bar with a two-note chord on the second beat."""
+    return _require(FIXTURES_DIR / "chord.musicxml")
+
+
+@pytest.fixture
+def string_fret_score() -> str:
+    """One part, one complete 4/4 bar of two notes carrying string/fret data."""
+    return _require(FIXTURES_DIR / "string_fret.musicxml")
+
+
+@pytest.fixture
+def slice_ordering_score() -> str:
+    """One complete 4/4 bar written out of offset order via forward/backup."""
+    return _require(FIXTURES_DIR / "slice_ordering.musicxml")
+
+
+@pytest.fixture
 def score_bourree() -> str:
     """4/4 guitar score: notation staff plus a TAB staff duplicating it.
 
@@ -58,6 +82,17 @@ def score_duet() -> str:
     parser currently mishandles (A3).
     """
     return _require(SCORES_DIR / "Chessel Duet" / "score.xml")
+
+
+@pytest.fixture
+def score_way_to_go() -> str:
+    """4/4 two-part score: Flute (GM 74) + Viola (GM 42), no pickup.
+
+    Time signature changes 4/4 -> 3/4 -> 4/4 and key signature changes
+    mid-piece. The parser currently reads both from the first match only
+    (A6), so this is the fixture that exercises the bug.
+    """
+    return _require(SCORES_DIR / "Way To Go" / "score.xml")
 
 
 @pytest.fixture

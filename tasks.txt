@@ -41,6 +41,10 @@ CURRENT STATE
                table and Spacebar toggling does nothing.
 
 TEST SCORES (files/)
+  Use these three real MuseScore exports for functional/integration testing -
+  each exercises a different set of requirements no hand-written fixture
+  covers on its own. See tests/conftest.py for the score_* fixtures that
+  expose them (score_bourree, score_duet, score_way_to_go).
   bach-bourree-tab short  4/4, guitar, notation staff + TAB staff duplicating
                           it, pickup exported as number="1"
   Chessel Duet            6/8, TWO parts (Piano GM 1 with 2 staves + voices
@@ -49,6 +53,11 @@ TEST SCORES (files/)
                           tempo eighth=96. Exercises multi-part, compound
                           time and the second pickup convention - it is
                           currently mis-parsed in several ways.
+  Way To Go               4/4, TWO parts (Flute GM 74, Viola GM 42), no
+                          pickup. Time signature changes 4/4 -> 3/4 -> 4/4
+                          and key signature changes mid-piece (fifths 1 -> 2
+                          -> 1). The score to use for A6 (divisions/time
+                          signature tracked as they change, not first-match).
 
 
 ###
@@ -99,7 +108,7 @@ PHASE A - FOUNDATIONS AND MULTI-PART CORRECTNESS         (10 tasks)
           pytest runs green from a clean checkout, no window opens, no audio
           device is touched, and the run takes under ~5 seconds.
 
-[ ] A2  Characterisation tests for the current parser - NFR-03, locks Ref 18
+[x] A2  Characterisation tests for the current parser - NFR-03, locks Ref 18
         > Cover: quarter note = ts_duration 1.0 in 4/4 and 2.0 in 6/8; eighth
           note = 1.0 in 6/8; chord grouping into one EventSlice; string/fret
           capture from notations/technical; slice ordering by (measure, offset).
@@ -107,8 +116,14 @@ PHASE A - FOUNDATIONS AND MULTI-PART CORRECTNESS         (10 tasks)
           and these tests are what prove nothing regressed.
         > Record the currently-wrong pickup numbers as known-bad with an
           xfail marker, then flip them to expected in A3.
+        > DONE 2026-08-05. tests/models/test_timeline_characterisation.py,
+          6 passing + 2 strict xfail (pickup-numbered-0 bug, see A3). New
+          fixtures: tests/fixtures/{six_eight,chord,string_fret,
+          slice_ordering}.musicxml, plus score_duet for the xfail pair since
+          the bug only reproduces on a real file. Full suite: 22 passed, 2
+          xfailed, still under 1s.
 
-[ ] A3  FIX pickup numbering when the file already numbers the pickup 0
+[x] A3  FIX pickup numbering when the file already numbers the pickup 0
         - Ref 17, currently broken
         > Bourree exports the pickup as number="1", so the code's
           "subtract one from every measure" is right. Chessel Duet exports it
@@ -118,8 +133,13 @@ PHASE A - FOUNDATIONS AND MULTI-PART CORRECTNESS         (10 tasks)
         > Only re-index when the pickup is not already numbered 0.
         > Test both conventions: pickup must be measure 0 and the first full
           bar must be measure 1 in each.
+        > DONE 2026-08-06. models/music_data.py: added needs_reindex =
+          is_pickup and first_measure_number != 0, so re-indexing only fires
+          for the number="1" convention. Flipped the two A2 xfail tests in
+          test_timeline_characterisation.py to plain assertions - both now
+          pass on Chessel Duet. Full suite: 26 passed, 0 xfail, 0.6s.
 
-[ ] A4  Add part_id to NoteData; stamp each note with its real <part> id and
+[x] A4  Add part_id to NoteData; stamp each note with its real <part> id and
         that part's name - prerequisite for Ref 7
         > models/music_data.py:177 sets part_name from parts_info[0].name for
           every note. On Chessel Duet every guitar note is labelled "Piano".
@@ -127,6 +147,13 @@ PHASE A - FOUNDATIONS AND MULTI-PART CORRECTNESS         (10 tasks)
           and Guitar staff 1 voice 1 are indistinguishable today.
         > Region2HierarchyModel.get_active_voice_tuples() returns
           (part_id, staff, voice) - the ids must match.
+        > DONE 2026-08-06. NoteData and PartStructureInfo gained part_id.
+          _build_timeline_from_xml now reads part-list/score-part directly
+          (mirroring the note-list/forward/backup pass, since timeline tests
+          build MusicData without going through MusicXMLReader) and stamps
+          each note with its own part's id/name instead of parts_info[0].
+          New test: test_notes_are_stamped_with_their_real_part_id_and_name
+          on Chessel Duet (Piano P1 / Guitar P2). Full suite: 27 passed, 0.6s.
 
 [ ] A5  Explicit rests become timeline events - Ref 16 AC2
         > step_name "rest"; octave and midi_pitch become Optional[int] = None.
@@ -140,6 +167,8 @@ PHASE A - FOUNDATIONS AND MULTI-PART CORRECTNESS         (10 tasks)
         instead of first-match - Ref 18
         > music_data.py:38 and :48 use .//attributes/... which finds only the
           first occurrence in the whole file.
+        > Way To Go (files/) changes 4/4 -> 3/4 -> 4/4 mid-piece - use it to
+          prove ts_duration is computed per-measure, not from the first bar.
 
 [ ] A7  Measure index helpers over timeline_slices - prerequisite for Refs 3, 5, 6
         > first_event_index_of_measure(n), measure_numbers(), last_event_index().
