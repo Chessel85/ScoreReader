@@ -195,15 +195,11 @@
         <type>quarter</type>
         <stem>down</stem>
         </note>
-      <note default-x="54.8" default-y="-30">
-        <pitch>
-          <step>G</step>
-          <octave>4</octave>
-          </pitch>
+      <note default-x="54.8" default-y="-20">
+        <rest/>
         <duration>1</duration>
         <voice>1</voice>
         <type>quarter</type>
-        <stem>up</stem>
         </note>
       <note default-x="96.14" default-y="-25">
         <pitch>
