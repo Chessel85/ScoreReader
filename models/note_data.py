@@ -12,6 +12,7 @@ class NoteData:
     beat_position: float
     ts_duration: float
     quarter_length: float
+    part_id: str
     part_name: str
     staff: int
     voice: int

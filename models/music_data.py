@@ -33,6 +33,14 @@ class MusicData:
 
         default_part_name = self.parts_info[0].name if self.parts_info else "Classical Guitar"
 
+        part_names: Dict[str, str] = {}
+        for sp in root.findall(".//part-list/score-part"):
+            sp_id = sp.attrib.get("id", "")
+            name_elem = sp.find("part-name")
+            part_names[sp_id] = (
+                name_elem.text.strip() if name_elem is not None and name_elem.text else default_part_name
+            )
+
         time_sig_num = 4
         time_sig_den = 4
         ts_elem = root.find(".//attributes/time")
@@ -55,8 +63,14 @@ class MusicData:
         first_measure = root.find(".//part/measure")
         is_pickup = False
         pickup_filled_quarters = 0.0
+        first_measure_number = 1
 
         if first_measure is not None:
+            try:
+                first_measure_number = int(first_measure.attrib.get("number", "1"))
+            except ValueError:
+                first_measure_number = 1
+
             if first_measure.attrib.get("implicit") == "yes":
                 is_pickup = True
 
@@ -90,9 +104,17 @@ class MusicData:
             if 0 < pickup_filled_quarters < full_bar_quarters:
                 is_pickup = True
 
+        # Two exporter conventions for the pickup: numbered 1 (re-index every
+        # measure down by one so it lands on 0) or already numbered 0 (leave
+        # numbering alone - subtracting again would land it on -1).
+        needs_reindex = is_pickup and first_measure_number != 0
+
         buckets: Dict[Tuple[int, float], List[NoteData]] = {}
 
         for part in root.findall("part"):
+            part_id = part.attrib.get("id", "")
+            part_name = part_names.get(part_id, default_part_name)
+
             for m in part.findall("measure"):
                 m_attr_num = m.attrib.get("number", "1")
                 try:
@@ -100,7 +122,7 @@ class MusicData:
                 except ValueError:
                     raw_m_num = 1
 
-                m_num = raw_m_num - 1 if is_pickup else raw_m_num
+                m_num = raw_m_num - 1 if needs_reindex else raw_m_num
                 current_offset_divs = 0
 
                 for elem in m:
@@ -174,7 +196,8 @@ class MusicData:
                             beat_position=round(beat_pos, 2),
                             ts_duration=ts_duration,
                             quarter_length=quarter_len,
-                            part_name=default_part_name,
+                            part_id=part_id,
+                            part_name=part_name,
                             staff=staff,
                             voice=voice,
                             fret=fret,

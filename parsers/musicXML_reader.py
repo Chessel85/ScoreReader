@@ -190,7 +190,7 @@ class MusicXMLReader:
 
             for part_elem in root.findall("part"):
                 p_id = part_elem.attrib.get("id", "")
-                p_info = PartStructureInfo(name=part_names.get(p_id, "Classical Guitar"))
+                p_info = PartStructureInfo(part_id=p_id, name=part_names.get(p_id, "Classical Guitar"))
 
                 midi_prog_elem = root.find(f".//score-part[@id='{p_id}']//midi-program")
                 if midi_prog_elem is not None and midi_prog_elem.text:

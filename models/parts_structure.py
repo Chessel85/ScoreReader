@@ -5,6 +5,7 @@ from typing import Dict, List
 
 @dataclass
 class PartStructureInfo:
+    part_id: str = ""
     name: str = "Classical Guitar"
     gmidi_program: int = 25
     staves_clefs: Dict[int, str] = field(default_factory=dict)
