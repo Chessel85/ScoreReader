@@ -6,8 +6,6 @@ from typing import Optional
 @dataclass
 class NoteData:
     step_name: str
-    octave: int
-    midi_pitch: int
     measure: int
     beat_position: float
     ts_duration: float
@@ -16,5 +14,7 @@ class NoteData:
     part_name: str
     staff: int
     voice: int
+    octave: Optional[int] = None
+    midi_pitch: Optional[int] = None
     fret: Optional[int] = None
     string: Optional[int] = None

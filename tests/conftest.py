@@ -48,6 +48,26 @@ def six_eight_score() -> str:
 
 
 @pytest.fixture
+def rest_score() -> str:
+    """One part, one complete 4/4 bar: quarter C, quarter rest, quarter E, F.
+
+    The rest is explicit (<note><rest/></note>) - it must become its own
+    timeline event between C and E (A5, Ref 16 AC2).
+    """
+    return _require(FIXTURES_DIR / "rest.musicxml")
+
+
+@pytest.fixture
+def ts_change_score() -> str:
+    """One part, three complete bars: 4/4 (div=4) -> 6/8 (div=4) -> 4/4 (div=8).
+
+    Proves divisions and time signature are tracked as they change through
+    the score rather than read once from the first match (A6, Ref 18).
+    """
+    return _require(FIXTURES_DIR / "ts_change.musicxml")
+
+
+@pytest.fixture
 def chord_score() -> str:
     """One part, one complete 4/4 bar with a two-note chord on the second beat."""
     return _require(FIXTURES_DIR / "chord.musicxml")

@@ -155,20 +155,50 @@ PHASE A - FOUNDATIONS AND MULTI-PART CORRECTNESS         (10 tasks)
           New test: test_notes_are_stamped_with_their_real_part_id_and_name
           on Chessel Duet (Piano P1 / Guitar P2). Full suite: 27 passed, 0.6s.
 
-[ ] A5  Explicit rests become timeline events - Ref 16 AC2
+[x] A5  Explicit rests become timeline events - Ref 16 AC2
         > step_name "rest"; octave and midi_pitch become Optional[int] = None.
         > Only <note><rest/> elements. Gaps from <forward> or backup offsets
           do NOT become events.
         > Region 3 displays "rest". Region 4 omits the octave and midi rows.
           get_midi_notes_for_indices (music_data.py:282) must drop None
           pitches so playback stays silent on a rest.
+        > DONE 2026-08-06. NoteData.octave/midi_pitch are now
+          Optional[int] = None (reordered to the end of the dataclass so
+          defaults stay valid). _build_timeline_from_xml no longer skips
+          <rest/> notes - it builds a "rest" NoteData with no pitch/fret/
+          string instead. get_region_4_data_for_indices and
+          get_midi_notes_for_indices both guard on None. Region 3 needed no
+          change - step_name "rest" already reads correctly.
+          New fixture tests/fixtures/rest.musicxml (C, rest, E, F) plus 5
+          new tests across test_timeline_characterisation.py and
+          test_music_data.py. Verified against the real Way To Go score too
+          (user added a genuine rest to it) - parses to one rest event with
+          octave/midi_pitch None. Gaps from forward/backup NOT becoming
+          events was already covered by A2's slice_ordering fixture (4 notes
+          written with a forward-skip yield exactly 4 slices, not 5).
+          Full suite: 32 passed, 1.1s.
 
-[ ] A6  Track divisions and time signature as they change through the score
+[x] A6  Track divisions and time signature as they change through the score
         instead of first-match - Ref 18
         > music_data.py:38 and :48 use .//attributes/... which finds only the
           first occurrence in the whole file.
         > Way To Go (files/) changes 4/4 -> 3/4 -> 4/4 mid-piece - use it to
           prove ts_duration is computed per-measure, not from the first bar.
+        > DONE 2026-08-06. Replaced the single .//attributes/time and
+          .//attributes/divisions lookups with apply_attributes(), called
+          every time an <attributes> element is walked in document order -
+          once for the pickup-detection pass over the first measure, and
+          once per part inside the main measure loop (state resets per part,
+          since divisions is technically declared per-part in MusicXML).
+          beat_unit_quarter_len/full_bar_quarters are recomputed immediately
+          after each update, so ts_duration always reflects the measure that
+          note is actually in.
+          New fixture tests/fixtures/ts_change.musicxml: 4/4 (div=4) -> 6/8
+          (div=4) -> 4/4 (div=8), three complete bars, isolating the TS
+          change and the divisions change as two separate assertions. Also
+          spot-checked against the real Way To Go score (Flute/Viola,
+          4/4->3/4->4/4) - a measure-6 whole note correctly resolves to
+          ts_duration 4.0. Full suite: 34 passed, 0.6s.
 
 [ ] A7  Measure index helpers over timeline_slices - prerequisite for Refs 3, 5, 6
         > first_event_index_of_measure(n), measure_numbers(), last_event_index().

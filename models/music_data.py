@@ -41,24 +41,24 @@ class MusicData:
                 name_elem.text.strip() if name_elem is not None and name_elem.text else default_part_name
             )
 
-        time_sig_num = 4
-        time_sig_den = 4
-        ts_elem = root.find(".//attributes/time")
-        if ts_elem is not None:
-            b = ts_elem.find("beats")
-            bt = ts_elem.find("beat-type")
-            if b is not None and b.text:
-                time_sig_num = int(b.text.strip())
-            if bt is not None and bt.text:
-                time_sig_den = int(bt.text.strip())
+        def apply_attributes(attrs_elem, divisions, ts_num, ts_den):
+            """Ref 18: divisions/time signature can change mid-score, so this
+            is called every time an <attributes> element is encountered
+            walking in document order, not just once for the whole file."""
+            div_elem = attrs_elem.find("divisions")
+            if div_elem is not None and div_elem.text:
+                divisions = int(div_elem.text.strip())
 
-        divisions = 1
-        div_elem = root.find(".//attributes/divisions")
-        if div_elem is not None and div_elem.text:
-            divisions = int(div_elem.text.strip())
+            time_elem = attrs_elem.find("time")
+            if time_elem is not None:
+                b = time_elem.find("beats")
+                bt = time_elem.find("beat-type")
+                if b is not None and b.text:
+                    ts_num = int(b.text.strip())
+                if bt is not None and bt.text:
+                    ts_den = int(bt.text.strip())
 
-        beat_unit_quarter_len = 4.0 / time_sig_den
-        full_bar_quarters = time_sig_num * beat_unit_quarter_len
+            return divisions, ts_num, ts_den
 
         first_measure = root.find(".//part/measure")
         is_pickup = False
@@ -74,11 +74,16 @@ class MusicData:
             if first_measure.attrib.get("implicit") == "yes":
                 is_pickup = True
 
+            det_divisions, det_ts_num, det_ts_den = 1, 4, 4
             curr_offset = 0
             max_offset = 0
 
             for elem in first_measure:
-                if elem.tag == "backup":
+                if elem.tag == "attributes":
+                    det_divisions, det_ts_num, det_ts_den = apply_attributes(
+                        elem, det_divisions, det_ts_num, det_ts_den
+                    )
+                elif elem.tag == "backup":
                     dur = elem.find("duration")
                     if dur is not None and dur.text:
                         curr_offset -= int(dur.text.strip())
@@ -89,19 +94,20 @@ class MusicData:
                 elif elem.tag == "note":
                     staff = elem.find("staff")
                     staff_id = int(staff.text.strip()) if staff is not None and staff.text else 1
-                    
+
                     dur_el = elem.find("duration")
                     dur_divs = int(dur_el.text.strip()) if (dur_el is not None and dur_el.text) else 0
-                    
+
                     is_chord = elem.find("chord") is not None
                     if not is_chord:
                         curr_offset += dur_divs
                         if staff_id == 1:
                             max_offset = max(max_offset, curr_offset)
 
-            pickup_filled_quarters = max_offset / divisions
+            det_full_bar_quarters = det_ts_num * (4.0 / det_ts_den)
+            pickup_filled_quarters = max_offset / det_divisions
 
-            if 0 < pickup_filled_quarters < full_bar_quarters:
+            if 0 < pickup_filled_quarters < det_full_bar_quarters:
                 is_pickup = True
 
         # Two exporter conventions for the pickup: numbered 1 (re-index every
@@ -115,6 +121,10 @@ class MusicData:
             part_id = part.attrib.get("id", "")
             part_name = part_names.get(part_id, default_part_name)
 
+            divisions, time_sig_num, time_sig_den = 1, 4, 4
+            beat_unit_quarter_len = 4.0 / time_sig_den
+            full_bar_quarters = time_sig_num * beat_unit_quarter_len
+
             for m in part.findall("measure"):
                 m_attr_num = m.attrib.get("number", "1")
                 try:
@@ -126,7 +136,13 @@ class MusicData:
                 current_offset_divs = 0
 
                 for elem in m:
-                    if elem.tag == "forward":
+                    if elem.tag == "attributes":
+                        divisions, time_sig_num, time_sig_den = apply_attributes(
+                            elem, divisions, time_sig_num, time_sig_den
+                        )
+                        beat_unit_quarter_len = 4.0 / time_sig_den
+                        full_bar_quarters = time_sig_num * beat_unit_quarter_len
+                    elif elem.tag == "forward":
                         dur = elem.find("duration")
                         if dur is not None and dur.text:
                             current_offset_divs += int(dur.text.strip())
@@ -146,37 +162,41 @@ class MusicData:
                             note_offset_divs = current_offset_divs
                             current_offset_divs += dur_divs
 
-                        if is_rest:
-                            continue
-
-                        pitch_el = elem.find("pitch")
-                        if pitch_el is None:
-                            continue
-
-                        step = pitch_el.find("step").text.strip() if pitch_el.find("step") is not None else "C"
-                        octave = int(pitch_el.find("octave").text.strip()) if pitch_el.find("octave") is not None else 4
-                        alter_el = pitch_el.find("alter")
-                        alter = int(alter_el.text.strip()) if (alter_el is not None and alter_el.text) else 0
-
-                        acc_words = {1: " sharp", -1: " flat", 2: " double sharp", -2: " double flat", 0: ""}
-                        step_name = f"{step}{acc_words.get(alter, '')}"
-
-                        step_offsets = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
-                        midi_pitch = (octave + 1) * 12 + step_offsets.get(step, 0) + alter
-
                         staff = int(elem.find("staff").text.strip()) if elem.find("staff") is not None else 1
                         voice = int(elem.find("voice").text.strip()) if elem.find("voice") is not None else 1
 
-                        fret = None
-                        string_num = None
-                        tech_el = elem.find("notations/technical")
-                        if tech_el is not None:
-                            f_el = tech_el.find("fret")
-                            s_el = tech_el.find("string")
-                            if f_el is not None and f_el.text:
-                                fret = int(f_el.text.strip())
-                            if s_el is not None and s_el.text:
-                                string_num = int(s_el.text.strip())
+                        if is_rest:
+                            step_name = "rest"
+                            octave = None
+                            midi_pitch = None
+                            fret = None
+                            string_num = None
+                        else:
+                            pitch_el = elem.find("pitch")
+                            if pitch_el is None:
+                                continue
+
+                            step = pitch_el.find("step").text.strip() if pitch_el.find("step") is not None else "C"
+                            octave = int(pitch_el.find("octave").text.strip()) if pitch_el.find("octave") is not None else 4
+                            alter_el = pitch_el.find("alter")
+                            alter = int(alter_el.text.strip()) if (alter_el is not None and alter_el.text) else 0
+
+                            acc_words = {1: " sharp", -1: " flat", 2: " double sharp", -2: " double flat", 0: ""}
+                            step_name = f"{step}{acc_words.get(alter, '')}"
+
+                            step_offsets = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
+                            midi_pitch = (octave + 1) * 12 + step_offsets.get(step, 0) + alter
+
+                            fret = None
+                            string_num = None
+                            tech_el = elem.find("notations/technical")
+                            if tech_el is not None:
+                                f_el = tech_el.find("fret")
+                                s_el = tech_el.find("string")
+                                if f_el is not None and f_el.text:
+                                    fret = int(f_el.text.strip())
+                                if s_el is not None and s_el.text:
+                                    string_num = int(s_el.text.strip())
 
                         offset_q = note_offset_divs / divisions
                         quarter_len = dur_divs / divisions
@@ -286,8 +306,10 @@ class MusicData:
             dur_str = str(int(n.ts_duration)) if n.ts_duration.is_integer() else str(n.ts_duration)
 
             data[f"{prefix}step"] = n.step_name
-            data[f"{prefix}octave"] = str(n.octave)
-            data[f"{prefix}midi"] = str(n.midi_pitch)
+            if n.octave is not None:
+                data[f"{prefix}octave"] = str(n.octave)
+            if n.midi_pitch is not None:
+                data[f"{prefix}midi"] = str(n.midi_pitch)
             data[f"{prefix}measure"] = str(n.measure)
             data[f"{prefix}beat position"] = str(n.beat_position)
             data[f"{prefix}duration"] = dur_str
@@ -307,9 +329,9 @@ class MusicData:
         if not current or not selected_indices:
             return []
         return [
-            current.notes[i].midi_pitch 
-            for i in selected_indices 
-            if 0 <= i < len(current.notes)
+            current.notes[i].midi_pitch
+            for i in selected_indices
+            if 0 <= i < len(current.notes) and current.notes[i].midi_pitch is not None
         ]
 
     def get_current_gmidi_program(self) -> int:

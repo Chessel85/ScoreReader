@@ -39,3 +39,30 @@ def test_timeline_navigation_stops_at_both_boundaries(timeline, minimal_score):
 
     assert md.move_timeline_right() is False, "already at the last event"
     assert md.active_event_index == 3
+
+
+def test_region_3_shows_rest_as_the_word_rest(timeline, rest_score):
+    """A5: Region 3 needs no special-casing - a rest's step_name IS "rest"."""
+    md = timeline(rest_score)
+    md.active_event_index = 1  # C, rest, E, F
+
+    assert md.get_region_3_data() == ["rest"]
+
+
+def test_region_4_omits_octave_and_midi_rows_for_a_rest(timeline, rest_score):
+    md = timeline(rest_score)
+    md.active_event_index = 1
+
+    data = md.get_region_4_data_for_indices([0])
+
+    assert data["step"] == "rest"
+    assert "octave" not in data
+    assert "midi" not in data
+
+
+def test_playback_stays_silent_on_a_rest(timeline, rest_score):
+    """get_midi_notes_for_indices must drop None pitches so a rest plays nothing."""
+    md = timeline(rest_score)
+    md.active_event_index = 1
+
+    assert md.get_midi_notes_for_indices([0]) == []

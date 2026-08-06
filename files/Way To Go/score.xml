@@ -298,19 +298,9 @@
           <fifths>2</fifths>
           </key>
         </attributes>
-      <note default-x="43.22" default-y="-5">
+      <note default-x="43.22" default-y="-15">
         <pitch>
-          <step>E</step>
-          <octave>5</octave>
-          </pitch>
-        <duration>1</duration>
-        <voice>1</voice>
-        <type>quarter</type>
-        <stem>down</stem>
-        </note>
-      <note default-x="84.56" default-y="0">
-        <pitch>
-          <step>F</step>
+          <step>C</step>
           <alter>1</alter>
           <octave>5</octave>
           </pitch>
@@ -319,9 +309,21 @@
         <type>quarter</type>
         <stem>down</stem>
         </note>
-      <note default-x="125.9" default-y="5">
+      <note default-x="84.56" default-y="-15">
         <pitch>
-          <step>G</step>
+          <step>C</step>
+          <octave>5</octave>
+          </pitch>
+        <duration>1</duration>
+        <voice>1</voice>
+        <type>quarter</type>
+        <accidental>natural</accidental>
+        <stem>down</stem>
+        </note>
+      <note default-x="125.9" default-y="0">
+        <pitch>
+          <step>F</step>
+          <alter>1</alter>
           <octave>5</octave>
           </pitch>
         <duration>1</duration>
