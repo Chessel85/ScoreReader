@@ -22,7 +22,7 @@ def test_reader_captures_part_structure(minimal_score):
     assert len(data.parts_info) == 1
     part = data.parts_info[0]
     assert part.name == "Test Part"
-    assert part.staves_clefs[1] == "treble clef"
+    assert part.staves_clefs[1] == "Treble stave"
     assert part.staves_voices == {1: [1]}
 
 

@@ -121,6 +121,7 @@ The following table lists requirements for each role along with acceptance crite
 | Move left/right one measure at a time | control + left/right arrow keys |
 | Move up.down notes when in the note region | Up/down arrow keys |
 | Toggle metronome on/off | control + M |
+| Toggle a part, stave, voice or metronome on/off when in the parts list | O |
 | Toggle edit/read-only mode | control + shift + E |
 | Play notes at current position | shift + spacebar |
 | play/stop playback from the current position | spacebar |
@@ -137,8 +138,15 @@ Much of the contents of this document are based on good experience of applicatio
 | :--- | :--- |
 | global navvigation keystrokes | To make navigation quick and easy as possible the navigation keystrokes should be global whenever focus is with the main application area i.e. Not in a menu or dialogue.  This may not be practical for simple implementation of controls/widgets for the regions. |
 | UK or US terminology | There is a US and UK vocab in music (not sure if that is a totally fair way of defining it.) US measure, quarter note, eighth note are bar, crotchet and quaver in UK vocab.  There should be an option to toggle between these (and any others that exist) and defining where this surfaces needs working through. |
+| Key signatures | If the key is set e.g. G major, and there is an F, should the note be displayed as just F since the musician should know an F is sharpened in G major, or written out in full? In both cases, it should defo sound F sharp.  Maybe this is a user preference? |
+| Status bar | As well as position, the status bar should probably show the current time signature and key at the current position as it can change throughout the score. |
+| Title bar | Probably should update the title bar with the score title when it is loaded. So NVDA+T reads out application name and current file loaded |
+| Focus memory in regions | It would be more user friendly if tabbing away from and returning to a region maintained the last focused row.  This could be tricky conceptually though for note details if, whilst away, the row is filtered out. |
 
 ## Known bugs
 
-* The tempo in the score region does not reflect the time signature correctly.  When opening a score in 6/8 and where the tempo was 96 quavers a minute, the tempo was displayed as 48bpm.  Strictly speaking correct, but it should display 96 quavers / eighth notes, or whatever the standard way of writing this is for musicians.
-* When auditioning individual notes by moving up and down the note region, all notes play with the same instrument.  They need to reflect the instrument for the voice.  This probably is true for all playback.
+* At least for Way To Go test file, the viola does not have a stave or voice in region 2.
+* In the note region, hitting home or end can change the selected item but this is not played by the midi engine. 
+* The application title bar is currently Score Reader and Editor.  If going with Recall Score as the product name, should change this.
+
+

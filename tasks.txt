@@ -28,17 +28,15 @@ PHASE ORDER RATIONALE
   characterisation tests are what prove they are still correct afterwards.
 
 CURRENT STATE
-  Done      : Ref 18 (TS-relative beat units - verified on 6/8)
+  Done      : Ref 18 (TS-relative beat units - verified on 6/8), Ref 7
+              (Region 2 filtering - parts/staves/voices toggle via Region
+              2's O key, see B1-B4)
   Broken    : Ref 17 - pickup numbering is wrong on scores MuseScore exports
               with number="0" implicit="yes" (see A3)
   Partial   : Ref 1 (no announcements), Ref 2 (Region 3 only, no boundary
               cue), Refs 8/9 (audition fires, latency unmeasured, wrong
               instrument), Ref 16 (no rests), Ref 20 (string/fret only),
               Ref 25 (MusicXML only)
-  Built but : Ref 7 - widgets/region2_manager.py is complete, but
-  not wired    MusicData lacks get_score_structure() and
-               set_active_voice_filter(), so Region 2 falls back to a flat
-               table and Spacebar toggling does nothing.
 
 TEST SCORES (files/)
   Use these three real MuseScore exports for functional/integration testing -
@@ -291,16 +289,108 @@ PHASE A - FOUNDATIONS AND MULTI-PART CORRECTNESS         (10 tasks)
 
 
 ###
-PHASE B - FINISH REGION 2 FILTERING                       (4 tasks)   Ref 7
+PHASE B - FINISH REGION 2 FILTERING AND UX REWRITE         (5 tasks)   Ref 7
 ###
-[ ] B1  MusicData.get_score_structure() emitting the parts_data shape that
+[x] B1  MusicData.get_score_structure() emitting the parts_data shape that
         Region2HierarchyModel.build_from_score() documents - Ref 7
-[ ] B2  MusicData.set_active_voice_filter(); filter Region 3, Region 4 and
+        > DONE 2026-08-06. Pure transform of parts_info (no XML access):
+          [{'id': p.part_id, 'name': p.name, 'staves': [{'id': s_id, 'name':
+          p.staves_clefs.get(s_id, "Standard stave"), 'voices':
+          p.staves_voices[s_id]} for s_id in sorted(...)]}]. Replaces
+          get_region_2_data(), deleted - that method built a flat dict
+          keyed by f"Staff {s_id}" with no part id in the key, so two parts
+          sharing a staff number silently overwrote each other's row. This
+          was the root cause of the reported "viola has no stave in Region
+          2" bug on the Way To Go score (see Known bugs in the Product
+          Definition Document) - confirmed by running the parser directly:
+          parts_info already carried the viola's own staff/voice correctly,
+          the bug was purely in the flat-dict rendering.
+          Region2HierarchyModel's node ids already include part id
+          (voice_P1_1_1 vs voice_P2_1_1, proven collision-free by
+          test_node_ids_stay_unique_across_parts), so wiring up the real
+          hierarchy fixes the bug as a side effect - verified live: Way To
+          Go's Region 2 now lists Flute > Treble stave > Voice 1 and Viola
+          > C stave > Voice 1 as distinct rows.
+
+[x] B2  MusicData.set_active_voice_filter(); filter Region 3, Region 4 and
         playback by the active (part_id, staff, voice) tuples - Ref 7 AC1/AC2
-[ ] B3  Remove the hasattr guards in main_window.py:151 and :217; confirm
-        Spacebar toggling works and timeline position is retained - Ref 7 AC3
-[ ] B4  Test: toggling the TAB staff off removes the duplicate notes on the
+        > DONE 2026-08-06. New active_voice_filter:
+          Optional[Set[Tuple[str, int, int]]] = None field - None means
+          unfiltered/show everything, not "show nothing" (required, since
+          most of the existing suite builds MusicData without ever calling
+          the setter and asserts against the full note list) - plus
+          set_active_voice_filter(). New private _visible_notes() filters
+          the current slice's notes by the active set; get_region_3_data,
+          get_region_4_data_for_indices, get_midi_notes_for_indices and
+          get_playback_events_for_indices all now read through it instead
+          of current.notes directly, so a Region 3 row index means the same
+          note in Region 3, Region 4 and playback even when some notes are
+          hidden - verified by grep that nothing else in the codebase reads
+          current.notes directly. Filtering only changes what's displayed/
+          played at a timeline position, not which positions Left/Right
+          visits (Ref 7 doesn't ask for auto-skipping filtered-empty
+          slices, and AC3 - "retains the current timeline position" -
+          argues against it).
+
+[x] B3  Remove the hasattr guards in main_window.py; confirm toggling works
+        and timeline position is retained - Ref 7 AC3
+        > DONE 2026-08-06. Both hasattr(self._music_data, ...) guards in
+          _on_region_2_filter_changed and _update_ui_regions removed -
+          get_score_structure()/set_active_voice_filter() are unconditional
+          calls now. active_event_index is never touched by
+          set_active_voice_filter, so AC3 holds trivially - confirmed by
+          B4's test, which toggles Region 2 (not Region 3) and the cursor
+          stays put.
+
+[x] B4  Test: toggling the TAB staff off removes the duplicate notes on the
         Bourree sample (first slice is E,G,E,G today) - Refs 7, 8
+        > DONE 2026-08-06.
+          tests/test_main_window.py::test_toggling_the_tab_staff_off_removes_the_duplicate_notes
+          loads score_bourree, confirms the baseline bug (Region 3 shows
+          ['E','G','E','G']), selects the Tab stave row (node id
+          staff_P1_2) in region_2 and sends a real O keypress via
+          qtbot.keyClick, then confirms Region 3 drops to ['E','G'].
+
+[x] B5  Region 2 UX rewrite: replace the two-column table with a flat list
+        navigated by Up/Down only, toggled by O - added beyond the original
+        B1-B4 scope after the table view was found "clumsy" and the
+        Product Definition Document's Key Strokes table was updated to O
+        - Ref 7
+        > DONE 2026-08-06. New widgets/region2_list_widget.py:
+          Region2ListWidget(QListWidget) - same shape as Region 3's
+          TimelineListWidget rather than a QTableWidget. Each row's text
+          embeds name, hierarchy level and status in one line so NVDA reads
+          the whole row on one Down-arrow press instead of needing
+          column-by-column table navigation, e.g. "Classical Guitar - on",
+          "  Treble stave - on", "    Voice 1 - on". Up/Down need no
+          override (native QListWidget behaviour). O toggles the focused
+          row's node via the unchanged Region2HierarchyModel and rebuilds,
+          re-anchoring to the same node.
+          widgets/region_table_widget.py stripped back to a plain
+          property-list table for Regions 1/4 only - model_manager,
+          _current_visible_nodes, filter_changed, load_score_structure,
+          refresh_table and the Spacebar-toggle branch all removed (Region
+          1/4 never used any of them; confirmed by grep no test imports
+          RegionTableWidget directly).
+          Clef descriptions renamed at the source
+          (parsers/musicXML_reader.py) from "treble clef"/"bass clef"/
+          "guitar tab standard tuning" to "Treble stave"/"Bass stave"/
+          "Tab stave" (fallback f"{sign} stave" for anything else, e.g. the
+          viola's "C stave") - the word itself now carries the hierarchy
+          level, so no separate "Staff:" label is needed in the widget; the
+          three sample scores' clef signs (G, F, C, TAB) were checked
+          directly against the real files to confirm this covers them all.
+          Confirmed the persistence behaviour the user asked for - toggling
+          a parent off and back on restores each child's own prior on/off
+          state rather than resetting it - already worked
+          (Region2HierarchyModel.toggle_node only ever flips the node
+          itself); added
+          test_reenabling_a_parent_restores_each_childs_previous_state in
+          tests/widgets/test_region2_manager.py to lock it in.
+          Full suite: 50 passed, ~0.8s. Verified live against both real
+          sample scores via a headless script (Way To Go's viola rows, and
+          Bourree's O-toggle removing duplicate notes) in addition to the
+          automated tests.
 
 
 ###
@@ -438,9 +528,11 @@ Add to this as decisions come up; move the outcome into the spec once settled.
 D-1  Rests in one voice alongside sounding notes in another
      Decided 2026-08-04: an explicit rest in the score is an event with a
      step of "rest" and shows as "rest" in the Note region.
-     Still open: when voice 1 sounds and voice 2 rests at the same position,
-     should the rest appear in Region 3 next to the notes, or only when its
-     voice is soloed via Region 2? Revisit during B2.
+     RESOLVED 2026-08-06 in B2: no special-casing needed. Rests carry a real
+     (part_id, staff, voice) since A4/A5, exactly like sounding notes, so
+     MusicData._visible_notes() filters a rest the same way it filters any
+     other note - a rest in a soloed/active voice shows as "rest" in Region
+     3, a rest in a filtered-out voice does not appear at all.
 
 D-2  Global navigation keystrokes vs per-widget handling
      Already flagged in the spec's own Discussion Points. Navigation should
@@ -494,7 +586,7 @@ COVERAGE CHECK - every requirement appears at least once
   Ref  4 C1        Ref 11 E6        Ref 18 A2,A6,A9  Ref 25 I1,J1,J2,J3
   Ref  5 C3,D3     Ref 12 E1,E2,E3  Ref 19 L1,L2,L3  Ref 26 J4,J5,J6
   Ref  6 C4,D3     Ref 13 E7        Ref 20 H1        Ref 27 G1,G2
-  Ref  7 B1-B4     Ref 14 E8,E9     Ref 21 H2
+  Ref  7 B1-B5     Ref 14 E8,E9     Ref 21 H2
 
   NFR-01 M1     NFR-02 M2,M3     NFR-03 A1,A2,A10    NFR-04 E10
   NFR-05 D4     NFR-06 I1,I2     NFR-07 M4

@@ -51,9 +51,11 @@ class MusicXMLReader:
     def load(self) -> MusicData:
         print(f"[DEBUG] Loading file: {self.file_path}")
 
-        credits_dict = self._extract_credits_etree()
-        etree_key, etree_time = self._extract_key_and_time_etree()
-        etree_parts_info = self._extract_part_structure_etree()
+        root = self._parse_xml_root()
+
+        credits_dict = self._extract_credits_etree(root)
+        etree_key, etree_time = self._extract_key_and_time_etree(root)
+        etree_parts_info = self._extract_part_structure_etree(root)
 
         score = None
         try:
@@ -76,7 +78,17 @@ class MusicXMLReader:
             file_path=self.file_path,
             score=score,
             tempo_bpm=tempo_bpm,
+            xml_root=root,
         )
+
+    def _parse_xml_root(self) -> Optional[ET.Element]:
+        """Parses the file once; every etree-based extractor below reads
+        from this same root instead of re-parsing the file itself (R2)."""
+        try:
+            return ET.parse(self.file_path).getroot()
+        except Exception as e:
+            print(f"[ERROR] Failed to parse XML file: {e}")
+            return None
 
     def _extract_tempo(self, score: music21.stream.Score) -> Tuple[int, str]:
         """Returns (quarter-note BPM for playback timing, display string in the
@@ -129,14 +141,14 @@ class MusicXMLReader:
             print(f"[WARN] Error extracting time via music21: {e}")
         return None
 
-    def _extract_key_and_time_etree(self) -> Tuple[str, str]:
+    def _extract_key_and_time_etree(self, root: Optional[ET.Element]) -> Tuple[str, str]:
         key_sig = "C major / A minor"
         time_sig = "4/4"
 
-        try:
-            tree = ET.parse(self.file_path)
-            root = tree.getroot()
+        if root is None:
+            return key_sig, time_sig
 
+        try:
             fifths_elem = root.find(".//attributes/key/fifths")
             if fifths_elem is not None and fifths_elem.text:
                 fifths = int(fifths_elem.text.strip())
@@ -158,14 +170,14 @@ class MusicXMLReader:
 
         return key_sig, time_sig
 
-    def _extract_credits_etree(self) -> Dict[str, str]:
+    def _extract_credits_etree(self, root: Optional[ET.Element]) -> Dict[str, str]:
         credits_found: Dict[str, str] = {}
+        if root is None:
+            return credits_found
+
         untyped_count = 1
 
         try:
-            tree = ET.parse(self.file_path)
-            root = tree.getroot()
-
             for credit in root.findall("credit"):
                 type_elem = credit.find("credit-type")
                 words_texts = [
@@ -201,13 +213,12 @@ class MusicXMLReader:
 
         return credits_found
 
-    def _extract_part_structure_etree(self) -> List[PartStructureInfo]:
+    def _extract_part_structure_etree(self, root: Optional[ET.Element]) -> List[PartStructureInfo]:
         parts_list: List[PartStructureInfo] = []
+        if root is None:
+            return parts_list
 
         try:
-            tree = ET.parse(self.file_path)
-            root = tree.getroot()
-
             part_names = {}
             for sp in root.findall(".//part-list/score-part"):
                 p_id = sp.attrib.get("id", "")
@@ -237,16 +248,16 @@ class MusicXMLReader:
                     sign = sign_elem.text.strip() if sign_elem is not None and sign_elem.text else "G"
 
                     if sign == "TAB":
-                        staves_clefs[staff_num] = "guitar tab standard tuning"
+                        staves_clefs[staff_num] = "Tab stave"
                     elif sign == "G":
-                        staves_clefs[staff_num] = "treble clef"
+                        staves_clefs[staff_num] = "Treble stave"
                     elif sign == "F":
-                        staves_clefs[staff_num] = "bass clef"
+                        staves_clefs[staff_num] = "Bass stave"
                     else:
-                        staves_clefs[staff_num] = f"{sign} clef"
+                        staves_clefs[staff_num] = f"{sign} stave"
 
                 if 1 not in staves_clefs:
-                    staves_clefs[1] = "treble clef"
+                    staves_clefs[1] = "Treble stave"
 
                 for note in part_elem.findall(".//note"):
                     staff_id = int(note.find("staff").text.strip()) if note.find("staff") is not None else 1

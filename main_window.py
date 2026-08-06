@@ -1,5 +1,4 @@
 # main_window.py
-import traceback
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -16,9 +15,10 @@ from PySide6.QtWidgets import (
 
 from audio.synth_engine import SynthEngine
 from models.music_data import MusicData
-from parsers.musicXML_reader import MusicXMLReader
+from widgets.region2_list_widget import Region2ListWidget
 from widgets.region_table_widget import RegionTableWidget
 from widgets.timeline_list_widget import TimelineListWidget
+from workers.score_load_worker import ScoreLoadThread
 
 
 class MainWindow(QMainWindow):
@@ -36,6 +36,7 @@ class MainWindow(QMainWindow):
         self.resize(800, 600)
 
         self._music_data: MusicData | None = None
+        self._load_thread: ScoreLoadThread | None = None
         self.synth = synth if synth is not None else SynthEngine()
 
         self.setup_ui()
@@ -50,11 +51,8 @@ class MainWindow(QMainWindow):
         # Region 1: Property List
         self.region_1 = self.create_property_list([])
 
-        # Region 2: Custom RegionTableWidget for Parts/Staves/Voices hierarchy
-        self.region_2 = RegionTableWidget()
-        self.region_2.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.region_2.verticalHeader().setVisible(False)
-        self.region_2.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        # Region 2: Parts/Staves/Voices hierarchy, navigated Up/Down, O to toggle
+        self.region_2 = Region2ListWidget()
         self.region_2.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self.region_2.filter_changed.connect(self._on_region_2_filter_changed)
 
@@ -131,13 +129,24 @@ class MainWindow(QMainWindow):
             self.load_score_from_file(file_path)
 
     def load_score_from_file(self, file_path: str):
-        try:
-            reader = MusicXMLReader(file_path)
-            self._music_data = reader.load()
-            self._update_ui_regions()
-        except Exception as e:
-            print(f"[ERROR] Failed to load score file: {e}")
-            traceback.print_exc()
+        if self._load_thread is not None:
+            return
+
+        self._load_thread = ScoreLoadThread(file_path, self)
+        self._load_thread.loaded.connect(self._on_score_loaded)
+        self._load_thread.failed.connect(self._on_score_load_failed)
+        self._load_thread.finished.connect(self._on_load_thread_finished)
+        self._load_thread.start()
+
+    def _on_score_loaded(self, music_data: MusicData):
+        self._music_data = music_data
+        self._update_ui_regions()
+
+    def _on_score_load_failed(self, error_text: str):
+        print(f"[ERROR] Failed to load score file:\n{error_text}")
+
+    def _on_load_thread_finished(self):
+        self._load_thread = None
 
     def navigate_timeline_left(self):
         if self._music_data and self._music_data.move_timeline_left():
@@ -155,7 +164,7 @@ class MainWindow(QMainWindow):
         self._play_selected_region_3_notes()
 
     def _on_region_2_filter_changed(self, active_voice_tuples: set):
-        if self._music_data and hasattr(self._music_data, "set_active_voice_filter"):
+        if self._music_data:
             self._music_data.set_active_voice_filter(active_voice_tuples)
             self._update_timeline_views(play_all=False)
 
@@ -213,15 +222,11 @@ class MainWindow(QMainWindow):
             return
 
         self._populate_table(self.region_1, self._music_data.get_region_1_data())
-
-        if hasattr(self._music_data, "get_score_structure"):
-            parts_data = self._music_data.get_score_structure()
-            self.region_2.load_score_structure(parts_data)
-        else:
-            self._populate_table(self.region_2, self._music_data.get_region_2_data())
-
+        self.region_2.load_score_structure(self._music_data.get_score_structure())
         self._update_timeline_views(play_all=True)
 
     def closeEvent(self, event):
+        if self._load_thread is not None:
+            self._load_thread.wait()
         self.synth.close()
         super().closeEvent(event)

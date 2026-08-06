@@ -80,3 +80,19 @@ def test_active_voice_tuples_track_part_staff_and_voice(model):
         ("P1", 2, 5),
         ("P1", 2, 6),
     }
+
+
+def test_reenabling_a_parent_restores_each_childs_previous_state(model):
+    """Toggling a staff off and back on must not reset its voices - each
+    voice keeps whatever on/off state it had before the staff was hidden."""
+    model.toggle_node("voice_P1_1_1")  # Voice 1 off
+
+    model.toggle_node("staff_P1_1")  # hide staff 1 and its voices
+    model.toggle_node("staff_P1_1")  # show it again
+
+    assert model.get_active_voice_tuples() == {
+        ("P1", 2, 5),
+        ("P1", 2, 6),
+        ("P2", 1, 1),
+        ("P2", 1, 2),
+    }, "voice 1 must still be off after its staff round-trips through off/on"
