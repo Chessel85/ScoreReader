@@ -213,12 +213,36 @@ PHASE A - FOUNDATIONS AND MULTI-PART CORRECTNESS         (10 tasks)
           New tests in tests/models/test_music_data.py using ts_change_score
           (3 measures, 4 events each). Full suite: 39 passed, 0.68s.
 
-[ ] A8  FIX playback instrument per part/voice instead of always parts_info[0]
+[x] A8  FIX playback instrument per part/voice instead of always parts_info[0]
         - Ref 8, Ref 9 AC2, reported bug. Depends on A4.
         > get_current_gmidi_program() (music_data.py:292) always returns the
           first part's program, so Chessel Duet plays the guitar as piano.
         > Needs a MIDI channel per part; SynthEngine.play_notes already takes
           a channel argument. See D-5.
+        > DONE 2026-08-06. Decided D-5 as one channel per part, in part-list
+          order, skipping channel 10 (index 9, percussion), wrapping past 16.
+          Removed get_current_gmidi_program() - there is no single "current"
+          instrument once a slice can hold notes from more than one part.
+          models/music_data.py: added get_channel_for_part(part_id),
+          get_gmidi_program_for_part(part_id), and
+          get_playback_events_for_indices(selected_indices), which groups
+          selected notes by part_id and returns one
+          (channel, zero-indexed program, midi_notes) tuple per part - the
+          1-indexed-to-0-indexed conversion moved here from MainWindow.
+          audio/synth_engine.py: SynthEngine now tracks active notes as
+          (channel, note) pairs instead of a single channel + note list, and
+          gained play_chord(events, duration_ms) which starts every part's
+          group together so a cross-part chord sounds as one instead of each
+          group's stop_all_notes() cutting the previous one off; play_notes()
+          is now a thin wrapper around play_chord for single-channel callers.
+          tests/support/null_synth.py mirrors the same play_chord split so
+          test doubles stay honest about the real interface.
+          New fixture tests/fixtures/two_parts_chord.musicxml (Piano C4 +
+          Guitar E3 on the same beat) proves a cross-part chord produces two
+          separate (channel, program) groups. New slow test on score_duet in
+          test_musicxml_reader.py reproduces the exact reported bug end to
+          end and confirms the guitar note now carries program 24 (GM 25)
+          on its own channel, not the piano's. Full suite: 46 passed, 0.67s.
 
 [ ] A9  FIX tempo display so it reflects the time signature - reported bug
         > Chessel Duet is eighth=96 and displays "48 BPM" because music21's
@@ -401,11 +425,12 @@ D-4  macOS speech recognition API
      Windows.Media.SpeechRecognition. Decide in L3.
 
 D-5  Multi-part GM programs and MIDI channel allocation
-     Confirmed on Chessel Duet: the guitar part plays as piano because
-     get_current_gmidi_program() (music_data.py:292) always returns
-     parts_info[0]. Open: allocate one MIDI channel per part, or per
-     (part, staff)? Channel 10 is percussion and must be skipped. 16
-     channels is the hard ceiling. Decide in A8.
+     DECIDED 2026-08-06 in A8: one MIDI channel per part (not per staff -
+     staves within a part share an instrument in every sample score, and
+     per-staff allocation would burn through the 16-channel ceiling faster
+     for no observed benefit), assigned in part-list order, skipping
+     channel 10 (index 9, percussion), wrapping past 16 parts.
+     MusicData.get_channel_for_part() / get_gmidi_program_for_part().
 
 D-6  UK vs US music vocabulary
      From the spec's Discussion Points: bar/measure, crotchet/quarter note,

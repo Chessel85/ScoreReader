@@ -80,6 +80,13 @@ def string_fret_score() -> str:
 
 
 @pytest.fixture
+def two_parts_chord_score() -> str:
+    """Two parts, one complete 4/4 bar each: Piano C4 and Guitar E3 land on
+    the same beat, so they bucket into a single EventSlice (A8, Ref 8)."""
+    return _require(FIXTURES_DIR / "two_parts_chord.musicxml")
+
+
+@pytest.fixture
 def slice_ordering_score() -> str:
     """One complete 4/4 bar written out of offset order via forward/backup."""
     return _require(FIXTURES_DIR / "slice_ordering.musicxml")

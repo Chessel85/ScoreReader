@@ -74,5 +74,5 @@ def test_gm_program_is_converted_to_zero_based_on_the_wire(
     """The model holds 1-indexed GM programs; the synth takes 0-indexed."""
     window.load_score_from_file(minimal_score)
 
-    assert window._music_data.get_current_gmidi_program() == 1
+    assert window._music_data.parts_info[0].gmidi_program == 1
     assert null_synth.last_played["program"] == 0

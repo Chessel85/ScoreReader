@@ -57,7 +57,7 @@ Package-per-domain layout; each module holds one class. Data flows one way:
 
 The widget subclasses exist mainly to intercept keys: both forward `Tab`/`Shift+Tab` to `focusNextChild()`/`focusPreviousChild()` so the region cycle stays intact, `TimelineListWidget` maps Left/Right to `MainWindow.navigate_timeline_*` and Up/Down to `on_region_3_vertical_move`, and `RegionTableWidget` maps Spacebar to toggling a hierarchy row. `RegionTableWidget.refresh_table(preferred_node_id=...)` deliberately re-anchors the current cell after a rebuild so NVDA keeps announcing the row the user is on.
 
-GM programs are **1-indexed in the model** (25 = nylon guitar, from MusicXML `<midi-program>`) and **0-indexed on the wire** — `MainWindow._play_selected_region_3_notes` does the `-1` conversion, so don't convert twice.
+GM programs are **1-indexed in the model** (25 = nylon guitar, from MusicXML `<midi-program>`) and **0-indexed on the wire** — `MusicData.get_playback_events_for_indices` does the `-1` conversion per part, so don't convert twice. Each part gets its own MIDI channel (`MusicData.get_channel_for_part`, skipping the percussion channel 10/index 9) so a chord spanning two parts plays both instruments instead of collapsing onto `parts_info[0]`'s program (A8, Ref 8, D-5) — `SynthEngine.play_chord` / `NullSynth.play_chord` take the resulting `(channel, program, midi_notes)` groups and sound them together.
 
 ### Timeline model
 

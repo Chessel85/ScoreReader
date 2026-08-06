@@ -27,7 +27,7 @@ class MainWindow(QMainWindow):
         """Create the main window.
 
         synth: any object exposing the SynthEngine interface
-        (play_notes / stop_all_notes / set_program / close). Defaults to a
+        (play_chord / play_notes / stop_all_notes / set_program / close). Defaults to a
         real SynthEngine. Tests pass a stand-in so no audio device is
         opened, and so they can assert what would have sounded.
         """
@@ -172,21 +172,14 @@ class MainWindow(QMainWindow):
             return
 
         selected_indices = [item.row() for item in self.region_3.selectedIndexes()]
-        midi_notes = self._music_data.get_midi_notes_for_indices(selected_indices)
+        events = self._music_data.get_playback_events_for_indices(selected_indices)
 
-        if not midi_notes:
+        if not events:
             return
 
-        gmidi_prog = self._music_data.get_current_gmidi_program()
         duration_ms = self._music_data.get_current_duration_ms()
-        zero_based_program = max(0, gmidi_prog - 1)
 
-        self.synth.play_notes(
-            midi_notes=midi_notes,
-            duration_ms=duration_ms,
-            channel=0,
-            program=zero_based_program,
-        )
+        self.synth.play_chord(events, duration_ms=duration_ms)
 
     def _update_timeline_views(self, play_all: bool = True):
         if not self._music_data:

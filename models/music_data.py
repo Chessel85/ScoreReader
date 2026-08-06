@@ -353,10 +353,61 @@ class MusicData:
             if 0 <= i < len(current.notes) and current.notes[i].midi_pitch is not None
         ]
 
-    def get_current_gmidi_program(self) -> int:
-        if self.parts_info:
-            return self.parts_info[0].gmidi_program
+    # MIDI channel 10 (0-indexed 9) is reserved for percussion and must be
+    # skipped when allocating one channel per part (D-5).
+    PERCUSSION_CHANNEL = 9
+    MAX_MIDI_CHANNELS = 16
+
+    def get_channel_for_part(self, part_id: str) -> int:
+        """One MIDI channel per part, in part-list order, skipping percussion.
+
+        Wraps past the percussion channel if a score has more than 15
+        melodic parts - the hard ceiling is 16 channels (D-5).
+        """
+        for idx, p in enumerate(self.parts_info):
+            if p.part_id == part_id:
+                channel = idx if idx < self.PERCUSSION_CHANNEL else idx + 1
+                return channel % self.MAX_MIDI_CHANNELS
+        return 0
+
+    def get_gmidi_program_for_part(self, part_id: str) -> int:
+        for p in self.parts_info:
+            if p.part_id == part_id:
+                return p.gmidi_program
         return 25
+
+    def get_playback_events_for_indices(
+        self, selected_indices: List[int]
+    ) -> List[Tuple[int, int, List[int]]]:
+        """Group selected notes by part for simultaneous multi-instrument playback.
+
+        Each group is (channel, zero-indexed GM program, midi pitches) so a
+        chord spanning two parts sounds both instruments together instead
+        of collapsing onto parts_info[0]'s instrument (Ref 8, Ref 9 AC2).
+        """
+        current = self.get_current_slice()
+        if not current or not current.notes:
+            return []
+
+        notes_by_part: Dict[str, List[int]] = {}
+        part_order: List[str] = []
+        for i in selected_indices:
+            if not (0 <= i < len(current.notes)):
+                continue
+            note = current.notes[i]
+            if note.midi_pitch is None:
+                continue
+            if note.part_id not in notes_by_part:
+                notes_by_part[note.part_id] = []
+                part_order.append(note.part_id)
+            notes_by_part[note.part_id].append(note.midi_pitch)
+
+        events = []
+        for part_id in part_order:
+            channel = self.get_channel_for_part(part_id)
+            program = max(0, self.get_gmidi_program_for_part(part_id) - 1)
+            events.append((channel, program, notes_by_part[part_id]))
+        return events
 
     def get_current_duration_ms(self) -> int:
         current = self.get_current_slice()

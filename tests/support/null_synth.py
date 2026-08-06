@@ -29,22 +29,36 @@ class NullSynth:
         channel: int = 0,
         program: Optional[int] = None,
     ) -> None:
+        self.play_chord([(channel, program, midi_notes)], duration_ms)
+
+    def play_chord(
+        self,
+        events: List[tuple],
+        duration_ms: int = 250,
+    ) -> None:
+        """Records one entry per (channel, program, midi_notes) group.
+
+        Mirrors SynthEngine.play_chord: one stop_all_notes() for the whole
+        chord, then every part's group is recorded so tests can assert
+        multi-part playback stayed on separate channels/programs.
+        """
         self.stop_all_notes()
 
-        if not midi_notes:
-            return
+        for channel, program, midi_notes in events:
+            if not midi_notes:
+                continue
 
-        if program is not None:
-            self.set_program(channel, program)
+            if program is not None:
+                self.set_program(channel, program)
 
-        self.played.append(
-            {
-                "midi_notes": list(midi_notes),
-                "duration_ms": duration_ms,
-                "channel": channel,
-                "program": program,
-            }
-        )
+            self.played.append(
+                {
+                    "midi_notes": list(midi_notes),
+                    "duration_ms": duration_ms,
+                    "channel": channel,
+                    "program": program,
+                }
+            )
 
     def close(self) -> None:
         self.closed = True

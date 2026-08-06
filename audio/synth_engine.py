@@ -2,7 +2,7 @@
 import os
 import sys
 import ctypes
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from PySide6.QtCore import QTimer
 
 # --- DLL RESOLUTION FROM SUBFOLDER ---
@@ -43,8 +43,7 @@ class SynthEngine:
     def __init__(self, soundfont_path: Optional[str] = None):
         self._fs = None
         self._sfid = None
-        self._active_midi_notes: List[int] = []
-        self._active_channel: int = 0
+        self._active_notes: List[Tuple[int, int]] = []  # (channel, note) pairs
 
         # Off timer for scheduling note stops
         self._off_timer = QTimer()
@@ -89,12 +88,12 @@ class SynthEngine:
     def stop_all_notes(self):
         if self._fs is None:
             return
-        
+
         self._off_timer.stop()
 
-        for note in self._active_midi_notes:
-            self._fs.noteoff(self._active_channel, note)
-        self._active_midi_notes.clear()
+        for channel, note in self._active_notes:
+            self._fs.noteoff(channel, note)
+        self._active_notes.clear()
 
     def play_notes(
         self,
@@ -103,21 +102,43 @@ class SynthEngine:
         channel: int = 0,
         program: Optional[int] = None
     ):
-        if self._fs is None or not midi_notes:
+        """Play one group of notes on a single channel/program.
+
+        Kept for callers that only ever need one instrument at a time; see
+        play_chord for multi-part simultaneous playback (Ref 8, D-5).
+        """
+        self.play_chord([(channel, program, midi_notes)], duration_ms)
+
+    def play_chord(
+        self,
+        events: List[Tuple[int, Optional[int], List[int]]],
+        duration_ms: int = 250,
+    ):
+        """Play several (channel, program, midi_notes) groups together.
+
+        Each part gets its own channel and GM program, so a slice with
+        notes from two parts sounds both instruments at once instead of
+        one group cutting the other off (Ref 8, Ref 9 AC2, D-5).
+        """
+        if self._fs is None:
             return
 
         self.stop_all_notes()
-        self._active_channel = channel & 0x0F
 
-        if program is not None:
-            self.set_program(self._active_channel, program)
+        for channel, program, midi_notes in events:
+            if not midi_notes:
+                continue
 
-        self._active_midi_notes = list(midi_notes)
-        for note in self._active_midi_notes:
-            self._fs.noteon(self._active_channel, note, 90)
+            ch = channel & 0x0F
+            if program is not None:
+                self.set_program(ch, program)
+
+            for note in midi_notes:
+                self._fs.noteon(ch, note, 90)
+                self._active_notes.append((ch, note))
 
         # Schedule Note Off after duration_ms
-        if duration_ms > 0:
+        if self._active_notes and duration_ms > 0:
             self._off_timer.start(int(duration_ms))
 
     def close(self):
