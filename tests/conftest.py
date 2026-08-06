@@ -87,6 +87,14 @@ def two_parts_chord_score() -> str:
 
 
 @pytest.fixture
+def flute_crotchets_viola_semibreves_score() -> str:
+    """Two complete 4/4 bars: Flute plays four crotchets per bar, Viola one
+    semibreve per bar on beat 1 (same offset as the flute's first crotchet
+    each bar, so they bucket into one EventSlice there)."""
+    return _require(FIXTURES_DIR / "flute_crotchets_viola_semibreves.musicxml")
+
+
+@pytest.fixture
 def slice_ordering_score() -> str:
     """One complete 4/4 bar written out of offset order via forward/backup."""
     return _require(FIXTURES_DIR / "slice_ordering.musicxml")

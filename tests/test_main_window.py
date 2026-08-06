@@ -116,6 +116,92 @@ def test_toggling_the_tab_staff_off_removes_the_duplicate_notes(
     ] == ["E", "G"]
 
 
+def test_timeline_navigation_keys_have_no_effect_outside_the_note_region(
+    window, qtbot, null_synth, minimal_score
+):
+    """Ref 4, D-2 RESOLVED: navigation keystrokes are scoped to the Note
+    region, not global - pressing them while another region has focus must
+    not move the timeline. Region 1/4 (RegionTableWidget) and Region 2
+    (Region2ListWidget) never call the navigate_timeline_* methods for
+    these keys, so this is a regression test for that, not new wiring."""
+    load_and_wait(window, qtbot, minimal_score)
+    start_index = window._music_data.active_event_index
+
+    for region in (window.region_1, window.region_2, window.region_4):
+        qtbot.keyClick(region, Qt.Key.Key_Right)
+        qtbot.keyClick(region, Qt.Key.Key_Left, Qt.KeyboardModifier.ControlModifier)
+        qtbot.keyClick(region, Qt.Key.Key_End)
+        qtbot.keyClick(region, Qt.Key.Key_Home)
+
+    assert window._music_data.active_event_index == start_index
+
+
+def test_ctrl_right_and_ctrl_left_jump_by_measure(window, qtbot, null_synth, ts_change_score):
+    load_and_wait(window, qtbot, ts_change_score)
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Right, Qt.KeyboardModifier.ControlModifier)
+    assert window._music_data.active_event_index == 4  # first event of measure 2
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Left, Qt.KeyboardModifier.ControlModifier)
+    assert window._music_data.active_event_index == 0  # first event of measure 1
+
+
+def test_home_and_end_jump_to_the_timeline_limits(window, qtbot, null_synth, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_End)
+    assert window._music_data.active_event_index == 3
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Home)
+    assert window._music_data.active_event_index == 0
+
+
+def test_left_at_the_first_event_plays_the_boundary_cue_and_does_not_move(
+    window, qtbot, null_synth, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    null_synth.played.clear()
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Left)
+
+    assert window._music_data.active_event_index == 0
+    assert null_synth.last_played == {
+        "midi_notes": [window.BOUNDARY_MIDI_PITCH],
+        "duration_ms": window.BOUNDARY_DURATION_MS,
+        "channel": window.BOUNDARY_CHANNEL,
+        "program": window.BOUNDARY_GM_PROGRAM,
+    }
+
+
+def test_ctrl_left_at_the_first_measure_plays_the_boundary_cue_and_does_not_move(
+    window, qtbot, null_synth, minimal_score
+):
+    """minimal_score is a single complete bar, so Ctrl+Left from its first
+    event has no preceding measure to land on (Ref 3 AC4)."""
+    load_and_wait(window, qtbot, minimal_score)
+    null_synth.played.clear()
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Left, Qt.KeyboardModifier.ControlModifier)
+
+    assert window._music_data.active_event_index == 0
+    assert null_synth.last_played["channel"] == window.BOUNDARY_CHANNEL
+
+
+def test_home_and_end_never_play_the_boundary_cue(window, qtbot, null_synth, minimal_score):
+    """Ref 5 AC3: Home/End jump to a known limit rather than attempting to
+    move past one, so they must never trigger the boundary sound - even
+    pressed repeatedly once already at that limit."""
+    load_and_wait(window, qtbot, minimal_score)
+    null_synth.played.clear()
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_End)
+    qtbot.keyClick(window.region_3, Qt.Key.Key_End)
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Home)
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Home)
+
+    assert all(p["channel"] != window.BOUNDARY_CHANNEL for p in null_synth.played)
+
+
 def test_loading_a_missing_file_does_not_crash_or_leave_the_thread_dangling(window, qtbot):
     """R1: MusicXMLReader.load() currently swallows parse errors into an
     empty MusicData rather than raising (tasks.txt I1 is the fix for that) -

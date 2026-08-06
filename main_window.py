@@ -23,6 +23,18 @@ from workers.score_load_worker import ScoreLoadThread
 
 class MainWindow(QMainWindow):
 
+    # Boundary ("doh") cue for Ref 2 AC4 / Ref 3 AC4 (C5) - a short, quiet,
+    # low double-bass note played instead of moving, so it isn't mistaken
+    # for a note in the score. Not part of any part's playback, so it gets
+    # a channel of its own rather than reusing get_channel_for_part: D-5
+    # allocates channels 0-8,10-15 in part-list order, so channel 15 is the
+    # one least likely to collide with a real part (only would on a 15+
+    # part score). See D-9 in tasks.txt.
+    BOUNDARY_CHANNEL = 15
+    BOUNDARY_GM_PROGRAM = 43  # GM 44 Contrabass, 0-indexed on the wire
+    BOUNDARY_MIDI_PITCH = 37  # C#2 - low
+    BOUNDARY_DURATION_MS = 100  # roughly a semiquaver; independent of score tempo
+
     def __init__(self, synth=None):
         """Create the main window.
 
@@ -149,12 +161,58 @@ class MainWindow(QMainWindow):
         self._load_thread = None
 
     def navigate_timeline_left(self):
-        if self._music_data and self._music_data.move_timeline_left():
+        if not self._music_data:
+            return
+        if self._music_data.move_timeline_left():
             self._update_timeline_views(play_all=True)
+        else:
+            self._play_boundary_cue()
 
     def navigate_timeline_right(self):
-        if self._music_data and self._music_data.move_timeline_right():
+        if not self._music_data:
+            return
+        if self._music_data.move_timeline_right():
             self._update_timeline_views(play_all=True)
+        else:
+            self._play_boundary_cue()
+
+    def navigate_measure_left(self):
+        if not self._music_data:
+            return
+        if self._music_data.move_timeline_left_by_measure():
+            self._update_timeline_views(play_all=True)
+        else:
+            self._play_boundary_cue()
+
+    def navigate_measure_right(self):
+        if not self._music_data:
+            return
+        if self._music_data.move_timeline_right_by_measure():
+            self._update_timeline_views(play_all=True)
+        else:
+            self._play_boundary_cue()
+
+    def navigate_timeline_home(self):
+        if not self._music_data:
+            return
+        self._music_data.move_timeline_home()
+        self._update_timeline_views(play_all=True)
+
+    def navigate_timeline_end(self):
+        if not self._music_data:
+            return
+        self._music_data.move_timeline_end()
+        self._update_timeline_views(play_all=True)
+
+    def _play_boundary_cue(self):
+        """Ref 2 AC4 / Ref 3 AC4: plays instead of moving, when a navigation
+        key would move past a boundary of the active timeline (C5)."""
+        self.synth.play_notes(
+            midi_notes=[self.BOUNDARY_MIDI_PITCH],
+            duration_ms=self.BOUNDARY_DURATION_MS,
+            channel=self.BOUNDARY_CHANNEL,
+            program=self.BOUNDARY_GM_PROGRAM,
+        )
 
     def select_all_region_3(self):
         self.region_3.selectAll()

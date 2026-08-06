@@ -44,16 +44,87 @@ class MusicData:
             return self.timeline_slices[self.active_event_index]
         return None
 
-    def move_timeline_left(self) -> bool:
-        if self.active_event_index > 0:
-            self.active_event_index -= 1
+    def _slice_has_visible_notes(self, index: int) -> bool:
+        """True if timeline_slices[index] has at least one note passing the
+        Region 2 filter (Ref 7). Lets timeline navigation skip slices that
+        only contain notes from deactivated parts/staves/voices, so e.g.
+        stepping through a still-active semibreve viola part isn't
+        interrupted by a deactivated flute's crotchet-rate slices."""
+        if not (0 <= index < len(self.timeline_slices)):
+            return False
+        notes = self.timeline_slices[index].notes
+        if not notes:
+            return False
+        if self.active_voice_filter is None:
             return True
+        return any(
+            (n.part_id, n.staff, n.voice) in self.active_voice_filter for n in notes
+        )
+
+    def _slice_has_visible_sounding_note(self, index: int) -> bool:
+        """True if timeline_slices[index] has at least one visible note that
+        actually sounds (midi_pitch is not None) - i.e. is not a rest.
+
+        Used to bound navigation to _sounding_bounds() below. A rest still
+        counts as "visible" for _slice_has_visible_notes and remains
+        individually reachable when it sits between two sounding notes
+        (Ref 16), but a run of rests that only exists to pad the score's
+        final bar out to a complete measure - live-tested on Chessel Duet's
+        last bar, all voices resting after the final dotted crotchet - is
+        not a further "active event" to step onto (Ref 2/3/5).
+        """
+        if not (0 <= index < len(self.timeline_slices)):
+            return False
+        notes = self.timeline_slices[index].notes
+        if self.active_voice_filter is not None:
+            notes = [
+                n for n in notes
+                if (n.part_id, n.staff, n.voice) in self.active_voice_filter
+            ]
+        return any(n.midi_pitch is not None for n in notes)
+
+    def _sounding_bounds(self) -> Optional[Tuple[int, int]]:
+        """(first, last) index of a visible event with a real sounding note.
+
+        This is the true navigable range for Left/Right/Ctrl+Left/Right/
+        Home/End - leading or trailing rest-only padding sits outside it.
+        None if nothing currently visible sounds at all.
+        """
+        first_idx = None
+        last_idx = None
+        for i in range(len(self.timeline_slices)):
+            if self._slice_has_visible_sounding_note(i):
+                if first_idx is None:
+                    first_idx = i
+                last_idx = i
+        if first_idx is None:
+            return None
+        return first_idx, last_idx
+
+    def move_timeline_left(self) -> bool:
+        bounds = self._sounding_bounds()
+        if bounds is None:
+            return False
+        first_idx, _ = bounds
+        idx = self.active_event_index
+        while idx > first_idx:
+            idx -= 1
+            if self._slice_has_visible_notes(idx):
+                self.active_event_index = idx
+                return True
         return False
 
     def move_timeline_right(self) -> bool:
-        if self.active_event_index < len(self.timeline_slices) - 1:
-            self.active_event_index += 1
-            return True
+        bounds = self._sounding_bounds()
+        if bounds is None:
+            return False
+        _, last_idx = bounds
+        idx = self.active_event_index
+        while idx < last_idx:
+            idx += 1
+            if self._slice_has_visible_notes(idx):
+                self.active_event_index = idx
+                return True
         return False
 
     def measure_numbers(self) -> List[int]:
@@ -74,6 +145,103 @@ class MusicData:
     def last_event_index(self) -> int:
         """Index of the last timeline event, or -1 if the timeline is empty."""
         return len(self.timeline_slices) - 1
+
+    def first_visible_event_index_of_measure(self, measure_number: int) -> Optional[int]:
+        """Like first_event_index_of_measure, but skips slices with no note
+        passing the active Region 2 filter (Ref 7) - keeps Ctrl+Left/Right
+        (C2) sympathetic to what's actually visible, the same way plain
+        Left/Right already are via _slice_has_visible_notes."""
+        for i, s in enumerate(self.timeline_slices):
+            if s.measure == measure_number and self._slice_has_visible_notes(i):
+                return i
+        return None
+
+    def move_timeline_left_by_measure(self) -> bool:
+        """Ctrl+Left (Ref 3): jump to the first visible event of the current
+        measure, or the preceding measure's if already there. The pickup
+        bar (measure 0, if present) falls out of this for free - it's just
+        the first entry in measure_numbers(). Bounded by _sounding_bounds()
+        the same way plain Left is, so a trailing rest-only measure (or the
+        rest-only tail of one) is never a valid target."""
+        current = self.get_current_slice()
+        if current is None:
+            return False
+
+        bounds = self._sounding_bounds()
+        if bounds is None:
+            return False
+        first_idx, last_idx = bounds
+
+        measures = self.measure_numbers()
+        try:
+            pos = measures.index(current.measure)
+        except ValueError:
+            return False
+
+        first_in_current = self.first_visible_event_index_of_measure(current.measure)
+        if (
+            first_in_current is not None
+            and first_idx <= first_in_current <= last_idx
+            and self.active_event_index != first_in_current
+        ):
+            self.active_event_index = first_in_current
+            return True
+
+        for prev_measure in reversed(measures[:pos]):
+            target = self.first_visible_event_index_of_measure(prev_measure)
+            if target is not None and first_idx <= target <= last_idx:
+                self.active_event_index = target
+                return True
+        return False
+
+    def move_timeline_right_by_measure(self) -> bool:
+        """Ctrl+Right (Ref 3): jump to the first visible event of the next
+        measure, skipping any measure left with no visible events or bounded
+        out by _sounding_bounds() (e.g. a trailing rest-only final bar)."""
+        current = self.get_current_slice()
+        if current is None:
+            return False
+
+        bounds = self._sounding_bounds()
+        if bounds is None:
+            return False
+        first_idx, last_idx = bounds
+
+        measures = self.measure_numbers()
+        try:
+            pos = measures.index(current.measure)
+        except ValueError:
+            return False
+
+        for next_measure in measures[pos + 1:]:
+            target = self.first_visible_event_index_of_measure(next_measure)
+            if target is not None and first_idx <= target <= last_idx:
+                self.active_event_index = target
+                return True
+        return False
+
+    def move_timeline_home(self) -> bool:
+        """Home (Ref 5): jump to the first event with a real sounding note.
+
+        Unlike Left/Right/Ctrl+Left/Right, this never represents "moving
+        past a boundary" - it jumps to a known limit - so callers never play
+        the boundary sound off this return value.
+        """
+        bounds = self._sounding_bounds()
+        if bounds is None:
+            return False
+        self.active_event_index = bounds[0]
+        return True
+
+    def move_timeline_end(self) -> bool:
+        """End (Ref 5): jump to the last event with a real sounding note -
+        e.g. a final bar padded out with rests in every voice does not push
+        this past the piece's actual last note."""
+        bounds = self._sounding_bounds()
+        if bounds is None:
+            return False
+        self.active_event_index = bounds[1]
+        return True
 
     def get_region_1_data(self) -> Dict[str, str]:
         return self.credits

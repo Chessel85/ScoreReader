@@ -396,14 +396,91 @@ PHASE B - FINISH REGION 2 FILTERING AND UX REWRITE         (5 tasks)   Ref 7
 ###
 PHASE C - NAVIGATION AND WINDOW CHROME                    (7 tasks)
 ###
-[ ] C1  Global navigation: handle nav keys at MainWindow level so they work
-        from all four regions and keep focus where it is - Ref 4, see D-2
-[ ] C2  Ctrl+Left / Ctrl+Right jump by measure - Ref 3
-[ ] C3  Home / End jump to first and last event - Ref 5
+[x] C1  Confirm/lock in Note-region-scoped navigation - Ref 4, D-2 RESOLVED
+        > DONE 2026-08-06. No new MainWindow-level handling needed -
+          TimelineListWidget already intercepted Left/Right and only acts
+          when it has focus; C2/C3 extended the same widget for Ctrl+Left/
+          Right and Home/End rather than adding an application-level event
+          filter. Confirmed RegionTableWidget (Regions 1/4) and
+          Region2ListWidget (Region 2) never call the navigate_timeline_*
+          methods - their keyPressEvent only special-cases Tab/Backtab (and
+          O for Region 2), everything else falls through to native Qt list/
+          table behaviour. New regression test in tests/test_main_window.py:
+          test_timeline_navigation_keys_have_no_effect_outside_the_note_region
+          sends Right/Ctrl+Left/End/Home to Regions 1, 2 and 4 in turn and
+          asserts active_event_index never moves.
+[x] C2  Ctrl+Left / Ctrl+Right jump by measure - Ref 3
+        > DONE 2026-08-06. models/music_data.py: added
+          first_visible_event_index_of_measure() (like A7's
+          first_event_index_of_measure but skips slices with no note passing
+          the active Region 2 filter, same as _slice_has_visible_notes
+          already does for plain Left/Right - "sympathetic to active notes,
+          not just what is in the score" per the user's clarification) and
+          move_timeline_left_by_measure()/move_timeline_right_by_measure(),
+          returning bool like the existing move_timeline_left/right.
+          Ctrl+Left: jump to the current measure's first visible event if
+          not already there, else the previous measure's - the pickup bar
+          (measure 0) falls out of this for free since measure_numbers()
+          already lists it first (verified on Chessel Duet: Ctrl+Left from
+          measure 1 beat 1 lands on the pickup, a second Ctrl+Left plays the
+          boundary sound). Ctrl+Right always jumps to the next measure's
+          first visible event, skipping any measure left entirely invisible
+          by the voice filter. Wired in
+          widgets/timeline_list_widget.py (Ctrl modifier check on
+          Key_Left/Key_Right) and main_window.py's new
+          navigate_measure_left/right. Tests in
+          tests/models/test_music_data.py and tests/test_main_window.py.
+[x] C3  Home / End jump to first and last event - Ref 5
+        > DONE 2026-08-06. MusicData.move_timeline_home()/move_timeline_end()
+          jump to the first/last event passing the active voice filter.
+          Unlike Left/Right/Ctrl+Left/Right they never fail outward, so
+          MainWindow's navigate_timeline_home/end never call the boundary
+          cue (Ref 5 AC3) - they always call _update_timeline_views(). Wired
+          in widgets/timeline_list_widget.py (Key_Home/Key_End) and
+          main_window.py. No screen-reader measure announcement yet - that's
+          D3.
 [ ] C4  Type digits then Enter to jump to a bar; Escape clears; unknown bar
         plays an error sound and does not move - Ref 6
-[ ] C5  Audible boundary notification at start and end of score - Ref 2 AC4
-        > move_timeline_left/right already return False at the boundary.
+[x] C5  Audible boundary notification ("doh" sound) - Ref 2 AC4, Ref 3 AC4
+        > DONE 2026-08-06. Decided D-9 as: synthesize through the existing
+          SynthEngine rather than a new asset - a short, quiet, low note
+          (E2, GM 44 Contrabass/double bass, 200ms - "roughly a quaver",
+          independent of the score's own tempo) on a dedicated channel
+          (15) so it can't be mistaken for a part's own instrument and
+          doesn't collide with D-5's per-part channel allocation on any
+          realistic score. main_window.py: MainWindow._play_boundary_cue()
+          plus BOUNDARY_CHANNEL/BOUNDARY_GM_PROGRAM/BOUNDARY_MIDI_PITCH/
+          BOUNDARY_DURATION_MS constants; called from
+          navigate_timeline_left/right and navigate_measure_left/right
+          whenever the corresponding MusicData move_* call returns False.
+          Configurable on/off and choice of sound explicitly deferred (not
+          asked for yet).
+        > FIX 2026-08-06 (live-tested bug, reported against Chessel Duet):
+          "active event" for boundary purposes was any timeline event,
+          including a trailing rest-only run at the end of the final bar -
+          Chessel Duet's last bar is a dotted crotchet on beat 1 followed by
+          rests in every voice on beats 4/5/6, purely padding the bar to a
+          complete measure. Right/Ctrl+Right from the dotted crotchet
+          stepped through those three rest slices before hitting the
+          boundary sound, and End landed on the last (empty) rest slot
+          instead of the dotted crotchet itself.
+          models/music_data.py: added _slice_has_visible_sounding_note()
+          (a visible note whose midi_pitch is not None, i.e. not a rest) and
+          _sounding_bounds() (the first/last index with one) as the real
+          navigable range. move_timeline_left/right, move_timeline_left/
+          right_by_measure and move_timeline_home/end all now bound against
+          this instead of the raw timeline/visible-notes range. An interior
+          rest (sandwiched between sounding notes, e.g. the rest_score
+          fixture's C/rest/E/F) is unaffected and remains individually
+          reachable - only leading/trailing rest-only padding is excluded.
+          New tests in tests/models/test_music_data.py:
+          test_move_timeline_right_stops_at_the_last_sounding_note_not_trailing_rests,
+          test_move_timeline_right_by_measure_stops_at_the_last_sounding_note,
+          test_move_timeline_end_lands_on_the_last_sounding_note_not_a_trailing_rest,
+          test_interior_rest_remains_individually_navigable.
+        > Also changed on request: boundary cue is now C#2 (was E2) at
+          100ms (was 200ms, "half the length") - BOUNDARY_MIDI_PITCH=37,
+          BOUNDARY_DURATION_MS=100 in main_window.py.
 [ ] C6  Status bar showing current measure and beat - Functional Spec
 [ ] C7  Menu bar: add Edit, View, Options and Help menus - Functional Spec
 
@@ -535,10 +612,15 @@ D-1  Rests in one voice alongside sounding notes in another
      3, a rest in a filtered-out voice does not appear at all.
 
 D-2  Global navigation keystrokes vs per-widget handling
-     Already flagged in the spec's own Discussion Points. Navigation should
-     work from anywhere in the main application area, but Qt widgets consume
-     arrow keys natively. Options: an application-level event filter, or
-     QShortcut with WindowShortcut context. Decide in C1.
+     DECIDED 2026-08-06: per-widget, scoped to the Note region, not global.
+     Already flagged in the spec's own Discussion Points; the user reversed
+     the original lean toward global handling - too confusing and not
+     standard Windows behaviour to have arrow keys act application-wide when
+     they mean something else in other regions. Ref 4 updated accordingly.
+     TimelineListWidget.keyPressEvent already handles Left/Right this way;
+     C1/C2/C3 extend the same widget rather than adding a MainWindow-level
+     event filter or WindowShortcut context. Revisit only if Tab-ping-ponging
+     back to the Note region proves inefficient in practice.
 
 D-3  Mechanism for forcing screen reader announcements from PySide6
      Needed for Ref 1 AC4, Ref 3 AC3 and Ref 5. Candidates: QAccessible
@@ -577,6 +659,16 @@ D-8  Where test sample scores live
      fixtures, plus hand-written minimal MusicXML under tests/fixtures/ for
      unit tests that need to isolate one behaviour.
 
+D-9  Source of the boundary ("doh") sound - Ref 2 AC4, Ref 3 AC4, see C5
+     DECIDED 2026-08-06 in C5: synthesize through the existing SynthEngine -
+     a short (quaver-length, ~200ms), quiet, low double-bass note (E2, GM 44
+     Contrabass), not tied to the score's own tempo, on a dedicated channel
+     (15) reserved from D-5's per-part allocation. No new asset, no
+     licensing question (never was going for a literal Homer Simpson
+     sample - just a low, unobtrusive indicator that a boundary was hit).
+     Making it configurable on/off, and choosing a different instrument/
+     pitch, is explicitly deferred until it's actually asked for.
+
 
 ###
 COVERAGE CHECK - every requirement appears at least once
@@ -592,5 +684,6 @@ COVERAGE CHECK - every requirement appears at least once
   NFR-05 D4     NFR-06 I1,I2     NFR-07 M4
 
   Reported bugs: tempo units A9, playback instrument A8
-  Discussion Points: global nav keys D-2/C1, UK-US vocabulary D-6/F4
+  Discussion Points: nav keys scoped to Note region (RESOLVED) D-2/C1,
+                     UK-US vocabulary D-6/F4
 ###
