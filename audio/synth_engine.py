@@ -1,6 +1,5 @@
 # audio/synth_engine.py
 import os
-import sys
 import ctypes
 from typing import List, Optional, Tuple
 from PySide6.QtCore import QTimer

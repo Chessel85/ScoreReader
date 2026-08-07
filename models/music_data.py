@@ -39,6 +39,24 @@ class MusicData:
                 self.file_path, self.parts_info, root=self.xml_root
             ).build()
             self.active_event_index = 0
+        # measure_numbers() is safe to cache forever - timeline_slices is
+        # never reassigned after this point. The other two are keyed off
+        # active_voice_filter and are invalidated in
+        # _invalidate_visibility_cache below.
+        self._measure_numbers_cache: Optional[List[int]] = None
+        self._invalidate_visibility_cache()
+
+    def _invalidate_visibility_cache(self) -> None:
+        """_sounding_bounds() and first_visible_event_index_of_measure() used
+        to re-walk the whole timeline from scratch on every single
+        navigation keypress (and move_timeline_*_by_measure called the
+        latter once per measure scanned, i.e. O(N) per measure => O(N*M)
+        worst case for a long run of filtered-out measures). Both are
+        cached here instead and only recomputed the first time they're
+        needed after active_voice_filter changes."""
+        self._sounding_bounds_cache: Optional[Tuple[int, int]] = None
+        self._sounding_bounds_computed: bool = False
+        self._first_visible_index_by_measure_cache: Optional[Dict[int, int]] = None
 
     def get_current_slice(self) -> Optional[EventSlice]:
         if 0 <= self.active_event_index < len(self.timeline_slices):
@@ -89,18 +107,22 @@ class MusicData:
 
         This is the true navigable range for Left/Right/Ctrl+Left/Right/
         Home/End - leading or trailing rest-only padding sits outside it.
-        None if nothing currently visible sounds at all.
+        None if nothing currently visible sounds at all. Cached per
+        active_voice_filter state - see _invalidate_visibility_cache.
         """
-        first_idx = None
-        last_idx = None
-        for i in range(len(self.timeline_slices)):
-            if self._slice_has_visible_sounding_note(i):
-                if first_idx is None:
-                    first_idx = i
-                last_idx = i
-        if first_idx is None:
-            return None
-        return first_idx, last_idx
+        if not self._sounding_bounds_computed:
+            first_idx = None
+            last_idx = None
+            for i in range(len(self.timeline_slices)):
+                if self._slice_has_visible_sounding_note(i):
+                    if first_idx is None:
+                        first_idx = i
+                    last_idx = i
+            self._sounding_bounds_cache = (
+                (first_idx, last_idx) if first_idx is not None else None
+            )
+            self._sounding_bounds_computed = True
+        return self._sounding_bounds_cache
 
     def move_timeline_left(self) -> bool:
         bounds = self._sounding_bounds()
@@ -129,8 +151,13 @@ class MusicData:
         return False
 
     def measure_numbers(self) -> List[int]:
-        """Distinct measure numbers present in the timeline, in ascending order."""
-        return list(dict.fromkeys(s.measure for s in self.timeline_slices))
+        """Distinct measure numbers present in the timeline, in ascending
+        order. Cached forever - timeline_slices is fixed after construction."""
+        if self._measure_numbers_cache is None:
+            self._measure_numbers_cache = list(
+                dict.fromkeys(s.measure for s in self.timeline_slices)
+            )
+        return self._measure_numbers_cache
 
     def first_event_index_of_measure(self, measure_number: int) -> Optional[int]:
         """Index of the first timeline event in the given measure.
@@ -147,15 +174,25 @@ class MusicData:
         """Index of the last timeline event, or -1 if the timeline is empty."""
         return len(self.timeline_slices) - 1
 
+    def _first_visible_index_by_measure(self) -> Dict[int, int]:
+        """measure_number -> index of its first visible event. Cached per
+        active_voice_filter state (see _invalidate_visibility_cache) so
+        move_timeline_*_by_measure's walk over several measures is O(1) per
+        measure instead of re-scanning the whole timeline each time."""
+        if self._first_visible_index_by_measure_cache is None:
+            cache: Dict[int, int] = {}
+            for i, s in enumerate(self.timeline_slices):
+                if s.measure not in cache and self._slice_has_visible_notes(i):
+                    cache[s.measure] = i
+            self._first_visible_index_by_measure_cache = cache
+        return self._first_visible_index_by_measure_cache
+
     def first_visible_event_index_of_measure(self, measure_number: int) -> Optional[int]:
         """Like first_event_index_of_measure, but skips slices with no note
         passing the active Region 2 filter (Ref 7) - keeps Ctrl+Left/Right
         (C2) sympathetic to what's actually visible, the same way plain
         Left/Right already are via _slice_has_visible_notes."""
-        for i, s in enumerate(self.timeline_slices):
-            if s.measure == measure_number and self._slice_has_visible_notes(i):
-                return i
-        return None
+        return self._first_visible_index_by_measure().get(measure_number)
 
     def move_timeline_left_by_measure(self) -> bool:
         """Ctrl+Left (Ref 3): jump to the first visible event of the current
@@ -285,6 +322,7 @@ class MusicData:
 
     def set_active_voice_filter(self, active_tuples: Set[Tuple[str, int, int]]) -> None:
         self.active_voice_filter = set(active_tuples)
+        self._invalidate_visibility_cache()
 
     def _visible_notes(self) -> List[NoteData]:
         """Notes at the current slice that pass the Region 2 filter (Ref 7).
