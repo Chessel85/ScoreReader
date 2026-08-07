@@ -1108,3 +1108,159 @@ def test_no_click_on_navigation_when_metronome_is_off(
     qtbot.keyClick(window.region_3, Qt.Key.Key_Right)
 
     assert null_synth.clicks == []
+
+
+def _region_3_labels(window):
+    return [window.region_3.item(i).text() for i in range(window.region_3.count())]
+
+
+def test_region_4_attribute_menu_add_updates_region_3_without_reauditioning(
+    window, qtbot, null_synth, minimal_score
+):
+    """Ref 15 AC4. minimal_score's single note (C, octave 4) has no
+    string/fret, so Region 4 row 1 is always "octave" - step is row 0."""
+    load_and_wait(window, qtbot, minimal_score)
+    assert _region_3_labels(window) == ["C"]
+
+    actions = window._region_4_attribute_menu_actions(1)
+    assert [label for label, _ in actions] == [
+        "Add to notes for this voice",
+        "Add to notes in same stave",
+        "Add to notes in the same part",
+        "Add to notes in the whole score",
+    ]
+
+    null_synth.played.clear()
+    actions[0][1]()  # "Add to notes for this voice"
+
+    assert _region_3_labels(window) == ["C, octave 4"]
+    assert null_synth.played == [], "an attribute toggle must not re-audition the note"
+    assert len(window.region_3.selectedIndexes()) == 1, "selection must be preserved"
+    assert window.region_4.rowCount() > 0, "Region 4 refreshed alongside Region 3"
+
+
+def test_region_4_attribute_menu_first_action_is_add_to_this_voice(
+    window, qtbot, null_synth, minimal_score
+):
+    """Locks in menu item ordering (via _build_region_4_attribute_menu,
+    which stops short of the real exec() call - QMenu.exec cannot be
+    monkeypatched around, see that method's docstring). An earlier attempt
+    pre-highlighted this first action via exec()'s `at` parameter to help
+    screen readers, but that was reverted (live-tested: it didn't produce a
+    real NVDA announcement) - see show_region_4_attribute_menu."""
+    load_and_wait(window, qtbot, minimal_score)
+
+    menu = window._build_region_4_attribute_menu(1)
+
+    assert menu is not None
+    assert menu.actions()[0].text() == "Add to notes for this voice"
+
+
+def test_restore_region_4_focus_after_menu_returns_to_the_same_row_and_column(
+    window, qtbot, null_synth, minimal_score
+):
+    """Live-tested bug: selecting a menu action rebuilds Region 4's rows
+    (via _apply_display_attribute_change -> _refresh_region_3_labels ->
+    _on_region_3_selection_changed -> _populate_table) while the menu's own
+    exec() is still running, which resets the table's current cell - NVDA
+    then kept reporting the stale menu item, and the next Down landed on
+    row 0 ("step") instead of back on the row the menu was opened on.
+    _restore_region_4_focus_after_menu is called after exec() returns to
+    fix this; this test drives the rebuild directly (bypassing the real,
+    blocking QMenu.exec()) to prove the restoration works. Also covers a
+    second live-tested bug in the same area: the restored column used to be
+    hard-coded to 0, so opening the menu from the value column (1) landed
+    back on the key column (0) instead."""
+    load_and_wait(window, qtbot, minimal_score)
+
+    window.region_4.setCurrentCell(1, 1)  # octave row, value column
+    selected_notes = window._music_data.notes_for_indices([0])
+    window._apply_display_attribute_change("octave", "voice", selected_notes, add=True)
+    assert window.region_4.currentRow() != 1, "sanity check: the rebuild really did reset it"
+
+    window._restore_region_4_focus_after_menu(1, 1)
+    QApplication.processEvents()
+
+    assert (window.region_4.currentRow(), window.region_4.currentColumn()) == (1, 1)
+    assert window.focusWidget() is window.region_4
+
+
+def test_region_4_attribute_menu_callback_survives_qactions_checked_argument(
+    window, qtbot, null_synth, minimal_score
+):
+    """Live-tested bug: QAction.triggered always calls a connected slot with
+    one positional bool ("checked"). The callback's scope=scope default-arg
+    lambda swallowed that bool into scope itself (Qt/PySide calls a
+    connected callable with one positional arg whenever it accepts one),
+    so every real menu selection raised
+    ValueError("Unknown display-attribute scope: False") - invisible to the
+    zero-arg actions[0][1]() calls the other tests here use, since those
+    never exercised the argument QAction actually passes."""
+    load_and_wait(window, qtbot, minimal_score)
+
+    actions = window._region_4_attribute_menu_actions(1)  # row 1 = octave
+    actions[0][1](False)  # exactly how QAction.triggered(bool) calls it
+
+    assert _region_3_labels(window) == ["C, octave 4"]
+
+
+def test_region_4_attribute_menu_switches_to_remove_once_present(
+    window, qtbot, null_synth, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    window._region_4_attribute_menu_actions(1)[0][1]()  # add octave to the voice
+    assert _region_3_labels(window) == ["C, octave 4"]
+
+    actions = window._region_4_attribute_menu_actions(1)
+    assert [label for label, _ in actions] == [
+        "Remove for notes in current voice",
+        "Remove for notes in current stave",
+        "Remove for notes in current part",
+        "Remove for notes in the whole score",
+    ]
+
+    actions[0][1]()  # "Remove for notes in current voice"
+
+    assert _region_3_labels(window) == ["C"]
+
+
+def test_region_4_attribute_menu_stave_scope_fans_out_to_every_voice_on_that_stave(
+    window, qtbot, null_synth, score_duet
+):
+    """Chessel Duet's Piano staff 2 carries two real voices (5 and 6) - a
+    genuine multi-voice stave, unlike a same-part/same-staff single-voice
+    fixture where stave scope would be indistinguishable from voice scope."""
+    load_and_wait(window, qtbot, score_duet)
+    assert _region_3_labels(window) == ["G", "D", "G", "D", "D"]
+
+    window.region_3.clearSelection()
+    window.region_3.setCurrentRow(1)
+    window.region_3.item(1).setSelected(True)  # row 1: P1 staff 2 voice 5, "D"
+    assert [i.row() for i in window.region_3.selectedIndexes()] == [1]
+
+    actions = window._region_4_attribute_menu_actions(1)  # row 1 = octave
+    stave_add = next(cb for label, cb in actions if label == "Add to notes in same stave")
+    stave_add()
+
+    labels = _region_3_labels(window)
+    assert labels[0] == "G", "P1 staff 1 voice 1 untouched"
+    assert labels[1].startswith("D, octave "), "P1 staff 2 voice 5 - the note the menu was opened on"
+    assert labels[2].startswith("G, octave "), "P1 staff 2 voice 6 - same stave, different voice"
+    assert labels[3] == "D" and labels[4] == "D", "P2's notes untouched"
+
+
+def test_region_4_attribute_menu_score_scope_fans_out_to_every_part(
+    window, qtbot, null_synth, score_duet
+):
+    load_and_wait(window, qtbot, score_duet)
+
+    window.region_3.clearSelection()
+    window.region_3.setCurrentRow(1)
+    window.region_3.item(1).setSelected(True)  # row 1: P1 staff 2 voice 5
+
+    actions = window._region_4_attribute_menu_actions(1)  # row 1 = octave
+    score_add = next(cb for label, cb in actions if label == "Add to notes in the whole score")
+    score_add()
+
+    labels = _region_3_labels(window)
+    assert all("octave " in label for label in labels), "every voice in the score, including P2, is affected"

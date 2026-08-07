@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QTableWidget,
     QTableWidgetItem,
     QWidget,
@@ -22,6 +23,7 @@ from models.music_data import MusicData
 from widgets.about_dialog import AboutDialog
 from widgets.goto_measure_dialog import GotoMeasureDialog
 from widgets.region2_list_widget import Region2ListWidget
+from widgets.region4_table_widget import Region4TableWidget
 from widgets.region_table_widget import RegionTableWidget
 from widgets.status_bar_widget import StatusBarWidget
 from widgets.tempo_offset_dialog import TempoOffsetDialog
@@ -88,8 +90,10 @@ class MainWindow(QMainWindow):
         self.select_all_shortcut = QShortcut(QKeySequence("Ctrl+A"), self.region_3)
         self.select_all_shortcut.activated.connect(self.select_all_region_3)
 
-        # Region 4: Property List
-        self.region_4 = self.create_property_list([])
+        # Region 4: Property List. Region4TableWidget (not the plain
+        # RegionTableWidget Region 1 uses) adds the Ref 15 AC4 context menu
+        # for appending/removing an attribute in Region 3's note display.
+        self.region_4 = self.create_property_list([], table_cls=Region4TableWidget)
 
         grid_layout.addWidget(self.region_1, 0, 0)
         grid_layout.addWidget(self.region_2, 0, 1)
@@ -333,8 +337,8 @@ class MainWindow(QMainWindow):
     def _show_about_dialog(self):
         AboutDialog(self).exec()
 
-    def create_property_list(self, items: list) -> RegionTableWidget:
-        table = RegionTableWidget(len(items), 2)
+    def create_property_list(self, items: list, table_cls: type = RegionTableWidget) -> RegionTableWidget:
+        table = table_cls(len(items), 2)
         table.setHorizontalHeaderLabels(["Property", "Value"])
 
         for row, (prop, val) in enumerate(items):
@@ -621,6 +625,121 @@ class MainWindow(QMainWindow):
         region_4_data = self._music_data.get_region_4_data_for_indices(selected_indices)
         self._populate_table(self.region_4, region_4_data)
 
+    def _region_4_attribute_menu_actions(self, row: int) -> list:
+        """(label, callback) pairs for the Ref 15 AC4 context menu on Region
+        4 row `row` - empty if there's nothing to act on (no score loaded,
+        no selection, or an out-of-range row). Kept separate from
+        show_region_4_attribute_menu so this logic is testable without
+        driving a real (blocking) QMenu.exec() event loop - same reasoning
+        already used for GotoMeasureDialog/AboutDialog injection (C8)."""
+        if not self._music_data:
+            return []
+
+        selected_indices = [item.row() for item in self.region_3.selectedIndexes()]
+        targets = self._music_data.get_region_4_row_targets(selected_indices)
+        if not (0 <= row < len(targets)):
+            return []
+
+        attribute_key, anchor_note = targets[row]
+        selected_notes = self._music_data.notes_for_indices(selected_indices)
+        already_present = self._music_data.note_has_display_attribute(anchor_note, attribute_key)
+
+        if already_present:
+            scopes = [
+                ("voice", "Remove for notes in current voice"),
+                ("stave", "Remove for notes in current stave"),
+                ("part", "Remove for notes in current part"),
+                ("score", "Remove for notes in the whole score"),
+            ]
+        else:
+            scopes = [
+                ("voice", "Add to notes for this voice"),
+                ("stave", "Add to notes in same stave"),
+                ("part", "Add to notes in the same part"),
+                ("score", "Add to notes in the whole score"),
+            ]
+
+        return [
+            (
+                label,
+                # checked=False soaks up the bool QAction.triggered always
+                # passes to a connected slot - without it, that bool lands
+                # in scope's own default-arg slot instead (Qt/PySide calls
+                # a connected callable with one positional arg whenever it
+                # accepts one), silently replacing e.g. "voice" with False.
+                # Live-tested bug: every scope choice raised
+                # ValueError("Unknown display-attribute scope: False").
+                lambda checked=False, scope=scope: self._apply_display_attribute_change(
+                    attribute_key, scope, selected_notes, add=not already_present
+                ),
+            )
+            for scope, label in scopes
+        ]
+
+    def _build_region_4_attribute_menu(self, row: int) -> QMenu | None:
+        """Builds the real QMenu (with its QActions wired to
+        _region_4_attribute_menu_actions' callbacks) without calling
+        exec() - split out from show_region_4_attribute_menu so tests can
+        inspect the built menu (e.g. which action ends up first) without
+        driving a real, blocking modal loop. QMenu.exec is a
+        Shiboken-wrapped/overloaded method that does not reliably accept a
+        Python-level monkeypatch (confirmed: attempting to patch it over
+        for a test hung indefinitely instead of raising), so unlike
+        GotoMeasureDialog/AboutDialog (C8) the untestable Qt call itself
+        must be kept out of the tested method entirely, not just injected
+        around."""
+        actions = self._region_4_attribute_menu_actions(row)
+        if not actions:
+            return None
+        menu = QMenu(self)
+        for label, callback in actions:
+            menu.addAction(label).triggered.connect(callback)
+        return menu
+
+    def show_region_4_attribute_menu(self, row: int, column: int, global_pos):
+        """Region4TableWidget calls this on right-click or the Menu/
+        Application key.
+
+        Live-tested: an earlier attempt here pre-highlighted the first
+        action via exec(pos, at=first_action) and additionally queued a
+        synthetic Key_Down at the menu to try to force a real accessibility
+        announcement. Neither produced a real NVDA announcement of the
+        first item (NVDA read "blank" instead of the item's text, even
+        though the highlight itself had genuinely moved) - reverted in
+        favour of plain exec(), which needs one manual arrow press but is
+        at least unambiguous and matches ordinary (if not ideal) menu
+        behaviour. Don't re-attempt this without a way to verify against
+        real NVDA."""
+        menu = self._build_region_4_attribute_menu(row)
+        if menu is None:
+            return
+        menu.exec(global_pos)
+        self._restore_region_4_focus_after_menu(row, column)
+
+    def _restore_region_4_focus_after_menu(self, row: int, column: int):
+        """Called after the Ref 15 AC4 context menu closes, whether an
+        action fired or Escape cancelled it. Live-tested bug: selecting an
+        item rebuilds Region 4 (the triggered callback runs
+        _apply_display_attribute_change -> _refresh_region_3_labels ->
+        _on_region_3_selection_changed -> _populate_table) WHILE the
+        menu's exec() is still running (QAction.triggered fires before
+        exec() returns), and that rebuild resets the table's current cell.
+        That's exactly why Escape (which triggers no callback, no rebuild)
+        already returned focus to the right row while Enter did not - NVDA
+        kept reporting the stale menu item, and the next Down landed on
+        row 0 ("step") instead of back where the menu was opened. `column`
+        matters too - live-tested bug: this used to always restore column 0,
+        so opening the menu from the value column landed back on the key
+        column instead. Split out from show_region_4_attribute_menu so it's
+        testable without a real (blocking) exec() call."""
+        if 0 <= row < self.region_4.rowCount():
+            self.region_4.setCurrentCell(row, column)
+        self.region_4.setFocus()
+
+    def _apply_display_attribute_change(self, attribute_key: str, scope: str, notes: list, add: bool):
+        self._music_data.set_display_attribute(attribute_key, scope, notes, add)
+        self._refresh_region_3_labels()
+
     def _play_selected_region_3_notes(self):
         if not self._music_data:
             return
@@ -661,6 +780,26 @@ class MainWindow(QMainWindow):
 
         if play_all:
             self._play_selected_region_3_notes()
+
+    def _refresh_region_3_labels(self):
+        """Re-renders Region 3's row text after a Ref 15 AC4 attribute
+        change. Deliberately NOT _update_timeline_views: that calls
+        selectAll() (would discard a specific multi-selection) and
+        re-auditions notes that haven't moved or changed pitch - an
+        attribute toggle does neither, and row count never changes from it,
+        so text can be updated in place."""
+        if not self._music_data:
+            return
+
+        labels = self._music_data.get_region_3_data()
+        self.region_3.blockSignals(True)
+        for row, text in enumerate(labels):
+            item = self.region_3.item(row)
+            if item is not None:
+                item.setText(text)
+        self.region_3.blockSignals(False)
+
+        self._on_region_3_selection_changed()
 
     def _update_status_bar(self):
         if not self._music_data:

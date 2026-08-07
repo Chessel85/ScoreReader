@@ -5,6 +5,7 @@ The real characterisation suite is A2. These tests exist to show the
 ElementTree-only path works and is wired up correctly.
 """
 from models.music_data import MusicData
+from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
 
 
@@ -690,3 +691,182 @@ def test_last_sounding_event_index_excludes_trailing_rest_padding(timeline, scor
 
     assert last_sounding is not None
     assert last_sounding < md.last_event_index()
+
+
+# Ref 15 AC4: configurable note-attribute display in Region 3.
+
+def _note(part_id="P1", staff=1, voice=1) -> NoteData:
+    return NoteData(
+        step_name="C", measure=1, beat_position=1.0, ts_duration=1.0,
+        quarter_length=1.0, part_id=part_id, part_name="Test", staff=staff, voice=voice,
+    )
+
+
+def test_region_3_appends_configured_extra_attributes_comma_separated(timeline, minimal_score):
+    md = timeline(minimal_score)
+    note = md.timeline_slices[0].notes[0]  # C, octave 4, ts_duration 1.0
+    voice_key = (note.part_id, note.staff, note.voice)
+    md.voice_display_attributes[voice_key] = {"duration", "step", "octave"}  # order must not matter
+
+    assert md.get_region_3_data() == ["C, octave 4, duration 1"]
+
+
+def test_region_3_omits_missing_attributes_without_a_dangling_comma(timeline, rest_score):
+    """A rest has no octave/midi - those must vanish from the display
+    entirely, not leave an empty "octave , midi" gap or a double comma."""
+    md = timeline(rest_score)
+    md.voice_display_attributes[("P1", 1, 1)] = {"step", "octave", "midi", "duration"}
+
+    md.active_event_index = 0
+    assert md.get_region_3_data() == ["C, octave 4, midi 60, duration 1"]
+
+    md.active_event_index = 1  # the rest
+    assert md.get_region_3_data() == ["rest, duration 1"]
+
+
+def test_region_3_renders_blank_when_no_attributes_are_configured_on(timeline, minimal_score):
+    """Still a valid, selectable, audible position - just nothing to show."""
+    md = timeline(minimal_score)
+    note = md.timeline_slices[0].notes[0]
+    md.voice_display_attributes[(note.part_id, note.staff, note.voice)] = set()
+
+    assert md.get_region_3_data() == [""]
+
+
+def test_region_4_data_ignores_the_region_3_display_configuration(timeline, minimal_score):
+    """Region 4 always shows every attribute a note has, regardless of what
+    Region 3 is currently configured to display."""
+    md = timeline(minimal_score)
+    note = md.timeline_slices[0].notes[0]
+    md.voice_display_attributes[(note.part_id, note.staff, note.voice)] = set()
+
+    data = md.get_region_4_data_for_indices([0])
+
+    assert data["step"] == "C"
+    assert data["octave"] == "4"
+
+
+def test_notes_for_indices_returns_the_real_note_objects(timeline, chord_score):
+    md = timeline(chord_score)
+    md.active_event_index = 1  # D, F chord
+    notes = md.timeline_slices[1].notes
+
+    assert md.notes_for_indices([0, 1]) == notes
+    assert md.notes_for_indices([]) == []
+    assert md.notes_for_indices([5]) == [], "out-of-range indices are ignored"
+
+
+def test_get_region_4_row_targets_matches_data_keys_for_a_single_note(timeline, minimal_score):
+    md = timeline(minimal_score)
+
+    data_keys = list(md.get_region_4_data_for_indices([0]).keys())
+    targets = md.get_region_4_row_targets([0])
+
+    assert [attribute_key for attribute_key, _ in targets] == data_keys
+    assert all(note.step_name == "C" for _, note in targets)
+
+
+def test_get_region_4_row_targets_strips_the_chord_note_prefix(timeline, chord_score):
+    md = timeline(chord_score)
+    md.active_event_index = 1  # D, F chord
+    notes = md.timeline_slices[1].notes
+
+    data_keys = list(md.get_region_4_data_for_indices([0, 1]).keys())
+    targets = md.get_region_4_row_targets([0, 1])
+
+    assert len(targets) == len(data_keys)
+    assert all(not attribute_key.startswith("note ") for attribute_key, _ in targets)
+    assert data_keys[0] == "note 1 step"
+    assert targets[0] == ("step", notes[0])
+    note_2_row = data_keys.index("note 2 step")
+    assert targets[note_2_row] == ("step", notes[1])
+
+
+def test_note_has_display_attribute_defaults_to_step_only():
+    md = MusicData(parts_info=[PartStructureInfo(part_id="P1", staves_voices={1: [1]})])
+    note = _note()
+
+    assert md.note_has_display_attribute(note, "step") is True
+    assert md.note_has_display_attribute(note, "octave") is False
+
+    md.set_display_attribute("octave", "voice", [note], add=True)
+
+    assert md.note_has_display_attribute(note, "octave") is True
+
+
+def test_set_display_attribute_voice_scope_only_touches_that_voice():
+    md = MusicData(parts_info=[
+        PartStructureInfo(part_id="P1", staves_voices={1: [1, 2], 2: [1]}),
+        PartStructureInfo(part_id="P2", staves_voices={1: [1]}),
+    ])
+
+    md.set_display_attribute("octave", "voice", [_note("P1", 1, 1)], add=True)
+
+    assert md.voice_display_attributes[("P1", 1, 1)] == {"step", "octave"}
+    assert ("P1", 1, 2) not in md.voice_display_attributes
+    assert ("P1", 2, 1) not in md.voice_display_attributes
+
+
+def test_set_display_attribute_stave_scope_fans_out_to_every_voice_on_that_stave():
+    md = MusicData(parts_info=[PartStructureInfo(part_id="P1", staves_voices={1: [1, 2], 2: [1]})])
+
+    md.set_display_attribute("octave", "stave", [_note("P1", 1, 1)], add=True)
+
+    assert md.voice_display_attributes[("P1", 1, 1)] == {"step", "octave"}
+    assert md.voice_display_attributes[("P1", 1, 2)] == {"step", "octave"}
+    assert ("P1", 2, 1) not in md.voice_display_attributes
+
+
+def test_set_display_attribute_part_scope_fans_out_to_every_stave_in_that_part():
+    md = MusicData(parts_info=[
+        PartStructureInfo(part_id="P1", staves_voices={1: [1], 2: [1, 2]}),
+        PartStructureInfo(part_id="P2", staves_voices={1: [1]}),
+    ])
+
+    md.set_display_attribute("octave", "part", [_note("P1", 1, 1)], add=True)
+
+    assert md.voice_display_attributes[("P1", 1, 1)] == {"step", "octave"}
+    assert md.voice_display_attributes[("P1", 2, 1)] == {"step", "octave"}
+    assert md.voice_display_attributes[("P1", 2, 2)] == {"step", "octave"}
+    assert ("P2", 1, 1) not in md.voice_display_attributes
+
+
+def test_set_display_attribute_score_scope_fans_out_to_every_part():
+    md = MusicData(parts_info=[
+        PartStructureInfo(part_id="P1", staves_voices={1: [1]}),
+        PartStructureInfo(part_id="P2", staves_voices={1: [1, 2]}),
+    ])
+
+    md.set_display_attribute("octave", "score", [_note("P1", 1, 1)], add=True)
+
+    assert md.voice_display_attributes[("P1", 1, 1)] == {"step", "octave"}
+    assert md.voice_display_attributes[("P2", 1, 1)] == {"step", "octave"}
+    assert md.voice_display_attributes[("P2", 1, 2)] == {"step", "octave"}
+
+
+def test_set_display_attribute_multi_select_unions_scope_across_selected_notes():
+    """Confirmed design decision: a stave/part/score-scope action fired from
+    a multi-note (chord) Region 3 selection unions the scope across every
+    selected note's own stave/part, not just the one note the context menu
+    happened to be opened on."""
+    md = MusicData(parts_info=[
+        PartStructureInfo(part_id="P1", staves_voices={1: [1, 2]}),
+        PartStructureInfo(part_id="P2", staves_voices={1: [1]}),
+    ])
+    notes = [_note("P1", 1, 1), _note("P2", 1, 1)]
+
+    md.set_display_attribute("octave", "stave", notes, add=True)
+
+    assert md.voice_display_attributes[("P1", 1, 1)] == {"step", "octave"}
+    assert md.voice_display_attributes[("P1", 1, 2)] == {"step", "octave"}
+    assert md.voice_display_attributes[("P2", 1, 1)] == {"step", "octave"}
+
+
+def test_set_display_attribute_can_remove_step_leaving_a_blank_voice():
+    md = MusicData(parts_info=[PartStructureInfo(part_id="P1", staves_voices={1: [1]})])
+    note = _note()
+
+    md.set_display_attribute("step", "voice", [note], add=False)
+
+    assert md.voice_display_attributes[("P1", 1, 1)] == set()
+    assert md.note_has_display_attribute(note, "step") is False

@@ -64,6 +64,14 @@ class MusicData:
     # expect the full note list.
     active_voice_filter: Optional[Set[Tuple[str, int, int]]] = None
 
+    # Ref 15 AC4: extra Region 4 attributes (beyond the always-toggleable
+    # "step") appended to a note's Region 3 display, keyed the same way
+    # active_voice_filter is. A voice absent from this dict uses
+    # DEFAULT_DISPLAY_ATTRIBUTES, NOT an empty set - most voices are never
+    # touched by the F-phase context menu and must keep showing today's
+    # plain note name.
+    voice_display_attributes: Dict[Tuple[str, int, int], Set[str]] = field(default_factory=dict)
+
     # E8/Ref 14: off by default per score load (MusicData is reconstructed
     # fresh on every _on_score_loaded, so no explicit reset code is needed
     # elsewhere, same as playback_tempo_offset above). Gates both whether a
@@ -472,6 +480,86 @@ class MusicData:
             if (n.part_id, n.staff, n.voice) in self.active_voice_filter
         ]
 
+    # Ref 15 AC4: fixed rendering order for Region 3's optional extra
+    # attributes - same key set/order Region 4's rows already use.
+    # Attribute-ordering customization (F2) is deferred; this list is the
+    # only order that exists for now.
+    DISPLAY_ATTRIBUTE_ORDER = [
+        "step", "octave", "midi", "measure", "beat position", "duration",
+        "part", "stave", "voice", "string", "fret",
+    ]
+    # A voice with no entry in voice_display_attributes uses this - today's
+    # plain-note-name behaviour, not an empty display.
+    DEFAULT_DISPLAY_ATTRIBUTES = frozenset({"step"})
+
+    def notes_for_indices(self, selected_indices: List[int]) -> List[NoteData]:
+        """The real NoteData objects behind Region 3's selected row indices -
+        shared by get_region_4_row_targets and the Ref 15 AC4 attribute-scope
+        actions (main_window.py), which need the notes themselves rather
+        than just indices or playback pitches."""
+        notes = self._visible_notes()
+        return [notes[i] for i in selected_indices if 0 <= i < len(notes)]
+
+    def _note_attribute_pairs(self, note: NoteData) -> Dict[str, str]:
+        """Un-prefixed attribute-name -> value for one note. Shared by
+        _region_4_rows (Region 4, "note N "-prefixed when more than one note
+        is selected) and _format_note_for_region_3 (Ref 15 AC4's optional
+        extra attributes) so the two regions can never disagree on an
+        attribute's name or value. Only includes keys that actually have a
+        value for this note (e.g. a rest has no octave/midi) - the absence
+        of a key here is what keeps both a Region 4 row and a Region 3
+        attribute from ever being rendered for data that doesn't exist."""
+        dur_str = str(int(note.ts_duration)) if note.ts_duration.is_integer() else str(note.ts_duration)
+        pairs = {"step": note.step_name}
+        if note.octave is not None:
+            pairs["octave"] = str(note.octave)
+        if note.midi_pitch is not None:
+            pairs["midi"] = str(note.midi_pitch)
+        pairs["measure"] = str(note.measure)
+        pairs["beat position"] = str(note.beat_position)
+        pairs["duration"] = dur_str
+        pairs["part"] = note.part_name
+        pairs["stave"] = self.get_stave_name_for_part(note.part_id, note.staff)
+        pairs["voice"] = str(note.voice)
+        if note.string is not None:
+            pairs["string"] = str(note.string)
+        if note.fret is not None:
+            pairs["fret"] = str(note.fret)
+        return pairs
+
+    def _region_4_rows(self, selected_notes: List[NoteData]) -> List[Tuple[str, str, NoteData, str]]:
+        """(display_key, attribute_key, note, value) per Region 4 row, in
+        display order - display_key carries the "note N " prefix used when
+        more than one note is selected (a chord), attribute_key never does.
+        Shared source for get_region_4_data_for_indices (the dict Region 4
+        renders) and get_region_4_row_targets (which row maps to which
+        note/attribute, for the Ref 15 AC4 context menu)."""
+        is_chord = len(selected_notes) > 1
+        rows = []
+        for idx, n in enumerate(selected_notes, start=1):
+            prefix = f"note {idx} " if is_chord else ""
+            for attribute_key, value in self._note_attribute_pairs(n).items():
+                rows.append((f"{prefix}{attribute_key}", attribute_key, n, value))
+        return rows
+
+    def _format_note_for_region_3(self, note: NoteData) -> str:
+        """Ref 15 AC4: the note's name plus whichever extra attributes are
+        configured on for its voice, comma-separated. An attribute is
+        skipped both when it's not in the voice's configured set AND when
+        the note has no value for it (e.g. octave on a rest) - the latter is
+        what stops a missing attribute from leaving a dangling/double comma.
+        An all-off voice (including "step" removed) renders "" - a blank but
+        still selectable, still-audible Region 3 row."""
+        voice_key = (note.part_id, note.staff, note.voice)
+        wanted = self.voice_display_attributes.get(voice_key, self.DEFAULT_DISPLAY_ATTRIBUTES)
+        pairs = self._note_attribute_pairs(note)
+        parts = []
+        for key in self.DISPLAY_ATTRIBUTE_ORDER:
+            if key not in wanted or key not in pairs:
+                continue
+            parts.append(pairs[key] if key == "step" else f"{key} {pairs[key]}")
+        return ", ".join(parts)
+
     def get_region_3_data(self) -> List[str]:
         notes = self._visible_notes()
         if not notes:
@@ -483,44 +571,83 @@ class MusicData:
             ):
                 return ["Click"]
             return ["None"]
-        return [n.step_name for n in notes]
+        return [self._format_note_for_region_3(n) for n in notes]
 
     def get_region_4_data_for_indices(self, selected_indices: List[int]) -> Dict[str, str]:
-        notes = self._visible_notes()
-        if not notes or not selected_indices:
-            return {"Status": "No note selected"}
-
-        selected_notes = [
-            notes[i] for i in selected_indices if 0 <= i < len(notes)
-        ]
+        selected_notes = self.notes_for_indices(selected_indices)
         if not selected_notes:
             return {"Status": "No note selected"}
+        return {
+            display_key: value
+            for display_key, _, _, value in self._region_4_rows(selected_notes)
+        }
 
-        data = {}
-        is_chord = len(selected_notes) > 1
+    def get_region_4_row_targets(self, selected_indices: List[int]) -> List[Tuple[str, NoteData]]:
+        """(attribute_key, note) per Region 4 row, in the same order as
+        get_region_4_data_for_indices - lets MainWindow map "the Region 4 row
+        the context menu was opened on" back to what it should toggle
+        (Ref 15 AC4)."""
+        selected_notes = self.notes_for_indices(selected_indices)
+        if not selected_notes:
+            return []
+        return [
+            (attribute_key, note)
+            for _, attribute_key, note, _ in self._region_4_rows(selected_notes)
+        ]
 
-        for idx, n in enumerate(selected_notes, start=1):
-            prefix = f"note {idx} " if is_chord else ""
-            dur_str = str(int(n.ts_duration)) if n.ts_duration.is_integer() else str(n.ts_duration)
+    def note_has_display_attribute(self, note: NoteData, attribute_key: str) -> bool:
+        """Whether `note`'s own voice currently shows `attribute_key` in
+        Region 3 - drives the Add-vs-Remove variant of the Ref 15 AC4
+        context menu."""
+        voice_key = (note.part_id, note.staff, note.voice)
+        return attribute_key in self.voice_display_attributes.get(voice_key, self.DEFAULT_DISPLAY_ATTRIBUTES)
 
-            data[f"{prefix}step"] = n.step_name
-            if n.octave is not None:
-                data[f"{prefix}octave"] = str(n.octave)
-            if n.midi_pitch is not None:
-                data[f"{prefix}midi"] = str(n.midi_pitch)
-            data[f"{prefix}measure"] = str(n.measure)
-            data[f"{prefix}beat position"] = str(n.beat_position)
-            data[f"{prefix}duration"] = dur_str
-            data[f"{prefix}part"] = n.part_name
-            data[f"{prefix}stave"] = self.get_stave_name_for_part(n.part_id, n.staff)
-            data[f"{prefix}voice"] = str(n.voice)
+    def _voice_tuples_for_scope(self, note: NoteData, scope: str) -> Set[Tuple[str, int, int]]:
+        """Every (part_id, staff, voice) tuple `scope` fans out to from
+        `note`'s own position - "voice" is just the note's own tuple,
+        "stave"/"part" walk parts_info's staves_voices for siblings, "score"
+        is every voice in every part. Ref 15 AC4."""
+        if scope == "voice":
+            return {(note.part_id, note.staff, note.voice)}
+        if scope == "score":
+            return {
+                (p.part_id, s, v)
+                for p in self.parts_info
+                for s, vs in p.staves_voices.items()
+                for v in vs
+            }
+        part = next((p for p in self.parts_info if p.part_id == note.part_id), None)
+        if part is None:
+            return {(note.part_id, note.staff, note.voice)}
+        if scope == "stave":
+            return {(note.part_id, note.staff, v) for v in part.staves_voices.get(note.staff, [])}
+        if scope == "part":
+            return {
+                (note.part_id, s, v)
+                for s, vs in part.staves_voices.items()
+                for v in vs
+            }
+        raise ValueError(f"Unknown display-attribute scope: {scope!r}")
 
-            if n.string is not None:
-                data[f"{prefix}string"] = str(n.string)
-            if n.fret is not None:
-                data[f"{prefix}fret"] = str(n.fret)
-
-        return data
+    def set_display_attribute(
+        self, attribute_key: str, scope: str, notes: List[NoteData], add: bool
+    ) -> None:
+        """Ref 15 AC4: add or remove `attribute_key` from Region 3's display
+        for every voice `scope` ("voice"/"stave"/"part"/"score") reaches from
+        each note in `notes` - plural because a multi-note Region 3 selection
+        (a chord) unions the scope across every selected note, e.g. a
+        stave-scope action from a two-part chord affects both parts' staves,
+        not just the one the context menu happened to be opened on."""
+        voice_keys: Set[Tuple[str, int, int]] = set()
+        for note in notes:
+            voice_keys |= self._voice_tuples_for_scope(note, scope)
+        for voice_key in voice_keys:
+            current = set(self.voice_display_attributes.get(voice_key, self.DEFAULT_DISPLAY_ATTRIBUTES))
+            if add:
+                current.add(attribute_key)
+            else:
+                current.discard(attribute_key)
+            self.voice_display_attributes[voice_key] = current
 
     def get_midi_notes_for_indices(self, selected_indices: List[int]) -> List[int]:
         notes = self._visible_notes()

@@ -1521,10 +1521,265 @@ now waits via qtbot.waitUntil instead of asserting finished synchronously).
 ###
 PHASE F - NOTE DISPLAY CONFIGURATION                      (3 tasks)
 ###
-[ ] F1  Formatting layer building the Region 3 label from a configurable
+[x] F1  Formatting layer building the Region 3 label from a configurable
         attribute list, e.g. "C, string 5, fret 1" - Ref 15
-[ ] F2  Options > Note Display dialog; scope global / part / staff / voice;
-        control attribute ordering - Ref 15 AC4
+        > DONE 2026-08-07. Built together with F2's scope-control half (the
+          ordering-control dialog is the only piece of F2 still open - see
+          below) after a design review with the user turned up two gaps
+          against the literal PDD text, both resolved directly with the
+          user rather than assumed: Ref 15 AC4 names a 4th "score" scope
+          beyond voice/stave/part (kept, even though Ref 27 AC2 and the
+          user's own walkthrough only mention three); and a stave/part/
+          score-scope action fired from a multi-note Region 3 selection
+          (a chord) unions the scope across every selected note, not just
+          the one note the menu was opened on.
+          models/music_data.py: new voice_display_attributes: Dict[(part_id,
+          staff, voice), Set[str]] field, defaulting (when a voice has no
+          entry) to DEFAULT_DISPLAY_ATTRIBUTES = frozenset({"step"}) -
+          today's plain-name behaviour. "step" is toggleable like every
+          other attribute; removing it too is valid and renders a blank but
+          still navigable, still audible Region 3 row. Refactored the
+          attribute-name/value logic that used to be inlined in
+          get_region_4_data_for_indices into _note_attribute_pairs (one
+          note's un-prefixed key->value map) and _region_4_rows (adds the
+          chord "note N " prefix), so Region 3's optional extra attributes
+          and Region 4's own rows can never disagree on a name or value -
+          get_region_4_data_for_indices's own output is unchanged (full
+          suite passed before and after the refactor with no test changes
+          needed). New get_region_4_row_targets/notes_for_indices let
+          MainWindow map "the Region 4 row the context menu was opened on"
+          back to an attribute key + NoteData. get_region_3_data ->
+          _format_note_for_region_3: walks the fixed DISPLAY_ATTRIBUTE_ORDER
+          (attribute-ordering customization is F2's still-open half),
+          comma-joins whichever configured keys the note actually has a
+          value for - the "actually has a value for" check is what prevents
+          a dangling/double comma when e.g. octave is requested on a rest.
+          _voice_tuples_for_scope/note_has_display_attribute/
+          set_display_attribute implement the scope fan-out (using
+          parts_info.staves_voices, the same source Region 2's hierarchy
+          already builds from) and the add/remove mutation.
+          widgets/region4_table_widget.py (new): Region4TableWidget adds
+          CustomContextMenu policy - Qt raises customContextMenuRequested
+          for both right-click and the Menu/Application key once that
+          policy is set, so no separate keyboard handling was needed.
+          main_window.py: region_4 now built with table_cls=
+          Region4TableWidget (Region 1 unchanged, plain RegionTableWidget).
+          _region_4_attribute_menu_actions(row) is pure logic (no QMenu/
+          exec()) returning (label, callback) pairs - Add-* labels or
+          Remove-* labels depending on note_has_display_attribute on the
+          row's own note - kept separate from the thin
+          show_region_4_attribute_menu Qt shell specifically so it is
+          testable without driving a real blocking QMenu.exec() loop, same
+          reasoning already used for GotoMeasureDialog/AboutDialog
+          injection (C8). New _refresh_region_3_labels re-renders Region
+          3's row text in place after a toggle - deliberately NOT
+          _update_timeline_views, which calls selectAll() (would discard a
+          specific multi-selection) and re-auditions (an attribute toggle
+          moves nothing and changes no pitch).
+          17 new tests: tests/models/test_music_data.py (comma-joining,
+          missing-value omission proven on the rest.musicxml fixture, blank-
+          when-all-off, all 4 scopes, the multi-select-unions-scope
+          behaviour, get_region_4_data_for_indices proven unaffected by the
+          Region 3 configuration); tests/widgets/test_region4_table_widget.py
+          (context-menu policy and row-forwarding, against a fake window
+          stand-in); tests/test_main_window.py (end-to-end: Add/Remove
+          label-set switching, Region 3 text updates, selection preserved,
+          no re-audition, and stave/score-scope fan-out proven on Chessel
+          Duet's Piano part, whose staff 2 genuinely carries two voices, 5
+          and 6 - a single-voice-per-stave fixture couldn't have
+          distinguished stave scope from voice scope). Full suite: 211
+          passed (was 194).
+        > FIX 2026-08-07 (live-tested bug, reported by the user): the
+          context menu was unreachable by keyboard, which fully explains
+          both symptoms reported ("popup says python window" instead of
+          announcing a menu item, and the attribute never actually being
+          added) - with no menu ever open, Enter/arrows just acted on
+          whatever was focused before, and NVDA kept announcing the
+          MainWindow itself. Root cause, confirmed empirically (not
+          assumed): Qt's CustomContextMenu policy does NOT synthesize
+          customContextMenuRequested from the Menu/Application key or
+          Shift+F10 for a QTableWidget on its own - only a real right-click
+          reliably raises it. The plan's "no separate keyboard handling
+          needed" note was wrong.
+          widgets/region4_table_widget.py: Region4TableWidget.keyPressEvent
+          now handles Key_Menu and Shift+F10 explicitly, calling the same
+          _show_attribute_menu path a real right-click uses. Also hardened
+          _show_attribute_menu's row/position resolution while in there: the
+          row now comes from rowAt(pos) for a real click (falling back to
+          currentRow() only for the keyboard path, where there is no click
+          position) rather than always trusting currentRow() - a right-click
+          on a row other than the keyboard-focused one now acts on the row
+          actually clicked - and the popup's anchor point is always the
+          clicked/current row's own visualItemRect, not the raw event pos,
+          since a keyboard-synthesized pos is not reliable enough to place a
+          popup from.
+          4 new tests in tests/widgets/test_region4_table_widget.py (Menu
+          key opens the menu, Shift+F10 too, no-op with no current row, Tab
+          still forwards to focus_next_region - the last one calls
+          keyPressEvent directly rather than via a simulated Tab keypress,
+          the same QTest fragility already worked around for F6 pane-cycling
+          in C7, since Qt's own tab-focus handling intercepts a real Key_Tab
+          before it reaches keyPressEvent on a widget that is not genuinely
+          focused/shown). Full suite: 215 passed.
+        > FIX 2026-08-07 (live-tested bug, reported by the user via a real
+          traceback - "Unknown display-attribute scope: False"): the actual
+          reason no attribute was ever added, in every scope, every time.
+          QAction.triggered always calls a connected slot with one
+          positional bool ("checked"). _region_4_attribute_menu_actions'
+          per-scope callback was `lambda scope=scope: ...` - Qt/PySide calls
+          a connected Python callable with one positional argument whenever
+          it accepts one, so that bool landed in scope's own default-arg
+          slot instead of "voice"/"stave"/"part"/"score", and
+          set_display_attribute raised every time before anything could be
+          written to voice_display_attributes. Invisible to this session's
+          own tests, which all called the returned callback with zero
+          arguments (actions[0][1]()) - never exercising the argument a real
+          QAction actually passes.
+          main_window.py: the lambda now takes `checked=False, scope=scope`
+          - checked soaks up QAction's bool, scope keeps its own default
+          from the loop. New regression test
+          test_region_4_attribute_menu_callback_survives_qactions_checked_argument
+          calls the callback the same way QAction.triggered(bool) does
+          (actions[0][1](False)) specifically so this can't regress
+          silently again. Full suite: 216 passed.
+        > FIX 2026-08-07 (live-tested, reported by the user after the two
+          fixes above): two more findings, one fixed, one still open.
+          1. FIXED - accessibility: pressing the Application key produced no
+             immediate NVDA announcement; only after arrowing down once did
+             NVDA read anything ("Python window. Add to notes in this
+             voice."). Root cause: show_region_4_attribute_menu called
+             menu.exec(global_pos) with no second argument - Qt's own
+             signature is QMenu.exec(pos, at: QAction | None = None), and
+             with `at` defaulting to None the popup opens with nothing
+             pre-highlighted, so there is nothing to announce until the user
+             manually arrows once. Fixed by passing the first action:
+             menu.exec(global_pos, menu.actions()[0]).
+             Split show_region_4_attribute_menu into
+             _build_region_4_attribute_menu (constructs the QMenu/QActions,
+             no exec() call) + the thin exec()-calling wrapper, because
+             QMenu.exec turned out to NOT be reliably monkeypatchable in
+             this PySide6 build - a test that tried `monkeypatch.setattr(
+             QMenu, "exec", fake_exec)` didn't raise, it just silently fell
+             through to the real blocking call and hung the whole suite
+             (confirmed twice). New test
+             test_region_4_attribute_menu_first_action_is_add_to_this_voice
+             asserts against the built-but-not-exec'd menu instead.
+          2. STILL OPEN - functional: after selecting an item and pressing
+             Enter, returning to the Note region still shows only the plain
+             note name, not the added attribute. Investigated hard and could
+             NOT reproduce: built a fresh repro this session (real
+             MainWindow, real score, real QMenu, calling .trigger() on a
+             real QAction - the same mechanism a real Enter keypress uses
+             internally) and Region 3 updated correctly. The algorithm
+             itself (scope fan-out, voice_display_attributes,
+             _format_note_for_region_3) is not in question - 217 tests plus
+             this fresh repro all agree. Added a temporary [DEBUG] print in
+             _apply_display_attribute_change (attribute/scope/note-count/add
+             before the change, get_region_3_data() after) so the next real
+             attempt is conclusive - remove once this is confirmed fixed or
+             root-caused. Leading theory: the user's first report of this
+             (the ValueError traceback, item 2026-08-07 FIX above) may have
+             been tested against a process still running the pre-fix code;
+             asked the user to fully quit every running instance, relaunch
+             fresh, and report exactly what the new [DEBUG] line prints.
+          Full suite: 217 passed.
+        > FIX 2026-08-07 (live-tested, reported after the above): the "not
+          added" report was indeed the stale-process theory - user confirms
+          attributes now add/mix correctly across all four scopes, so the
+          temporary [DEBUG] prints in _apply_display_attribute_change were
+          removed (their job was done). Also answered a design question:
+          the user observed attributes seeming to render in "voice, stave,
+          part, score" order and asked if that's real. It isn't - Region
+          3's rendering order is ALWAYS DISPLAY_ATTRIBUTE_ORDER (step,
+          octave, midi, measure, beat position, duration, part, stave,
+          voice, string, fret), fixed regardless of which scope an
+          attribute was added through; any correlation observed was
+          coincidental to which attributes happened to be tested via which
+          scope. Real ordering control is F2 (still open, deferred).
+          Two more menu-interaction bugs, one fixed with high confidence,
+          one attempted best-effort (can't be verified without real NVDA):
+          1. FIXED, high confidence - selecting a menu action rebuilds
+             Region 4's rows (the triggered callback runs
+             _apply_display_attribute_change -> _refresh_region_3_labels ->
+             _on_region_3_selection_changed -> _populate_table) WHILE the
+             menu's own exec() is still running (QAction.triggered fires
+             before exec() returns), and that rebuild resets the table's
+             current cell. This is exactly why Escape (which triggers no
+             callback, no rebuild) already correctly returned to the same
+             row while Enter did not: NVDA kept reporting the stale menu
+             item on NVDA+Up, and the next Down landed on row 0 ("step")
+             instead of back on the attribute the menu was opened on.
+             main_window.py: new _restore_region_4_focus_after_menu(row),
+             called after menu.exec() returns - re-sets Region 4's current
+             cell to `row` and calls setFocus() for a fresh, real focus
+             event. Split out from show_region_4_attribute_menu (like
+             _build_region_4_attribute_menu before it) so it's testable
+             without the real, blocking exec() call - new test
+             test_restore_region_4_focus_after_menu_returns_to_the_same_row
+             drives the same rebuild directly and empirically confirms the
+             rebuild really does reset currentRow away from the opened row
+             before asserting the fix restores it.
+          2. BEST-EFFORT, unverified - the Application key still announced
+             nothing until an explicit arrow press, even after the earlier
+             fix (exec(pos, at=first_action)) - pre-highlighting the first
+             action apparently doesn't fire a real accessibility focus
+             notification, only genuine keyboard navigation does. Queued a
+             synthetic Key_Down QKeyEvent at the menu via
+             QApplication.sendEvent, scheduled with QTimer.singleShot(0,
+             ...) right before exec() so it fires once the popup's own
+             nested loop starts processing - this goes through the same
+             real navigation code path a manual arrow press does, aiming
+             to produce a genuine announcement without the user pressing
+             anything. Explicitly flagged to the user as unverified (no
+             NVDA available to test with from here); if it doesn't help,
+             remove rather than layer on more synthetic-event guesses.
+          Full suite: 218 passed.
+        > FIX 2026-08-07 (live-tested, reported after the above): confirms
+          the focus-restoration fix works - "focus is now correctly
+          returned to the previously active row" - but two follow-ups.
+          1. FIXED - minor: opening the menu from Region 4's value column
+             (column 1) returned focus to the key column (0) instead.
+             _restore_region_4_focus_after_menu (and _show_attribute_menu,
+             which sets the current cell before opening the menu) both had
+             the column hard-coded to 0. Both now thread the actual column
+             through: Region4TableWidget._show_attribute_menu reads
+             self.currentColumn() instead of assuming 0, and
+             show_region_4_attribute_menu/_restore_region_4_focus_after_menu
+             both gained a `column` parameter alongside `row`. New tests
+             test_context_menu_preserves_the_current_column
+             (tests/widgets/test_region4_table_widget.py) and the column
+             half of test_restore_region_4_focus_after_menu_returns_to_
+             the_same_row_and_column (tests/test_main_window.py).
+          2. REVERTED - the previous session's best-effort attempt at
+             announcing the first menu item automatically (exec(pos,
+             at=first_action) plus a synthetic Key_Down via
+             QApplication.sendEvent/QTimer.singleShot) did not work:
+             live-tested, the Application key now announces "Python
+             window" and then NVDA+Up ("say all") reports "blank" instead
+             of the item's text - something is genuinely highlighted
+             (confirmed: the user's own next Down lands on the SECOND
+             item, not the first), but whatever changed doesn't carry a
+             real accessible name for NVDA to read. Consistent with the
+             theory that Qt's own accessibility bridge only hands the
+             UIA/MSAA "focus" down to the specific menu-item sub-object on
+             a genuine keyboard-navigation event, not a programmatic
+             setActiveAction/exec(at=)/sendEvent-synthesized one - the
+             synthetic Key_Down goes through Qt's own event dispatch, not
+             a real OS input event, so it apparently doesn't reach
+             whatever the accessibility layer is actually watching either.
+             No further attempt made without a way to verify against real
+             NVDA (the user offered reverting as the explicit fallback,
+             calling plain exec() - one manual arrow press needed - "more
+             normal" anyway). show_region_4_attribute_menu is back to a
+             plain menu.exec(global_pos) with no `at` argument; the
+             QTimer/QKeyEvent imports and the _announce_first_action
+             helper were removed. Documented in the method's own docstring
+             as a "don't re-attempt without a way to verify" warning.
+          Full suite: 219 passed.
+[ ] F2  Options dialog to control note-display attribute ORDERING - Ref 15
+        AC4. Scope control (global/part/staff/voice - now voice/stave/part/
+        score) shipped with F1 above via Region 4's context menu instead of
+        a separate Options dialog; only the ordering half remains open.
 [ ] F3  Capture further attributes from the source file: dynamics, staccato,
         fingering - Ref 16 AC3
 [ ] F4  UK / US music vocabulary toggle: bar vs measure, crotchet vs quarter
