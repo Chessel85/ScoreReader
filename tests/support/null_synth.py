@@ -15,6 +15,7 @@ class NullSynth:
         self.program_changes: List[tuple] = []
         self.stop_count: int = 0
         self.closed: bool = False
+        self.clicks: List[Dict[str, Any]] = []
 
     def set_program(self, channel: int, program: int) -> None:
         self.program_changes.append((channel, program))
@@ -59,6 +60,20 @@ class NullSynth:
                     "program": program,
                 }
             )
+
+    def play_click(self, channel: int, program: int, pitch: int, velocity: int, duration_ms: int) -> None:
+        """E8: mirrors SynthEngine.play_click - recorded separately from
+        `played` (real notes), and deliberately does NOT call
+        stop_all_notes(), matching the real engine's independent click path."""
+        self.clicks.append(
+            {
+                "channel": channel,
+                "program": program,
+                "pitch": pitch,
+                "velocity": velocity,
+                "duration_ms": duration_ms,
+            }
+        )
 
     def close(self) -> None:
         self.closed = True

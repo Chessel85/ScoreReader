@@ -64,12 +64,28 @@ class MusicData:
     # expect the full note list.
     active_voice_filter: Optional[Set[Tuple[str, int, int]]] = None
 
+    # E8/Ref 14: off by default per score load (MusicData is reconstructed
+    # fresh on every _on_score_loaded, so no explicit reset code is needed
+    # elsewhere, same as playback_tempo_offset above). Gates both whether a
+    # beat position sounds a click (Sequencer, MainWindow) and whether a
+    # beat position with no note counts as a navigable event at all
+    # (_slice_is_navigable, Ref 14 AC4).
+    metronome_enabled: bool = False
+
     def __post_init__(self):
         if self.file_path:
             builder = TimelineBuilder(self.file_path, self.parts_info, root=self.xml_root)
             self.timeline_slices = builder.build()
             self.tempo_changes = builder.tempo_changes
+            self._beat_markers = builder.beat_markers
             self.active_event_index = 0
+        else:
+            self._beat_markers: List[EventSlice] = []
+        # The real, marker-free timeline - kept stable so
+        # set_metronome_enabled can always restore exactly this when the
+        # metronome turns back off, even after self.timeline_slices has been
+        # replaced with a merged (real + marker) view while it was on.
+        self._real_timeline_slices = self.timeline_slices
         # measure_numbers() is safe to cache forever - timeline_slices is
         # never reassigned after this point. The other two are keyed off
         # active_voice_filter and are invalidated in
@@ -110,6 +126,72 @@ class MusicData:
         return any(
             (n.part_id, n.staff, n.voice) in self.active_voice_filter for n in notes
         )
+
+    def set_metronome_enabled(self, enabled: bool) -> None:
+        """E8/Ref 14 toggle.
+
+        timeline_slices itself is rebuilt here rather than being a
+        permanently-merged list: with the metronome off (the default),
+        timeline_slices stays exactly "one entry per (measure, offset) with
+        at least one sounding note" - the invariant the rest of the codebase
+        (and a good number of existing tests) already assume, unaffected by
+        this feature ever existing. Only turning the metronome on splices in
+        the synthetic beat markers TimelineBuilder computed separately
+        (_beat_markers); turning it back off restores the untouched real
+        list. The cursor is relocated to the same real position across the
+        rebuild (indices shift once markers are spliced in) rather than
+        left pointing at an arbitrary slice.
+        """
+        if enabled == self.metronome_enabled:
+            return
+
+        current = self.get_current_slice()
+        self.metronome_enabled = enabled
+
+        if enabled:
+            merged = list(self._real_timeline_slices) + list(self._beat_markers)
+            merged.sort(key=lambda s: (s.measure, s.quarters_from_start))
+            self.timeline_slices = merged
+        else:
+            self.timeline_slices = self._real_timeline_slices
+
+        if current is not None and self.timeline_slices:
+            # Last slice at or before the current position - exact match
+            # when one exists (toggling on, or off from a real slice),
+            # nearest preceding real event when it doesn't (toggling off
+            # while sitting on a marker, which has no counterpart at all in
+            # the real-only list) - i.e. wherever the cursor would be had
+            # the metronome never been turned on.
+            match_index = 0
+            for i, s in enumerate(self.timeline_slices):
+                if s.quarters_from_start <= current.quarters_from_start:
+                    match_index = i
+                else:
+                    break
+            self.active_event_index = match_index
+
+        self._invalidate_visibility_cache()
+
+    def toggle_metronome(self) -> None:
+        self.set_metronome_enabled(not self.metronome_enabled)
+
+    def _slice_is_navigable(self, index: int) -> bool:
+        """Ref 14 AC4: with the metronome on, a beat position counts as a
+        navigable/steppable event even where no note sounds there - a whole
+        beat is always a whole number in the score's own ts-relative units
+        (Ref 18), whether it's a real note's own beat_position or one of the
+        synthetic click-only markers TimelineBuilder bakes in for exactly
+        this purpose. Used in place of _slice_has_visible_notes at every
+        navigation/stepping call site (Left/Right, Ctrl+Left/Right,
+        jump-to-measure, and the Sequencer's own step walk) - NOT at
+        _slice_has_visible_sounding_note/_sounding_bounds below, which stay
+        anchored to real sounding notes only so metronome mode can't
+        resurrect trailing rest-only padding as navigable."""
+        if self._slice_has_visible_notes(index):
+            return True
+        if not self.metronome_enabled:
+            return False
+        return float(self.timeline_slices[index].beat_position).is_integer()
 
     def _slice_has_visible_sounding_note(self, index: int) -> bool:
         """True if timeline_slices[index] has at least one visible note that
@@ -163,7 +245,7 @@ class MusicData:
         idx = self.active_event_index
         while idx > first_idx:
             idx -= 1
-            if self._slice_has_visible_notes(idx):
+            if self._slice_is_navigable(idx):
                 self.active_event_index = idx
                 return True
         return False
@@ -176,7 +258,7 @@ class MusicData:
         idx = self.active_event_index
         while idx < last_idx:
             idx += 1
-            if self._slice_has_visible_notes(idx):
+            if self._slice_is_navigable(idx):
                 self.active_event_index = idx
                 return True
         return False
@@ -213,7 +295,7 @@ class MusicData:
         if self._first_visible_index_by_measure_cache is None:
             cache: Dict[int, int] = {}
             for i, s in enumerate(self.timeline_slices):
-                if s.measure not in cache and self._slice_has_visible_notes(i):
+                if s.measure not in cache and self._slice_is_navigable(i):
                     cache[s.measure] = i
             self._first_visible_index_by_measure_cache = cache
         return self._first_visible_index_by_measure_cache
@@ -393,6 +475,13 @@ class MusicData:
     def get_region_3_data(self) -> List[str]:
         notes = self._visible_notes()
         if not notes:
+            current = self.get_current_slice()
+            if (
+                self.metronome_enabled
+                and current is not None
+                and float(current.beat_position).is_integer()
+            ):
+                return ["Click"]
             return ["None"]
         return [n.step_name for n in notes]
 
@@ -615,14 +704,17 @@ class MusicData:
         the active Region 2 filter (Ref 7) - rests included, unlike
         _sounding_bounds()'s navigation range, since real playback (E4)
         should advance through and take up the time of a rest, not skip
-        over it. Bounded by end_index (inclusive) if given, else the whole
-        timeline. None if there is no further visible event - the Sequencer
-        treats that as the end of playback."""
+        over it. Also visits metronome-only beat markers when the metronome
+        is on (_slice_is_navigable, Ref 14 AC1) - this is what makes the
+        Sequencer's own step walk sound a click on a silent beat with no
+        extra scheduling logic. Bounded by end_index (inclusive) if given,
+        else the whole timeline. None if there is no further visible event -
+        the Sequencer treats that as the end of playback."""
         limit = end_index if end_index is not None else len(self.timeline_slices) - 1
         idx = index
         while idx < limit:
             idx += 1
-            if self._slice_has_visible_notes(idx):
+            if self._slice_is_navigable(idx):
                 return idx
         return None
 

@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from audio.metronome import click_event_for_beat
 from audio.sequencer import Sequencer
 from audio.synth_engine import SynthEngine
 from models.music_data import MusicData
@@ -174,6 +175,11 @@ class MainWindow(QMainWindow):
         self.chord_audition_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
         self.chord_audition_shortcut.activated.connect(self._play_selected_region_3_notes)
 
+        # E8/Ref 14 (Ctrl+M): no separate QShortcut here - the Options
+        # menu's checkable metronome_action (setup_menu) carries the Ctrl+M
+        # shortcut itself, same pattern as Ctrl+G/Ctrl+T's menu actions
+        # above it, not the bare-QShortcut pattern F/S/D/Space use.
+
         self.region_1.setFocus()
 
     def setup_menu(self):
@@ -250,6 +256,15 @@ class MainWindow(QMainWindow):
         self.tempo_offset_action.setShortcut(QKeySequence("Ctrl+T"))
         self.tempo_offset_action.triggered.connect(self._show_tempo_offset_dialog)
         options_menu.addAction(self.tempo_offset_action)
+
+        # E8/Ref 14: checkable so its own state is announced by screen
+        # readers on focus, in addition to the Ctrl+M shortcut and the
+        # status bar's field - three ways to discover the current state.
+        self.metronome_action = QAction("Toggle &Metronome", self)
+        self.metronome_action.setCheckable(True)
+        self.metronome_action.setShortcut(QKeySequence("Ctrl+M"))
+        self.metronome_action.triggered.connect(self.toggle_metronome)
+        options_menu.addAction(self.metronome_action)
 
         help_menu = menu_bar.addMenu("&Help")
 
@@ -567,6 +582,15 @@ class MainWindow(QMainWindow):
         self._music_data.reset_playback_tempo()
         self._update_status_bar()
 
+    def toggle_metronome(self):
+        """Ctrl+M (Ref 14): flips MusicData.metronome_enabled, keeps the
+        Options menu's checkable action and the status bar's field in sync."""
+        if not self._music_data:
+            return
+        self._music_data.toggle_metronome()
+        self.metronome_action.setChecked(self._music_data.metronome_enabled)
+        self._update_status_bar()
+
     def _play_boundary_cue(self):
         """Ref 2 AC4 / Ref 3 AC4: plays instead of moving, when a navigation
         key would move past a boundary of the active timeline (C5)."""
@@ -604,12 +628,20 @@ class MainWindow(QMainWindow):
         selected_indices = [item.row() for item in self.region_3.selectedIndexes()]
         events = self._music_data.get_playback_events_for_indices(selected_indices)
 
-        if not events:
-            return
+        if events:
+            duration_ms = self._music_data.get_current_duration_ms()
+            self.synth.play_chord(events, duration_ms=duration_ms)
 
-        duration_ms = self._music_data.get_current_duration_ms()
-
-        self.synth.play_chord(events, duration_ms=duration_ms)
+        # E8/Ref 14 AC3: stepping onto a beat position plays a metronome
+        # tick - fires even when there are no events at all (a metronome-
+        # only beat marker, Ref 14 AC4), which is why this isn't folded into
+        # the `if events:` branch above.
+        if self._music_data.metronome_enabled:
+            current = self._music_data.get_current_slice()
+            if current is not None:
+                click = click_event_for_beat(current.beat_position)
+                if click is not None:
+                    self.synth.play_click(*click)
 
     def _update_timeline_views(self, play_all: bool = True):
         if not self._music_data:
@@ -635,7 +667,16 @@ class MainWindow(QMainWindow):
             return
         fields = self._music_data.get_status_bar_fields()
         fields.append(self._playback_status_text())
+        fields.append(self._metronome_status_text())
         self.status_bar.set_fields(fields)
+
+    def _metronome_status_text(self) -> str:
+        """6th status bar field (Ref 14): On/Off, since there's otherwise no
+        way to check metronome state without listening for a click - same
+        discoverability gap the 5th (playback status) field was added for."""
+        if self._music_data and self._music_data.metronome_enabled:
+            return "Metronome: On"
+        return "Metronome: Off"
 
     def _playback_status_text(self) -> str:
         """5th status bar field (Ref 10, requested): Playing/Paused/Stopped,
@@ -677,6 +718,7 @@ class MainWindow(QMainWindow):
 
         self._populate_table(self.region_1, self._music_data.get_region_1_data())
         self.region_2.load_score_structure(self._music_data.get_score_structure())
+        self.metronome_action.setChecked(self._music_data.metronome_enabled)
         self._update_timeline_views(play_all=True)
 
     def _on_focus_changed(self, old, now):

@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- One part, three 4/4 bars. Measure 1 is complete (C D E F) so pickup
+     detection does not fire. Measure 2 has a single quarter note G on beat
+     1, then a <forward> skipping the rest of the bar with no further note
+     or rest element - beats 2, 3 and 4 of measure 2 have no timeline event
+     at all and no note duration covers them either (E9/Ref 14 AC4's
+     genuine-gap case, the one real fixture that needs a synthetic beat
+     marker). Measure 3 has a single quarter note A on beat 1, so the gap
+     sits strictly BETWEEN two sounding notes (G and A), not trailing after
+     the piece's last one - _sounding_bounds() must still reach it. -->
+<score-partwise version="4.0">
+  <part-list>
+    <score-part id="P1">
+      <part-name>Test Part</part-name>
+      <midi-instrument id="P1-I1">
+        <midi-channel>1</midi-channel>
+        <midi-program>1</midi-program>
+      </midi-instrument>
+    </score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <key>
+          <fifths>0</fifths>
+        </key>
+        <time>
+          <beats>4</beats>
+          <beat-type>4</beat-type>
+        </time>
+        <clef number="1">
+          <sign>G</sign>
+          <line>2</line>
+        </clef>
+      </attributes>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>1</duration>
+        <voice>1</voice>
+        <type>quarter</type>
+        <staff>1</staff>
+      </note>
+      <note>
+        <pitch><step>D</step><octave>4</octave></pitch>
+        <duration>1</duration>
+        <voice>1</voice>
+        <type>quarter</type>
+        <staff>1</staff>
+      </note>
+      <note>
+        <pitch><step>E</step><octave>4</octave></pitch>
+        <duration>1</duration>
+        <voice>1</voice>
+        <type>quarter</type>
+        <staff>1</staff>
+      </note>
+      <note>
+        <pitch><step>F</step><octave>4</octave></pitch>
+        <duration>1</duration>
+        <voice>1</voice>
+        <type>quarter</type>
+        <staff>1</staff>
+      </note>
+    </measure>
+    <measure number="2">
+      <note>
+        <pitch><step>G</step><octave>4</octave></pitch>
+        <duration>1</duration>
+        <voice>1</voice>
+        <type>quarter</type>
+        <staff>1</staff>
+      </note>
+      <forward>
+        <duration>3</duration>
+      </forward>
+    </measure>
+    <measure number="3">
+      <note>
+        <pitch><step>A</step><octave>4</octave></pitch>
+        <duration>1</duration>
+        <voice>1</voice>
+        <type>quarter</type>
+        <staff>1</staff>
+      </note>
+      <forward>
+        <duration>3</duration>
+      </forward>
+    </measure>
+  </part>
+</score-partwise>

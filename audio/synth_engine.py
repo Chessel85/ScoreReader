@@ -49,6 +49,17 @@ class SynthEngine:
         self._off_timer.setSingleShot(True)
         self._off_timer.timeout.connect(self.stop_all_notes)
 
+        # E8: the metronome click gets its own tiny parallel state, entirely
+        # separate from _active_notes/_off_timer above. A click must not cut
+        # off a note sounding at the same beat (play_chord's stop_all_notes()
+        # would do exactly that if the click went through the same path),
+        # and it rings for its own short fixed duration independent of
+        # whatever duration_ms a note at that beat is using.
+        self._active_click: Optional[Tuple[int, int]] = None  # (channel, note)
+        self._click_off_timer = QTimer()
+        self._click_off_timer.setSingleShot(True)
+        self._click_off_timer.timeout.connect(self._stop_click)
+
         if not FLUIDSYNTH_AVAILABLE:
             print("[WARN] pyfluidsynth or DLLs missing. Sound engine disabled.")
             return
@@ -93,6 +104,42 @@ class SynthEngine:
         for channel, note in self._active_notes:
             self._fs.noteoff(channel, note)
         self._active_notes.clear()
+
+        self._stop_click()
+
+    def _stop_click(self):
+        """Silences a still-ringing metronome click, if any (E8). Separate
+        from the main note-off path above - see _active_click's own comment
+        - but folded into stop_all_notes() too, so pause/stop (Ref 10 AC3/
+        AC5) leave nothing orphaned."""
+        if self._fs is None or self._active_click is None:
+            return
+        self._click_off_timer.stop()
+        channel, note = self._active_click
+        self._fs.noteoff(channel, note)
+        self._active_click = None
+
+    def play_click(self, channel: int, program: int, pitch: int, velocity: int, duration_ms: int):
+        """E8/Ref 14: sounds a metronome click on its own dedicated channel,
+        independent of the melodic note pipeline above - does not call
+        stop_all_notes() (so it doesn't cut off notes sounding at the same
+        beat) and is not touched by a later play_chord() call (so a click
+        rings for its own short duration_ms regardless of the next note's
+        own timing). velocity (not pitch) distinguishes the accented beat -
+        the click is a GM percussion voice (Claves), which has a fixed
+        pitch per note number rather than a tunable one."""
+        if self._fs is None:
+            return
+
+        self._stop_click()
+
+        ch = channel & 0x0F
+        self.set_program(ch, program)
+        self._fs.noteon(ch, pitch, velocity)
+        self._active_click = (ch, pitch)
+
+        if duration_ms > 0:
+            self._click_off_timer.start(int(duration_ms))
 
     def play_notes(
         self,

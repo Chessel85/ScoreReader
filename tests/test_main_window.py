@@ -330,6 +330,7 @@ def test_status_bar_updates_on_load_and_navigation(window, qtbot, null_synth, ts
     assert [f.text() for f in fields] == [
         "Measure 1 beat 1", "Key: C major / A minor", "Time: 4/4",
         "Playback tempo: 120 quarter notes per minute (score default)", "Playback: Stopped",
+        "Metronome: Off",
     ]
 
     qtbot.keyClick(window.region_3, Qt.Key.Key_Right, Qt.KeyboardModifier.ControlModifier)
@@ -337,6 +338,7 @@ def test_status_bar_updates_on_load_and_navigation(window, qtbot, null_synth, ts
     assert [f.text() for f in fields] == [
         "Measure 2 beat 1", "Key: C major / A minor", "Time: 6/8",
         "Playback tempo: 120 quarter notes per minute (score default)", "Playback: Stopped",
+        "Metronome: Off",
     ]
 
 
@@ -904,9 +906,11 @@ def test_phrase_audition_from_the_last_measure_plays_to_the_end_of_the_piece(
 
     window.audition_phrase()
 
-    assert window.sequencer.is_playing is False, "only one note left - finishes immediately"
     assert null_synth.played[-1]["midi_notes"] == [79]  # G5, measure 12
     assert window._music_data.active_event_index == 11, "jump_to_measure moved it, not audition_phrase"
+    assert window.sequencer.is_playing is True, "only one note left - still ringing out"
+
+    qtbot.waitUntil(lambda: window.sequencer.is_playing is False, timeout=2000)
 
 
 # --- E7: chord audition retrigger on Shift+Space (Ref 13) ----------------
@@ -1033,3 +1037,74 @@ def test_space_resumes_from_the_paused_position_not_stops(
     assert window.sequencer.is_playing is True
     assert window.sequencer.is_paused is False
     assert window.sequencer.current_index == paused_index
+
+
+# --- E8: metronome (Ref 14) ----------------------------------------------
+
+def test_toggle_metronome_updates_music_data_menu_and_status_bar(
+    window, qtbot, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    assert window.metronome_action.isChecked() is False
+    assert window.status_bar._fields[5].text() == "Metronome: Off"
+
+    window.toggle_metronome()
+
+    assert window._music_data.metronome_enabled is True
+    assert window.metronome_action.isChecked() is True
+    assert window.status_bar._fields[5].text() == "Metronome: On"
+
+    window.toggle_metronome()
+
+    assert window._music_data.metronome_enabled is False
+    assert window.metronome_action.isChecked() is False
+    assert window.status_bar._fields[5].text() == "Metronome: Off"
+
+
+def test_ctrl_m_shortcut_toggles_the_metronome(window, qtbot, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+    _focus(window.region_1)
+
+    qtbot.keyClick(window, Qt.Key.Key_M, Qt.KeyboardModifier.ControlModifier)
+
+    assert window._music_data.metronome_enabled is True
+
+
+def test_metronome_resets_to_off_on_a_new_score_load(window, qtbot, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+    window.toggle_metronome()
+    assert window.metronome_action.isChecked() is True
+
+    load_and_wait(window, qtbot, minimal_score)
+
+    assert window._music_data.metronome_enabled is False
+    assert window.metronome_action.isChecked() is False
+
+
+def test_navigating_onto_a_beat_plays_a_click_alongside_the_note(
+    window, qtbot, null_synth, minimal_score
+):
+    """minimal_score is four quarter notes in 4/4 - every note is on a
+    whole beat, so Right onto the second note (D, beat 2) must sound both
+    the note and a (non-accented) click."""
+    load_and_wait(window, qtbot, minimal_score)
+    window.toggle_metronome()
+    null_synth.clicks.clear()
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Right)
+
+    assert null_synth.played[-1]["midi_notes"] == [62]  # D4
+    assert len(null_synth.clicks) == 1
+    assert null_synth.clicks[0]["velocity"] == 100  # not beat 1 - regular click
+
+
+def test_no_click_on_navigation_when_metronome_is_off(
+    window, qtbot, null_synth, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    null_synth.clicks.clear()
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Right)
+
+    assert null_synth.clicks == []

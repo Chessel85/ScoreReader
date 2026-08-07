@@ -115,6 +115,16 @@ def many_measures_score() -> str:
 
 
 @pytest.fixture
+def sparse_beat_score() -> str:
+    """One part, two 4/4 bars: measure 1 is complete (C D E F, so pickup
+    detection does not fire); measure 2 is a single quarter note G on beat
+    1 then a <forward> skipping the rest of the bar - beats 2/3/4 of
+    measure 2 are a genuine gap (no event, no note duration covering
+    them), the case E9's synthetic beat markers exist for (Ref 14 AC4)."""
+    return _require(FIXTURES_DIR / "sparse_beat.musicxml")
+
+
+@pytest.fixture
 def slice_ordering_score() -> str:
     """One complete 4/4 bar written out of offset order via forward/backup."""
     return _require(FIXTURES_DIR / "slice_ordering.musicxml")

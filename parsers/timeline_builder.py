@@ -119,6 +119,12 @@ class TimelineBuilder:
         # whichever tempo is actually in effect at a given position.
         self.tempo_changes: List[TempoChange] = []
 
+        # E9/Ref 14 AC4: populated by build() as a side effect, same pattern
+        # as tempo_changes above - synthetic, empty-notes EventSlices at
+        # every whole beat with no real note. Not part of the returned
+        # timeline_slices; see build()'s own comment for why.
+        self.beat_markers: List[EventSlice] = []
+
     def build(self) -> List[EventSlice]:
         root = self._root
         if root is None:
@@ -139,7 +145,9 @@ class TimelineBuilder:
             )
 
         first_measure_number, needs_reindex, pickup_filled_quarters = self._detect_pickup(root)
-        measure_start_quarters = self._measure_start_quarters(root, needs_reindex, pickup_filled_quarters)
+        measure_start_quarters, measure_ts_fifths = self._measure_start_quarters(
+            root, needs_reindex, pickup_filled_quarters
+        )
         self.tempo_changes = self._tempo_changes(root, needs_reindex, measure_start_quarters)
 
         buckets: Dict[Tuple[int, float], List[NoteData]] = {}
@@ -223,7 +231,9 @@ class TimelineBuilder:
                     ts_duration = round(quarter_len / beat_unit_quarter_len, 2)
 
                     if m_num == 0:
-                        start_beat = 1.0 + ((full_bar_quarters - pickup_filled_quarters) / beat_unit_quarter_len)
+                        start_beat = self._start_beat(
+                            full_bar_quarters, pickup_filled_quarters, beat_unit_quarter_len
+                        )
                         beat_pos = start_beat + (offset_q / beat_unit_quarter_len)
                     else:
                         beat_pos = 1.0 + (offset_q / beat_unit_quarter_len)
@@ -275,16 +285,88 @@ class TimelineBuilder:
                 )
             )
 
+        # E9/Ref 14 AC4: synthetic, empty-notes markers at every whole beat
+        # that has no real note - kept OUT of the returned timeline_slices
+        # itself (that list stays exactly "one entry per (measure, offset)
+        # with at least one sounding note", the invariant the rest of the
+        # codebase - and a good number of existing tests - already assume).
+        # Exposed separately as a side effect (mirrors tempo_changes above);
+        # MusicData only splices these into its own working timeline when
+        # metronome_enabled actually turns on (set_metronome_enabled), so a
+        # score with the metronome never touched behaves exactly as before
+        # this feature existed.
+        self.beat_markers = sorted(
+            self._beat_marker_slices(buckets, measure_start_quarters, measure_ts_fifths, pickup_filled_quarters),
+            key=lambda s: (s.measure, s.quarters_from_start),
+        )
+
         return slices
+
+    @staticmethod
+    def _start_beat(full_bar_quarters: float, pickup_filled_quarters: float, beat_unit_quarter_len: float) -> float:
+        """Ref 17/A3: pickup notes are positioned as if placed at the END of
+        a notional full bar - e.g. a 6/8 pickup containing only 3 real beats
+        starts at beat 4, not beat 1. Shared by real-note beat_position
+        construction above and the synthetic beat-marker pass below (E9) so
+        the two definitions can't drift apart."""
+        return 1.0 + ((full_bar_quarters - pickup_filled_quarters) / beat_unit_quarter_len)
+
+    def _beat_marker_slices(
+        self,
+        buckets: Dict[Tuple[int, float], List[NoteData]],
+        measure_start_quarters: Dict[int, float],
+        measure_ts_fifths: Dict[int, Tuple[int, int, int]],
+        pickup_filled_quarters: float,
+    ) -> List[EventSlice]:
+        """E9/Ref 14 AC4: one empty-notes EventSlice per whole beat position
+        (1..ts_num) in every measure that doesn't already have a real event
+        there. The pickup measure (m_num == 0) only gets markers from its
+        own _start_beat onward - beats before that don't correspond to any
+        real time before the piece starts, so generating them would make
+        silent "beats" reachable before the piece has even begun.
+        """
+        markers: List[EventSlice] = []
+        for m_num, (ts_num, ts_den, fifths) in measure_ts_fifths.items():
+            beat_unit_quarter_len = 4.0 / ts_den
+            full_bar_quarters = ts_num * beat_unit_quarter_len
+            start_beat = (
+                self._start_beat(full_bar_quarters, pickup_filled_quarters, beat_unit_quarter_len)
+                if m_num == 0
+                else 1.0
+            )
+
+            beat = start_beat
+            while beat <= ts_num + 1e-9:
+                offset_q = (beat - start_beat) * beat_unit_quarter_len
+                key = (m_num, round(offset_q, 4))
+                if key not in buckets:
+                    markers.append(
+                        EventSlice(
+                            measure=m_num,
+                            beat_position=round(beat, 2),
+                            quarter_length=beat_unit_quarter_len,
+                            notes=[],
+                            time_sig=(ts_num, ts_den),
+                            key_fifths=fifths,
+                            quarters_from_start=measure_start_quarters.get(m_num, 0.0) + offset_q,
+                        )
+                    )
+                beat += 1.0
+        return markers
 
     def _measure_start_quarters(
         self, root, needs_reindex: bool, pickup_filled_quarters: float
-    ) -> Dict[int, float]:
+    ) -> Tuple[Dict[int, float], Dict[int, Tuple[int, int, int]]]:
         """E4: real elapsed quarters-from-piece-start at which each measure
         begins, independent of any part's own note content - notes within a
         measure already carry their own quarter offset from the start of
         that measure (offset_q, the same value used as half the (measure,
         offset) bucket key above), so adding this gives absolute timing.
+
+        Also returns each measure's own (ts_num, ts_den, fifths) as of that
+        measure's own <attributes> - the per-measure beat range/key state
+        the E9 synthetic beat-marker pass needs, collected in this same walk
+        rather than a second one.
 
         Walked from the first <part> only (mirrors _detect_pickup), on the
         same assumption the main per-part loop above makes when a part
@@ -293,11 +375,12 @@ class TimelineBuilder:
         """
         first_part = root.find("part")
         if first_part is None:
-            return {}
+            return {}, {}
 
         starts: Dict[int, float] = {}
+        measure_ts_fifths: Dict[int, Tuple[int, int, int]] = {}
         running_total = 0.0
-        ts_num, ts_den = 4, 4
+        ts_num, ts_den, fifths = 4, 4, 0
 
         for m in first_part.findall("measure"):
             m_attr_num = m.attrib.get("number", "1")
@@ -311,12 +394,14 @@ class TimelineBuilder:
 
             attrs_elem = m.find("attributes")
             if attrs_elem is not None:
-                _, ts_num, ts_den, _ = _apply_attributes(attrs_elem, 1, ts_num, ts_den, 0)
+                _, ts_num, ts_den, fifths = _apply_attributes(attrs_elem, 1, ts_num, ts_den, fifths)
+
+            measure_ts_fifths[m_num] = (ts_num, ts_den, fifths)
 
             full_bar_quarters = ts_num * (4.0 / ts_den)
             running_total += pickup_filled_quarters if m_num == 0 else full_bar_quarters
 
-        return starts
+        return starts, measure_ts_fifths
 
     def _tempo_changes(
         self, root, needs_reindex: bool, measure_start_quarters: Dict[int, float]

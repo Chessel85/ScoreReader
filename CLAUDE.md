@@ -78,7 +78,8 @@ Region 3 is `ExtendedSelection` and defaults to selecting every note in the curr
 ## Known gaps
 
 - Parsing errors are swallowed with `print("[ERROR] ...")` and partial state. Ref 25 / NFR-06 call for an accessible error dialog; prefer moving that way over adding more silent prints.
-- Not yet built despite being specified: measure jump, play/pause/stop, metronome, voice control, edit mode, MIDI/Guitar Pro/BME I/O, capo handling, chord naming, and settings persistence.
+- Not yet built despite being specified: voice control, edit mode, MIDI/Guitar Pro/BME I/O, capo handling, chord naming, and settings persistence.
+- Metronome click sound (Ref 14) is functional but not satisfying - two synthesis attempts (a sawtooth lead, then GM percussion Claves) were both live-tested and found lacking. Tracked as functional debt, not a missing feature; see tasks.txt E11 / D-14.
 
 ## Git recovery notes
 

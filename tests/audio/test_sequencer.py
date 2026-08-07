@@ -37,7 +37,15 @@ def test_firing_the_timer_advances_to_the_next_step(timeline, null_synth, minima
     assert timer.scheduled_ms == [500, 500]
 
 
-def test_playback_stops_and_emits_finished_at_the_last_event(timeline, null_synth, minimal_score):
+def test_playback_waits_for_the_last_note_to_ring_out_before_finishing(
+    timeline, null_synth, minimal_score
+):
+    """Reported bug, live-tested: finished() used to fire the instant the
+    last note started sounding, not after it had rung out for its own
+    duration - is_playing going False that early confused Space into
+    trying to start a new run (hitting the boundary cue) instead of
+    cleanly stopping. Now the last note's own duration_ms is scheduled as
+    a genuine ring-out wait before is_playing flips and finished fires."""
     md = timeline(minimal_score, tempo_bpm=120)
     seq, timer = _build(md, null_synth)
     finished = []
@@ -48,9 +56,14 @@ def test_playback_stops_and_emits_finished_at_the_last_event(timeline, null_synt
         timer.fire()
 
     assert [p["midi_notes"] for p in null_synth.played] == [[60], [62], [64], [65]]
+    assert finished == [], "must not finish until the last note has rung out"
+    assert seq.is_playing is True, "still \"playing\" during the ring-out wait"
+    assert timer.scheduled_ms == [500, 500, 500, 500]  # ring-out wait for the last note
+
+    timer.fire()  # the ring-out wait elapses
+
     assert finished == [True]
     assert seq.is_playing is False
-    assert timer.scheduled_ms == [500, 500, 500]  # no further schedule after the last note
 
 
 def test_pause_freezes_the_index_and_silences_the_sounding_note(
@@ -118,9 +131,14 @@ def test_end_index_bounds_playback_for_phrase_audition(timeline, null_synth, min
     seq.finished.connect(lambda: finished.append(True))
 
     seq.play_from(0, end_index=1)
-    timer.fire()  # plays index 1, then must stop - end_index reached
+    timer.fire()  # plays index 1 (end_index) - now waits for its ring-out
 
     assert [p["midi_notes"] for p in null_synth.played] == [[60], [62]]
+    assert finished == [], "must ring out index 1 before finishing"
+    assert timer.running is True
+
+    timer.fire()  # ring-out wait elapses
+
     assert finished == [True]
     assert timer.running is False
 
@@ -171,6 +189,58 @@ def test_mid_score_tempo_change_affects_delays_from_the_point_it_takes_effect(
 
     timer.fire()  # now G, measure 2 - schedules G->A at the new tempo (200)
     assert timer.scheduled_ms[-1] == 300  # 1 quarter at 200bpm
+
+
+def test_metronome_click_layers_on_top_of_notes_when_enabled(
+    timeline, null_synth, minimal_score
+):
+    """E8/Ref 14 AC1/AC2: minimal_score is four quarter notes in 4/4 - every
+    note already lands on beat 1/2/3/4, so this exercises the click firing
+    on top of real notes with no Part 3 synthetic markers involved."""
+    md = timeline(minimal_score, tempo_bpm=120)
+    md.set_metronome_enabled(True)
+    seq, timer = _build(md, null_synth)
+
+    seq.play_from(0)  # beat 1 - C
+
+    assert len(null_synth.clicks) == 1
+    assert null_synth.clicks[0]["velocity"] == 127, "beat 1 is accented"
+
+    timer.fire()  # beat 2 - D
+
+    assert len(null_synth.clicks) == 2
+    assert null_synth.clicks[1]["velocity"] == 100, "not beat 1 - regular click"
+    assert null_synth.played[-1]["midi_notes"] == [62], "the note still sounds alongside the click"
+
+
+def test_sequencer_visits_a_silent_beat_marker_and_clicks_there(
+    timeline, null_synth, sparse_beat_score
+):
+    """E9/Ref 14 AC1/AC4: sparse_beat_score's measure 2 is a single quarter
+    note G on beat 1, then silence - with the metronome on, the Sequencer's
+    own step walk must still visit beats 2/3/4 (no play_chord call there,
+    nothing to play) and click on each."""
+    md = timeline(sparse_beat_score, tempo_bpm=120)
+    md.set_metronome_enabled(True)
+    seq, timer = _build(md, null_synth)
+
+    seq.play_from(4)  # G, measure 2 beat 1
+    assert len(null_synth.played) == 1  # just the G
+    assert len(null_synth.clicks) == 1  # not accented - beat 1 of measure 2, not the piece
+
+    timer.fire()  # beat 2 marker - click only
+    assert len(null_synth.played) == 1, "no note to play at a silent beat"
+    assert len(null_synth.clicks) == 2
+    assert null_synth.clicks[-1]["velocity"] == 100
+
+
+def test_no_click_when_metronome_disabled(timeline, null_synth, minimal_score):
+    md = timeline(minimal_score, tempo_bpm=120)
+    seq, timer = _build(md, null_synth)
+
+    seq.play_from(0)
+
+    assert null_synth.clicks == []
 
 
 def test_restarting_playback_while_already_playing_replaces_the_previous_run(

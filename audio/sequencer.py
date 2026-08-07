@@ -3,6 +3,8 @@ from typing import Optional
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from audio.metronome import click_event_for_beat
+
 
 class Sequencer(QObject):
     """E4: schedules timeline events over real time from a start index, with
@@ -113,16 +115,41 @@ class Sequencer(QObject):
         if self._current_index is None:
             return
 
+        duration_ms = self.music_data.get_duration_ms_for_index(self._current_index)
         events = self.music_data.get_playback_events_at_index(self._current_index)
         if events:
-            duration_ms = self.music_data.get_duration_ms_for_index(self._current_index)
             self.synth.play_chord(events, duration_ms=duration_ms)
+
+        # E8/Ref 14 AC1/AC2: a click layers on top of whatever notes (or
+        # nothing) sound at this step, whenever the step lands on a whole
+        # beat - accented on beat 1. Fires alongside real notes too, not
+        # instead of them, and needs no separate scheduling: this step is
+        # only reached at all for a silent beat because
+        # next_visible_event_index (Ref 14 AC4) now counts a metronome-only
+        # beat marker as a real step to visit.
+        if self.music_data.metronome_enabled:
+            current_slice = self.music_data.timeline_slices[self._current_index]
+            click = click_event_for_beat(current_slice.beat_position)
+            if click is not None:
+                self.synth.play_click(*click)
+
         self.step_played.emit(self._current_index)
 
         next_index = self.music_data.next_visible_event_index(self._current_index, self._end_index)
         if next_index is None:
-            self._is_playing = False
-            self.finished.emit()
+            # Reported bug, live-tested: this used to flip is_playing False
+            # and emit finished() here immediately - before the last note
+            # had actually rung out for duration_ms. is_playing being False
+            # while the note was still audibly sounding meant Space, pressed
+            # right after, took toggle_play_stop()'s "start a new run"
+            # branch instead of "stop" - and since the cursor was already on
+            # the last note, that played the boundary cue instead of doing
+            # anything sensible. Now: stay "playing" and wait out the ring
+            # duration via the same timer/_advance path, with
+            # _pending_next_index left None as the signal that this wait is
+            # the finish, not a further step.
+            self._pending_next_index = None
+            self._timer.start(duration_ms)
             return
 
         self._pending_next_index = next_index
@@ -140,5 +167,11 @@ class Sequencer(QObject):
         return max(1, int(delta_quarters * 60000.0 / bpm))
 
     def _advance(self) -> None:
+        if self._pending_next_index is None:
+            # The ring-out wait scheduled at the end of _sound_current_step
+            # has completed - only now is playback actually finished.
+            self._is_playing = False
+            self.finished.emit()
+            return
         self._current_index = self._pending_next_index
         self._sound_current_step()

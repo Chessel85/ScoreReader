@@ -287,6 +287,100 @@ def test_interior_rest_remains_individually_navigable(timeline, rest_score):
     assert md.active_event_index == 3, "F, the real last note - not affected by the interior rest"
 
 
+# --- E9: beat positions become navigable with the metronome on (Ref 14 AC4) ---
+
+def test_metronome_off_skips_beats_with_no_real_event(timeline, sparse_beat_score):
+    """sparse_beat_score's measure 2 is a single quarter note G on beat 1,
+    then silence (via <forward>) until measure 3's A - today's behaviour,
+    unaffected by this feature existing, is unchanged: Right jumps straight
+    from G to A, with no stop in between."""
+    md = timeline(sparse_beat_score)
+    md.active_event_index = 4  # G, measure 2 beat 1
+
+    assert md.move_timeline_right() is True
+    assert md.get_current_slice().measure == 3
+    assert md.get_current_slice().beat_position == 1.0
+
+
+def test_metronome_on_makes_silent_beats_navigable(timeline, sparse_beat_score):
+    """The gap sits between G (measure 2 beat 1) and A (measure 3 beat 1) -
+    an interior gap, not trailing padding after the piece's last note, so
+    _sounding_bounds() still reaches through it (same "interior rest stays
+    reachable" rule C5 already applies to rests)."""
+    md = timeline(sparse_beat_score)
+    md.set_metronome_enabled(True)
+    md.active_event_index = 4  # G, measure 2 beat 1
+
+    assert md.move_timeline_right() is True
+    assert md.get_current_slice().beat_position == 2.0
+    assert md.get_current_slice().measure == 2
+    assert md.get_region_3_data() == ["Click"]
+
+    assert md.move_timeline_right() is True
+    assert md.get_current_slice().beat_position == 3.0
+
+    assert md.move_timeline_right() is True
+    assert md.get_current_slice().beat_position == 4.0
+
+    assert md.move_timeline_right() is True, "reaches A, measure 3's real note"
+    assert md.get_current_slice().measure == 3
+    assert md.get_current_slice().notes != []
+
+
+def test_toggling_metronome_off_again_removes_the_markers_and_relocates_the_cursor(
+    timeline, sparse_beat_score
+):
+    md = timeline(sparse_beat_score)
+    md.set_metronome_enabled(True)
+    md.active_event_index = 4  # G, measure 2 beat 1
+    md.move_timeline_right()  # onto the beat-2 marker
+    assert md.get_current_slice().beat_position == 2.0
+
+    md.set_metronome_enabled(False)
+
+    assert len(md.timeline_slices) == 6, "back to the real-only timeline"
+    assert md.get_current_slice().beat_position == 1.0, "relocated to G, not left dangling"
+    assert md.get_current_slice().measure == 2
+
+
+def test_toggling_metronome_on_preserves_the_cursor_on_a_real_note(timeline, sparse_beat_score):
+    md = timeline(sparse_beat_score)
+    md.active_event_index = 4  # G, measure 2 beat 1
+
+    md.set_metronome_enabled(True)
+
+    assert md.get_current_slice().beat_position == 1.0, "still on the real G, markers inserted after it"
+    assert md.get_current_slice().measure == 2
+
+
+def test_markers_fill_beats_inside_a_still_ringing_note(timeline, six_eight_score):
+    """Ref 14 AC1 asks for a click "on every beat", unconditionally - not
+    only beats with no note ringing through them. six_eight_score's C
+    (quarter, beats 1-2) and D (quarter, beats 3-4) each start a real event
+    only at their own onset beat, so beats 2 and 4 (mid-note) still get
+    their own marker once the metronome is on, alongside the untouched
+    beat-5/6 real eighth notes."""
+    md = timeline(six_eight_score)
+    md.set_metronome_enabled(True)
+
+    beats = sorted(s.beat_position for s in md.timeline_slices if s.measure == 1)
+    assert beats == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+
+
+def test_pickup_measure_gets_no_markers_before_its_own_start_beat(timeline, score_duet):
+    """score_duet's pickup (6/8, number="0" implicit="yes") is entirely
+    filled by real notes at beats 4, 5, 6 (A3's "positioned at the end of
+    the notional bar") - if marker generation used the wrong start_beat
+    (e.g. 1 instead of 4), it would wrongly synthesize markers at beats
+    1/2/3, which don't correspond to any real time before the piece starts.
+    """
+    md = timeline(score_duet)
+    md.set_metronome_enabled(True)
+
+    pickup_beats = sorted(s.beat_position for s in md.timeline_slices if s.measure == 0)
+    assert pickup_beats == [4.0, 5.0, 6.0], "no markers before the pickup's real start_beat"
+
+
 def test_jump_to_measure_moves_to_the_first_event_of_that_measure(timeline, ts_change_score):
     """C4, Ref 6: typing a bar number then Enter."""
     md = timeline(ts_change_score)

@@ -1293,17 +1293,229 @@ assumed:
           (metronome) remain deferred to a future session as planned; E10
           (latency harness) is still open too.
 
-[ ] E8  Metronome: click every beat, accented click on beat 1, tick when
+BUG FIX 2026-08-07 (reported hangover from E4/E5, live-tested): Sequencer
+reaching the last note flipped is_playing False and emitted finished()
+immediately on the same call stack that started the note sounding, not
+after it had actually rung out for duration_ms. is_playing being False
+while the note was still audibly sounding meant Space, pressed right after,
+took toggle_play_stop()'s "start a new run" branch instead of "stop" - and
+since the cursor was already on the last note, that played the boundary
+cue instead of doing anything sensible ("no man's land"). audio/sequencer.py:
+_sound_current_step() now schedules a genuine ring-out wait (the same timer/
+_advance path, with _pending_next_index left None as the signal that this
+wait is the finish, not a further step) instead of finishing immediately;
+is_playing stays True for the whole wait. Same fix applies to phrase
+audition (E6) reaching its end_index - same code path. Tests updated in
+tests/audio/test_sequencer.py (renamed
+test_playback_waits_for_the_last_note_to_ring_out_before_finishing,
+test_end_index_bounds_playback_for_phrase_audition) and one real-QTimer
+test in tests/test_main_window.py
+(test_phrase_audition_from_the_last_measure_plays_to_the_end_of_the_piece,
+now waits via qtbot.waitUntil instead of asserting finished synchronously).
+
+[x] E8  Metronome: click every beat, accented click on beat 1, tick when
         stepping onto a beat position - Ref 14 AC1-AC3
-        > Left as a one-liner - deferred to a future session (user decision
-          2026-08-07). Will need per-beat-position navigable events (Ref 14
-          AC4, see E9) as a prerequisite once picked up.
-[ ] E9  With metronome on, beat positions become navigable events even where
+        > DONE 2026-08-07. Click generation: confirmed with the user before
+          building - reuses the existing in-process FluidSynth SynthEngine
+          (no new audio backend/dependency) via GM program 82 "Lead 2
+          (sawtooth)", an actual sawtooth wave, at the nearest equal-
+          tempered MIDI notes to the requested 1200Hz/800Hz (D6=86 accent,
+          G5=79 regular), 40ms, on a dedicated channel (14, alongside
+          BOUNDARY_CHANNEL=15/D-9) - keeps the whole click path inside the
+          audio pipeline already characterised for Ref 9 latency, instead
+          of a second concurrent audio stream of uncertain latency. New
+          audio/metronome.py (plain module, constants + one pure function
+          click_event_for_beat(beat_position), matching the
+          key_signatures.py/duration_units.py "not a class" pattern) - used
+          by both audio/sequencer.py (playback) and main_window.py
+          (navigation) so the two contexts click identically off one rule.
+          audio/synth_engine.py: SynthEngine.play_click() is a fully
+          independent path from the melodic note pipeline - its own
+          _active_click/_click_off_timer, does NOT call stop_all_notes()
+          (so it doesn't cut off a note sounding at the same beat) and
+          isn't touched by a later play_chord() call (so it rings its own
+          fixed 40ms regardless of the next note's duration); folded into
+          stop_all_notes() too so pause/stop still silence it. NullSynth
+          mirrors play_click(), recording to a new .clicks list.
+          models/music_data.py: metronome_enabled field (off by default,
+          resets per score load same as playback_tempo_offset),
+          set_metronome_enabled()/toggle_metronome(). Shortcut: confirmed
+          with the user this should be Ctrl+M, matching what the Product
+          Definition Document's Key Strokes table already documented (the
+          user's own first suggestion, Ctrl+Shift+M, was dropped in favour
+          of the existing spec - no wording change needed there). Wired as
+          the Options menu's new checkable "Toggle Metronome" QAction
+          (Ctrl+M as its shortcut, same pattern as Ctrl+G/Ctrl+T's menu
+          actions - no separate bare QShortcut) rather than F/S/D/Space's
+          bare-QShortcut pattern, since it needed a menu presence too;
+          checked state kept in sync with metronome_enabled (a checkable
+          QAction's own state is announced by screen readers on focus, a
+          small accessibility win for free). Status bar grew a 6th field,
+          "Metronome: On/Off" - same discoverability precedent as E2's
+          playback-status field. widgets/status_bar_widget.py:
+          FIELD_COUNT 5->6.
+          Navigation-triggered clicks (AC3): main_window.py's
+          _play_selected_region_3_notes() now fires a click after (not
+          instead of) playing whatever notes are visible, whenever
+          metronome_enabled and the landed slice's beat_position is a whole
+          beat - fires even when there are no notes at all (a metronome-
+          only beat marker, E9's job to make those reachable).
+          Playback clicks (AC1/AC2): audio/sequencer.py's
+          _sound_current_step() does the same after its play_chord() call -
+          needed no separate scheduling logic, since a silent beat is only
+          ever visited as a step at all because next_visible_event_index
+          now treats it as navigable when the metronome is on (E9).
+          New tests: tests/audio/test_metronome.py (click_event_for_beat
+          pure-function cases), tests/audio/test_sequencer.py (click layers
+          on top of a real note; no click when disabled),
+          tests/test_main_window.py (toggle updates MusicData/menu/status
+          bar; Ctrl+M real keypress; resets to Off on a new score load;
+          navigation click on/off). Full suite: 178 passed after E8 alone.
+        > FIX 2026-08-07 (live-tested, reported by the user after running
+          the app for real): the sawtooth-lead click "was awful". Switched
+          to a GM PERCUSSION voice instead - Claves (GM percussion key map
+          note 75) - which only maps correctly on MIDI channel 10
+          (0-indexed 9), so METRONOME_CHANNEL moved from the arbitrary 14
+          to 9 (the same channel MusicData.PERCUSSION_CHANNEL reserves for
+          a score's own percussion part, D-5 - not a collision, since
+          multiple percussion note numbers legitimately sound at once on
+          channel 10, same as a real drum kit's voices). Since GM
+          percussion notes select a fixed drum sound rather than a tunable
+          pitch, beat 1's accent (AC2) is now distinguished by velocity
+          (127 vs 100) instead of a different note number -
+          click_event_for_beat()'s return shape grew a velocity element;
+          SynthEngine.play_click()/NullSynth.play_click() both gained a
+          velocity parameter. audio/metronome.py:
+          METRONOME_ACCENT_PITCH/METRONOME_CLICK_PITCH replaced with
+          METRONOME_CLAVES_PITCH (75) + METRONOME_ACCENT_VELOCITY (127) /
+          METRONOME_CLICK_VELOCITY (100). Tests updated across
+          tests/audio/test_metronome.py, tests/audio/test_sequencer.py,
+          tests/test_main_window.py to assert on velocity instead of pitch
+          for the accent. latency_harness.py updated to match the new
+          play_click() signature. Full suite: 190 passed.
+[x] E9  With metronome on, beat positions become navigable events even where
         no note sounds - Ref 14 AC4, depends on A4
-[ ] E10 Latency harness; verify audition stays within 25 ms - Ref 9 AC3, NFR-04
-        > Recover the old benchmark: git show 520f743:test_midi_latency.py
-        > Now also relevant to E4-E7's Sequencer-driven playback, not just
-          the original per-note navigation audition (Ref 9) - measure both.
+        > DONE 2026-08-07. parsers/timeline_builder.py: build() now also
+          computes self.beat_markers (a side effect, mirroring
+          tempo_changes) - one synthetic, empty-notes EventSlice per whole
+          beat (1..ts_num) in every measure that has no real event there.
+          New _beat_marker_slices() plus a shared _start_beat() static
+          helper (Ref 17/A3's "pickup notes positioned at the end of the
+          notional bar" formula, previously inlined only at the real-note
+          construction site, now used by both so the two definitions can't
+          drift) - the pickup measure (m_num==0) only gets markers from its
+          own start_beat onward, since beats before that don't correspond
+          to any real time before the piece starts.
+          _measure_start_quarters() extended to also return each measure's
+          own (ts_num, ts_den, fifths) in the same walk, rather than a
+          second one, since the marker pass needs the per-measure beat
+          range/key state.
+          IMPORTANT DESIGN CORRECTION mid-task: the plan's first cut merged
+          beat_markers directly into the returned timeline_slices
+          unconditionally at parse time ("cheap, harmless when metronome is
+          off"). That claim was wrong - it broke 9 existing tests outright,
+          because CLAUDE.md's own documented Timeline model ("one entry per
+          distinct (measure, offset) with at least one sounding note") is
+          relied on by direct-indexing tests throughout the suite (e.g.
+          test_playback_events_group_simultaneous_notes_by_part asserting
+          len(timeline_slices)==1 for a two-part chord), and markers would
+          silently pad even a session that never touches the metronome.
+          Fixed properly, not patched around: beat_markers stays a SEPARATE
+          list, never touching the canonical timeline_slices while
+          metronome_enabled is False (the default) - the invariant holds
+          exactly as before this feature existed. models/music_data.py:
+          __post_init__ keeps a stable self._real_timeline_slices reference;
+          set_metronome_enabled() rebuilds self.timeline_slices as the
+          sorted merge of real slices + beat_markers only when turning ON,
+          and restores the untouched real list when turning back OFF -
+          relocating active_event_index to the same real position across
+          the rebuild (last slice at or before the current one's
+          quarters_from_start - exact match when one exists, nearest
+          preceding real event when it doesn't, e.g. toggling off while
+          sitting on a marker that has no counterpart in the real-only
+          list at all).
+          New _slice_is_navigable(index) = _slice_has_visible_notes(index)
+          or (metronome_enabled and that slice's beat_position is a whole
+          number) - swapped in for _slice_has_visible_notes at every
+          navigation/stepping call site: move_timeline_left/right,
+          _first_visible_index_by_measure (Ctrl+Left/Right, jump-to-
+          measure), and next_visible_event_index (Sequencer stepping - this
+          is what makes E8's playback click loop visit silent beats with no
+          extra scheduling logic). _slice_has_visible_sounding_note/
+          _sounding_bounds deliberately UNCHANGED - the outer Left/Right/
+          Home/End boundary of the piece stays anchored to real sounding
+          notes only, so metronome mode can't resurrect trailing rest-only
+          padding as navigable (a run of trailing markers sits outside
+          _sounding_bounds() and is correctly never reached by navigation -
+          though the Sequencer's own playback walk, which doesn't consult
+          _sounding_bounds, WILL click through trailing padding during a
+          full Space-driven play-through, which is consistent with AC1
+          having no such exclusion).
+          get_region_3_data() returns ["Click"] instead of ["None"] when
+          landing on a metronome-visible beat marker.
+          New fixture tests/fixtures/sparse_beat.musicxml (3 bars: complete
+          C-D-E-F, then a lone G with a <forward> gap, then a lone A - the
+          gap sits strictly between two sounding notes, not trailing after
+          the piece's last one). New tests in
+          tests/models/test_music_data.py (metronome off/on navigability,
+          toggle-preserves-cursor both directions, markers generated inside
+          a still-ringing note too per AC1's literal "every beat" wording -
+          six_eight_score's C/D quarter notes each only have a real event
+          at their own onset beat, so beats 2/4 still get markers) and
+          tests/audio/test_sequencer.py (Sequencer visits and clicks a
+          silent beat marker, no play_chord call there). Pickup edge case
+          verified against the real score_duet fixture (Chessel Duet, 6/8
+          pickup filled entirely by real notes at beats 4/5/6 - asserts no
+          markers appear at beats 1/2/3, which would mean the wrong
+          start_beat was used). Full suite: 190 passed, ~2.7s.
+[x] E10 Latency harness; verify audition stays within 25 ms - Ref 9 AC3, NFR-04
+        > DONE 2026-08-07. git show 520f743:test_midi_latency.py recovered
+          and inspected - it used mido to send a MIDI message to an
+          external port and time Python-side dispatch; mido is gone since
+          the FluidSynth switch, so this needed rewriting against
+          SynthEngine, not a literal restore.
+          New latency_harness.py at the repo root (not tests/) - a manual
+          script, not a pytest test: pytest.ini scopes discovery to
+          testpaths = tests, and tests/conftest.py's autouse
+          _forbid_real_audio fixture deliberately blocks constructing a
+          real SynthEngine in every test (D-7), fundamentally at odds with
+          what a hardware-backed latency benchmark needs. Run by hand via
+          .venv\Scripts\python.exe latency_harness.py.
+          Measures two things against real hardware: (1) per-note dispatch
+          latency (Ref 9 AC3) - same measurement philosophy as the
+          original, Python-side time from calling play_notes()/play_click()
+          to the underlying fluidsynth call returning, against the 25ms
+          budget; (2) Sequencer scheduling jitter (NFR-04 AC-04.2, new -
+          the first time this class of measurement exists in the repo,
+          since E4-E7's own FakeTimer-driven tests only prove scheduling
+          correctness, not real-world timing accuracy under Qt's actual
+          event loop) - runs a real Sequencer/QTimer/QEventLoop over
+          minimal_4_4.musicxml at a fast tempo and compares each step's
+          requested delay against actual wall-clock time between steps.
+          No pass/fail assertions - prints a human-readable report, since
+          there's no hardware-backed CI to assert against.
+          Verified live (this is itself the verification - a script meant
+          to be run and read, not asserted on): play_notes mean 0.023ms /
+          max 0.341ms, play_click mean 0.012ms / max 0.018ms, both far
+          under the 25ms budget; Sequencer jitter -3.4ms to +0.6ms over 3
+          steps at 240bpm, consistent with normal Qt/Windows timer
+          granularity.
+
+[ ] E11 Metronome click sound quality - functional debt, not a missing
+        feature (Ref 14 AC1-AC3 are all functionally met by E8) - see D-14.
+        > OPENED 2026-08-07. Two synthesis attempts, both live-tested by the
+          user and found lacking: a synthesized sawtooth lead ("awful"),
+          then GM percussion Claves ("better but still not really good
+          enough"). Next step per the user's own original framing when E8
+          was planned: probably the raw-waveform-or-WAV-asset route
+          (audio/synth_engine.py's SynthEngine is FluidSynth/soundfont-only
+          - no built-in tone generator - so an exact-spec click, e.g. a
+          precise 1200Hz/800Hz sawtooth, needs either a small procedurally-
+          generated PCM path alongside FluidSynth's WASAPI stream, or two
+          short user-supplied WAV clips) - deliberately not attempted yet;
+          revisit when picked up, including checking whether a second
+          concurrent audio stream competes with FluidSynth's own
+          low-latency WASAPI session (Ref 9).
 
 
 ###
@@ -1519,6 +1731,22 @@ D-13 Version numbering - Functional Spec, see C8 (About dialog)
      automates the bump (no git hook) - it's a manual step to remember when
      asked to commit and push.
 
+D-14 Metronome click sound synthesis - Ref 14, see E8/E11
+     OPEN 2026-08-07: not decided, deliberately parked as functional debt.
+     Two attempts tried and rejected live: (1) a synthesized sawtooth wave
+     through the existing FluidSynth pipeline (GM "Lead 2", tuned to the
+     nearest MIDI notes to the originally-requested 1200Hz/800Hz) - "was
+     awful"; (2) GM percussion Claves on channel 10, accent via velocity
+     instead of pitch (a percussion voice has no tunable pitch) - "better
+     but still not really good enough". Both stayed inside the existing
+     in-process FluidSynth engine specifically to avoid opening a second
+     concurrent audio stream of uncertain latency alongside its low-latency
+     WASAPI session (Ref 9) - that tradeoff needs revisiting if soundfont-
+     based synthesis genuinely can't be made to sound right, since the
+     remaining options (procedurally generated raw PCM, or user-supplied
+     WAV clips - see the original click-generation discussion this session)
+     both require a second audio path. See E11 for the open task.
+
 
 ###
 COVERAGE CHECK - every requirement appears at least once
@@ -1528,12 +1756,13 @@ COVERAGE CHECK - every requirement appears at least once
   Ref  4 C1        Ref 11 E6        Ref 18 A2,A6,A9  Ref 25 I1,J1,J2,J3
   Ref  5 C3,D3     Ref 12 E1,E2,E3  Ref 19 L1,L2,L3  Ref 26 J4,J5,J6
   Ref  6 C4,D3     Ref 13 E7        Ref 20 H1        Ref 27 G1,G2
-  Ref  7 B1-B5     Ref 14 E8,E9     Ref 21 H2
+  Ref  7 B1-B5     Ref 14 E8,E9,E11 Ref 21 H2
 
   NFR-01 M1     NFR-02 M2,M3     NFR-03 A1,A2,A10    NFR-04 E10
   NFR-05 D4     NFR-06 I1,I2     NFR-07 M4
 
   Reported bugs: tempo units A9, playback instrument A8
+  Functional debt: metronome click sound quality E8/E11, see D-14
   Discussion Points: nav keys scoped to Note region (RESOLVED) D-2/C1,
                      UK-US vocabulary D-6/F4
 ###
