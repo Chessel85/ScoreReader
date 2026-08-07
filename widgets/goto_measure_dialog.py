@@ -1,6 +1,7 @@
 # widgets/goto_measure_dialog.py
 from typing import Optional
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QLineEdit, QVBoxLayout
 
@@ -25,7 +26,7 @@ class GotoMeasureDialog(QDialog):
             self.measure_edit.setText(str(current_measure))
             self.measure_edit.selectAll()
 
-        label = QLabel("Measure number (whole numbers only, no beat position):", self)
+        label = QLabel("Measure number:", self)
         label.setBuddy(self.measure_edit)
 
         buttons = QDialogButtonBox(
@@ -39,7 +40,16 @@ class GotoMeasureDialog(QDialog):
         layout.addWidget(self.measure_edit)
         layout.addWidget(buttons)
 
-        self.measure_edit.setFocus()
+    def showEvent(self, event):
+        """setFocus() called before the dialog is actually shown (e.g. from
+        __init__) sets Qt's internal focus-widget pointer without the native
+        window existing yet, so no accessibility focus-changed event ever
+        reaches NVDA - it just keeps announcing whatever had focus before the
+        dialog opened. Deferring to the next event-loop turn after the show
+        event guarantees the native window (and its accessible object) exist
+        first, so the focus change is one NVDA actually gets told about."""
+        super().showEvent(event)
+        QTimer.singleShot(0, self.measure_edit.setFocus)
 
     def measure_number(self) -> Optional[int]:
         """The typed value, or None if the field was left empty."""

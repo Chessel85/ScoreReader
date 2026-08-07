@@ -503,6 +503,67 @@ def test_navigation_menu_items_use_home_and_end_shortcuts(window):
     assert window.first_measure_action.shortcut() == QKeySequence(Qt.Key.Key_Home)
     assert window.last_measure_action.shortcut() == QKeySequence(Qt.Key.Key_End)
     assert window.goto_measure_action.shortcut() == QKeySequence("Ctrl+G")
+    assert window.move_to_notes_action.shortcut() == QKeySequence("N")
+
+
+def test_first_and_last_note_actions_are_only_enabled_in_the_note_region(
+    window, qtbot, null_synth, minimal_score
+):
+    """Tidying: Move to First/Last Note used to act globally from any of the
+    four regions or the status bar - now they're greyed out everywhere
+    except the Note region (Region 3), so a stray Home/End elsewhere can't
+    silently jump the timeline underneath whatever's being read."""
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+
+    for region in (window.region_1, window.region_2, window.region_4):
+        _focus(region)
+        assert not window.first_measure_action.isEnabled()
+        assert not window.last_measure_action.isEnabled()
+
+    _focus(window.status_bar.first_field())
+    assert not window.first_measure_action.isEnabled()
+    assert not window.last_measure_action.isEnabled()
+
+    _focus(window.region_3)
+    assert window.first_measure_action.isEnabled()
+    assert window.last_measure_action.isEnabled()
+
+
+def test_move_to_notes_action_focuses_region_3_from_any_pane(
+    window, qtbot, null_synth, minimal_score
+):
+    """New Navigation > Move to Notes (N) - the deliberate exception that
+    stays enabled everywhere, since its job is getting focus into the Note
+    region for quick navigation in the first place."""
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+
+    for start in (window.region_1, window.region_2, window.region_4, window.status_bar.first_field()):
+        _focus(start)
+        assert window.move_to_notes_action.isEnabled()
+
+        qtbot.keyClick(window.focusWidget(), Qt.Key.Key_N)
+
+        assert window.focusWidget() is window.region_3
+
+
+def test_goto_measure_dialog_shows_with_focus_on_the_edit_field(window, qtbot):
+    """The dialog used to call setFocus() in __init__, before the native
+    window existed - Qt's own focus tracking accepted it, but no
+    accessibility focus-changed event ever reached NVDA, which kept
+    announcing whatever had focus before Ctrl+G was pressed. Deferring the
+    setFocus() to after showEvent (see GotoMeasureDialog.showEvent) fixes
+    that; this proves the edit field actually ends up with real Qt focus
+    once the dialog is shown, not just tab-order to it."""
+    dialog = GotoMeasureDialog(window)
+    qtbot.addWidget(dialog)
+
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    qtbot.waitUntil(lambda: dialog.focusWidget() is dialog.measure_edit)
+
+    assert dialog.focusWidget() is dialog.measure_edit
 
 
 def test_about_dialog_shows_the_version_number(window):
@@ -512,6 +573,18 @@ def test_about_dialog_shows_the_version_number(window):
     labels = dialog.findChildren(QLabel)
 
     assert any(__version__ in label.text() for label in labels)
+
+
+def test_about_dialog_labels_are_individually_tab_focusable(window):
+    """Each piece of the About text (name, version, description) is its own
+    Tab stop, so NVDA users can move through them one at a time instead of
+    hearing one large label read all at once."""
+    dialog = AboutDialog(window)
+    labels = dialog.findChildren(QLabel)
+
+    assert len(labels) >= 3
+    for label in labels:
+        assert label.focusPolicy() == Qt.FocusPolicy.StrongFocus
 
 
 def test_about_action_opens_without_crashing(window, qtbot, monkeypatch):

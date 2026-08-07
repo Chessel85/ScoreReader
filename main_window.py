@@ -163,6 +163,13 @@ class MainWindow(QMainWindow):
         # "libshiboken: Internal C++ object already deleted" trap for any
         # later code (tests included) that tries to reach it via
         # menuBar().actions() traversal instead.
+        # C-tidy: Move to First/Last Note only make sense once focus is
+        # already in the Note region, so they're greyed out everywhere else
+        # (kept in sync by _update_navigation_actions_enabled, called from
+        # _on_focus_changed) rather than acting globally the way they did
+        # before. Move to Notes below is the deliberate exception - it's the
+        # one navigation item that stays enabled everywhere, since its whole
+        # job is getting focus into the Note region in the first place.
         self.first_measure_action = QAction("Move to &First Note", self)
         self.first_measure_action.setShortcut(QKeySequence(Qt.Key.Key_Home))
         self.first_measure_action.triggered.connect(self._navigation_menu_first_measure)
@@ -175,10 +182,18 @@ class MainWindow(QMainWindow):
         self.goto_measure_action.setShortcut(QKeySequence("Ctrl+G"))
         self.goto_measure_action.triggered.connect(self._show_goto_measure_dialog)
 
+        self.move_to_notes_action = QAction("Move to &Notes", self)
+        self.move_to_notes_action.setShortcut(QKeySequence("N"))
+        self.move_to_notes_action.triggered.connect(self._navigation_menu_move_to_notes)
+
         navigation_menu.addAction(self.first_measure_action)
         navigation_menu.addAction(self.last_measure_action)
         navigation_menu.addSeparator()
         navigation_menu.addAction(self.goto_measure_action)
+        navigation_menu.addSeparator()
+        navigation_menu.addAction(self.move_to_notes_action)
+
+        self._update_navigation_actions_enabled()
 
         help_menu = menu_bar.addMenu("&Help")
 
@@ -210,6 +225,9 @@ class MainWindow(QMainWindow):
 
     def _navigation_menu_last_measure(self):
         self.navigate_timeline_end()
+        self.region_3.setFocus()
+
+    def _navigation_menu_move_to_notes(self):
         self.region_3.setFocus()
 
     def _show_goto_measure_dialog(self):
@@ -433,6 +451,20 @@ class MainWindow(QMainWindow):
         pane stop can restore it rather than always landing on Region 1."""
         if now in (self.region_1, self.region_2, self.region_3, self.region_4):
             self._last_focused_region = now
+        self._update_navigation_actions_enabled(now)
+
+    def _update_navigation_actions_enabled(self, focus_widget=None):
+        """Move to First/Last Note (Home/End) only act on the Note region, so
+        they're greyed out whenever focus is elsewhere - otherwise pressing
+        Home/End in, say, Region 1 silently jumped the timeline underneath
+        whatever the user was actually reading there. Called with no argument
+        from setup_menu, before the initial focusChanged signal for
+        region_1's startup focus has anything to report."""
+        if focus_widget is None:
+            focus_widget = self.focusWidget()
+        in_note_region = focus_widget is self.region_3
+        self.first_measure_action.setEnabled(in_note_region)
+        self.last_measure_action.setEnabled(in_note_region)
 
     def _current_pane(self) -> str:
         focus = self.focusWidget()
