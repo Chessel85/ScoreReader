@@ -123,7 +123,7 @@ The following table lists requirements for each role along with acceptance crite
 
 ## Key Strokes
 
-Unless noted otherwise, the timeline navigation keystrokes below (left/right arrow, control+left/right, home, end) only take effect when focus is in the Note region. Pressing them while focus is in another region does nothing there; each other region uses its own native keys instead (e.g. plain Up/Down moves between rows in the Parts List). Home and End are also available as Navigation menu shortcuts ("Move to First/Last Note") from any region other than the Note region itself - they jump to the same position and move focus into the Note region, since the Note region already owns those keys for its own use.
+Unless noted otherwise, the timeline navigation keystrokes below (left/right arrow, control+left/right, home, end) only take effect when focus is in the Note region. Pressing them while focus is in another region does nothing there; each other region uses its own native keys instead (e.g. plain Up/Down moves between rows in the Parts List). The Navigation menu's "Move to First/Last Note" items mirror Home/End and are likewise only enabled while focus is already in the Note region, rather than acting globally. To jump focus into the Note region from anywhere else, use "Move to Notes" (below).
 
 | Action | Keystroke | 
 | :--- | :--- | 
@@ -134,21 +134,26 @@ Unless noted otherwise, the timeline navigation keystrokes below (left/right arr
 | Toggle a part, stave, voice or metronome on/off when in the parts list | O |
 | Toggle edit/read-only mode | control + shift + E |
 | Play notes at current position | shift + spacebar |
-| play/stop playback from the current position | spacebar |
-| Pause playback | control + spacebar |
+| Play/stop playback from the current position; also resumes when paused | spacebar |
+| Pause playback (resume with spacebar, not this key again) | control + spacebar |
 | Type a bar number, then jump to its first active event (Ref 6) | digits 0-9, then Enter, while in the Note region |
 | Clear a typed bar number without moving | Escape, while in the Note region |
 | 2 bar audition (when no bar number has been typed) | Enter |
-| Move to first active note (Note region); from elsewhere, via the Navigation menu, also moves focus to the Note region | home |
-| Move to last active note (Note region); from elsewhere, via the Navigation menu, also moves focus to the Note region | End |
-| Open the Go to Measure dialog, pre-filled with the current measure number | control + G |
+| Move to first active note | Home, while in the Note region |
+| Move to last active note | End, while in the Note region |
+| Move focus to the Note region from anywhere (regions or status bar), without changing position | N |
+| Open the Go to Measure dialog | control + G |
 | Toggle focus between the regions area (returning to whichever region was last focused) and the status bar | F6 |
 | Same toggle, either direction (a two-pane toggle has no distinct reverse) | Shift + F6 |
 | Toggle speech control on/off | control + shift + enter |
+| Increase playback tempo by 10bpm (Ref 12) | F |
+| Decrease playback tempo by 10bpm (Ref 12) | S |
+| Reset playback tempo to the score's own tempo (Ref 12) | D |
+| Open the Tempo Offset dialog (Ref 12 AC5) | Options menu > Tempo Offset..., or control + T |
 
-Attempting to move left/right or control+left/right past the first or last active event in the timeline leaves the position unchanged and plays a short boundary ("doh") sound. Home and End never play this sound, since they jump to a known limit rather than attempting to move past one. Typing a bar number that does not exist plays the same boundary sound and leaves the position unchanged (Ref 6 AC4).
+Attempting to move left/right or control+left/right past the first or last active event in the timeline leaves the position unchanged and plays a short boundary ("doh") sound. Home and End never play this sound, since they jump to a known limit rather than attempting to move past one. Typing a bar number that does not exist plays the same boundary sound and leaves the position unchanged (Ref 6 AC4). Pressing play/stop (spacebar) while already on the last active note plays the same boundary sound instead of starting playback, since there is nothing ahead of the cursor to play forward.
 
-`Tab`/`Shift+Tab` normally move focus between the four regions in a cycle (or, within the Parts List, forward to the next region as usual). The status bar is the one exception: once focus is inside it, `Tab`/`Shift+Tab` move between its own fields (measure/beat, key, time signature) and wrap around instead of leaving the pane - only `F6`/`Shift+F6` move focus out of the status bar.
+`Tab`/`Shift+Tab` normally move focus between the four regions in a cycle (or, within the Parts List, forward to the next region as usual). The status bar is the one exception: once focus is inside it, `Tab`/`Shift+Tab` move between its own fields (measure/beat, key, time signature, playback tempo, playback status) and wrap around instead of leaving the pane - only `F6`/`Shift+F6` move focus out of the status bar.
 
 "Active event" excludes rests present only to pad a bar out to a complete measure - e.g. a final bar left resting in every voice after the piece's last real note is not a further active event to step onto or land on with End. A rest occurring between two sounding notes remains its own active event as normal, since it is meaningful playing information (Ref 16), not padding.
 
@@ -157,10 +162,10 @@ Attempting to move left/right or control+left/right past the first or last activ
 Much of the contents of this document are based on good experience of application development but many details remain either undefined or uncertain.  The below table aims to track these unknowns in order to help discussion and avoid assumptions.  when development hits areas of uncertainty they should be flagged  and discussed and documented below.
 | Item | Details |
 | :--- | :--- |
-| global navigation keystrokes (RESOLVED 2026-08-06) | Decided against making navigation keystrokes global. Firing arrow-key/Home/End navigation regardless of which region has focus would be confusing and is not standard Windows application behaviour - other regions use those same keys for their own native purposes (e.g. Up/Down moving between rows). Timeline navigation keystrokes are scoped to the Note region only, per the updated Ref 4. If this proves inefficient in practice (e.g. having to Tab back to the Note region too often), revisit. |
+| global navigation keystrokes (RESOLVED 2026-08-06, REVISITED 2026-08-07) | Decided against making navigation keystrokes global. Firing arrow-key/Home/End navigation regardless of which region has focus would be confusing and is not standard Windows application behaviour - other regions use those same keys for their own native purposes (e.g. Up/Down moving between rows). Timeline navigation keystrokes are scoped to the Note region only, per the updated Ref 4. A first pass at Home/End (C8) briefly made the Navigation menu's First/Last Note items work globally, which live testing showed was exactly the confusing/non-standard behaviour this entry warned against - the menu items are now greyed out except when focus is already in the Note region, restoring the original decision. The anticipated "too much Tabbing back" inefficiency was real, so it was solved directly instead: a new "Move to Notes" (N) command jumps focus into the Note region from anywhere without moving the timeline. |
 | UK or US terminology | There is a US and UK vocab in music (not sure if that is a totally fair way of defining it.) US measure, quarter note, eighth note are bar, crotchet and quaver in UK vocab.  There should be an option to toggle between these (and any others that exist) and defining where this surfaces needs working through. |
 | Key signatures | If the key is set e.g. G major, and there is an F, should the note be displayed as just F since the musician should know an F is sharpened in G major, or written out in full? In both cases, it should defo sound F sharp.  Maybe this is a user preference? |
-| Status bar (RESOLVED 2026-08-06) | As well as position, the status bar shows the current time signature and key at the current position, since either can change throughout the score - see the General Layout and Status Bar and Pane Navigation sections above, and C6/D-11 in tasks.txt. |
+| Status bar (RESOLVED 2026-08-06, extended 2026-08-07) | As well as position, the status bar shows the current time signature and key at the current position, since either can change throughout the score - see the General Layout and Status Bar and Pane Navigation sections above, and C6/D-11 in tasks.txt. Two more fields were added for Ref 12 (playback tempo, e.g. "96 eighth notes per minute") and Ref 10 (playback status: Playing/Paused/Stopped) - see tasks.txt E2/E5. |
 | Title bar | Probably should update the title bar with the score title when it is loaded. So NVDA+T reads out application name and current file loaded |
 | Focus memory in regions (PARTIALLY RESOLVED 2026-08-06) | It would be more user friendly if tabbing away from and returning to a region maintained the last focused row.  This could be tricky conceptually though for note details if, whilst away, the row is filtered out. F6's pane toggle (see Status Bar and Pane Navigation above, C7/D-10 in tasks.txt) now remembers which *region* was last focused when returning from the status bar - the finer-grained question of remembering the last focused *row* within a region, addressed here, remains open. |
 | View menu contents | The Functional Spec's menu bar includes a View menu, but nothing in the requirements table currently assigns it any content. Needs a decision, or it stays deliberately empty until something needs it. |

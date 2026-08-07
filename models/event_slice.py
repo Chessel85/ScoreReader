@@ -17,3 +17,10 @@ class EventSlice:
     # the same way ts_duration already is (D-11, C6). Drives the status bar.
     time_sig: Tuple[int, int] = (4, 4)
     key_fifths: int = 0
+
+    # Ref 12/E4: real elapsed quarter notes from the start of the piece to
+    # this slice, independent of the ts-relative beat_position display units
+    # (Ref 18) - the prerequisite for the Sequencer to schedule real-time
+    # playback between two events, since beat_position resets every measure
+    # and can't express a duration on its own.
+    quarters_from_start: float = 0.0

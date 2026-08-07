@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QLabel
 from main_window import MainWindow
 from widgets.about_dialog import AboutDialog
 from widgets.goto_measure_dialog import GotoMeasureDialog
+from widgets.tempo_offset_dialog import TempoOffsetDialog
 
 
 @pytest.fixture
@@ -326,11 +327,17 @@ def test_status_bar_updates_on_load_and_navigation(window, qtbot, null_synth, ts
     load_and_wait(window, qtbot, ts_change_score)
 
     fields = window.status_bar._fields
-    assert [f.text() for f in fields] == ["Measure 1 beat 1", "Key: C major / A minor", "Time: 4/4"]
+    assert [f.text() for f in fields] == [
+        "Measure 1 beat 1", "Key: C major / A minor", "Time: 4/4",
+        "Playback tempo: 120 quarter notes per minute (score default)", "Playback: Stopped",
+    ]
 
     qtbot.keyClick(window.region_3, Qt.Key.Key_Right, Qt.KeyboardModifier.ControlModifier)
 
-    assert [f.text() for f in fields] == ["Measure 2 beat 1", "Key: C major / A minor", "Time: 6/8"]
+    assert [f.text() for f in fields] == [
+        "Measure 2 beat 1", "Key: C major / A minor", "Time: 6/8",
+        "Playback tempo: 120 quarter notes per minute (score default)", "Playback: Stopped",
+    ]
 
 
 def test_status_bar_shows_pending_digits_while_typing_a_bar_number(
@@ -374,10 +381,12 @@ def test_escape_clears_pending_digits_without_moving(window, qtbot, null_synth, 
 
     qtbot.keyClicks(window.region_3, "5")
     qtbot.keyClick(window.region_3, Qt.Key.Key_Escape)
-    qtbot.keyClick(window.region_3, Qt.Key.Key_Return)
 
     assert window._music_data.active_event_index == 0
-    assert null_synth.played == [], "Escape then Enter must not jump nor play the boundary cue"
+    assert null_synth.played == [], "Escape itself must not jump, play the boundary cue, or play anything"
+    # A subsequent Enter (no pending digits left) is E6's phrase audition,
+    # not this key's concern - see test_a_second_enter_while_a_phrase_is_playing_stops_it
+    # and friends.
 
 
 def test_an_arrow_key_clears_any_pending_digits(window, qtbot, null_synth, many_measures_score):
@@ -387,9 +396,9 @@ def test_an_arrow_key_clears_any_pending_digits(window, qtbot, null_synth, many_
 
     qtbot.keyClicks(window.region_3, "1")
     qtbot.keyClick(window.region_3, Qt.Key.Key_Right)  # measure 2, clears the pending "1"
-    qtbot.keyClick(window.region_3, Qt.Key.Key_Return)  # no digits pending - inert (E6 not built)
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Return)  # no digits pending - starts phrase audition (E6)
 
-    assert window._music_data.active_event_index == 1  # still just one step right from start
+    assert window._music_data.active_event_index == 1  # phrase audition never moves the cursor
 
 
 def test_navigation_menu_first_and_last_measure_move_focus_and_position(
@@ -495,6 +504,25 @@ def test_ctrl_g_shortcut_opens_the_goto_measure_dialog(window, qtbot, null_synth
     )
 
     qtbot.keyClick(window, Qt.Key.Key_G, Qt.KeyboardModifier.ControlModifier)
+
+    assert opened == [True]
+
+
+def test_ctrl_t_shortcut_opens_the_tempo_offset_dialog(window, qtbot, null_synth, minimal_score, monkeypatch):
+    """Same scope as Ctrl+G (C8): fires from anywhere normal for a
+    shortcut, not just a particular region."""
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+    _focus(window.region_1)
+    opened = []
+    monkeypatch.setattr(
+        "main_window.TempoOffsetDialog",
+        lambda parent, current_offset=0.0, beat_unit_name="quarter": type(
+            "FakeDialog", (), {"exec": lambda self: opened.append(True) or QDialog.DialogCode.Rejected}
+        )(),
+    )
+
+    qtbot.keyClick(window, Qt.Key.Key_T, Qt.KeyboardModifier.ControlModifier)
 
     assert opened == [True]
 
@@ -608,3 +636,400 @@ def test_loading_a_missing_file_does_not_crash_or_leave_the_thread_dangling(wind
     assert window._load_thread is None
     assert window._music_data is not None
     assert window._music_data.timeline_slices == []
+
+
+# --- E2: tempo up/down/reset (Ref 12) -----------------------------------
+
+def test_tempo_faster_and_slower_update_the_offset_and_status_bar(window, qtbot, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+
+    window.tempo_faster()
+
+    assert window._music_data.playback_tempo_offset == 10
+    assert window.status_bar._fields[3].text() == "Playback tempo: 130 quarter notes per minute"
+
+    window.tempo_slower()
+    window.tempo_slower()
+
+    assert window._music_data.playback_tempo_offset == -10
+    assert window.status_bar._fields[3].text() == "Playback tempo: 110 quarter notes per minute"
+
+
+def test_tempo_reset_returns_to_the_score_default(window, qtbot, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+    window.tempo_faster()
+
+    window.tempo_reset()
+
+    assert window._music_data.playback_tempo_offset == 0
+    assert window.status_bar._fields[3].text() == "Playback tempo: 120 quarter notes per minute (score default)"
+
+
+def test_tempo_keys_do_not_move_the_timeline_or_reaudition(window, qtbot, null_synth, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+    index_before = window._music_data.active_event_index
+    null_synth.played.clear()
+
+    window.tempo_faster()
+
+    assert window._music_data.active_event_index == index_before
+    assert null_synth.played == []
+
+
+# --- E3: Tempo Offset dialog (Ref 12 AC5) -------------------------------
+
+def test_tempo_offset_dialog_accepts_a_decimal_value(window, qtbot, minimal_score, monkeypatch):
+    load_and_wait(window, qtbot, minimal_score)
+
+    dialog = TempoOffsetDialog(window, current_offset=0.0)
+    dialog.offset_edit.setText("15.5")
+    monkeypatch.setattr(dialog, "exec", lambda: TempoOffsetDialog.DialogCode.Accepted)
+    monkeypatch.setattr(
+        "main_window.TempoOffsetDialog",
+        lambda parent, current_offset=0.0, beat_unit_name="quarter": dialog,
+    )
+
+    window._show_tempo_offset_dialog()
+
+    assert window._music_data.playback_tempo_offset == 15.5
+    assert window.status_bar._fields[3].text() == "Playback tempo: 135.5 quarter notes per minute"
+
+
+def test_tempo_offset_dialog_clamps_rather_than_rejects_an_out_of_range_value(
+    window, qtbot, minimal_score, monkeypatch
+):
+    load_and_wait(window, qtbot, minimal_score)
+
+    dialog = TempoOffsetDialog(window, current_offset=0.0)
+    dialog.offset_edit.setText("500")  # 120 + 500 = 620, way past MAX_TEMPO_BPM
+    monkeypatch.setattr(dialog, "exec", lambda: TempoOffsetDialog.DialogCode.Accepted)
+    monkeypatch.setattr(
+        "main_window.TempoOffsetDialog",
+        lambda parent, current_offset=0.0, beat_unit_name="quarter": dialog,
+    )
+
+    window._show_tempo_offset_dialog()
+
+    assert window._music_data.effective_tempo_display_bpm() == window._music_data.MAX_TEMPO_BPM
+
+
+def test_tempo_offset_dialog_cancelled_does_not_change_the_offset(
+    window, qtbot, minimal_score, monkeypatch
+):
+    load_and_wait(window, qtbot, minimal_score)
+
+    dialog = TempoOffsetDialog(window, current_offset=0.0)
+    dialog.offset_edit.setText("50")
+    monkeypatch.setattr(dialog, "exec", lambda: TempoOffsetDialog.DialogCode.Rejected)
+    monkeypatch.setattr(
+        "main_window.TempoOffsetDialog",
+        lambda parent, current_offset=0.0, beat_unit_name="quarter": dialog,
+    )
+
+    window._show_tempo_offset_dialog()
+
+    assert window._music_data.playback_tempo_offset == 0
+
+
+def test_tempo_offset_dialog_prefilled_with_the_current_offset(window, qtbot, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+    window._music_data.set_playback_tempo_offset(20)
+
+    dialog = TempoOffsetDialog(window, current_offset=window._music_data.playback_tempo_offset)
+
+    assert dialog.offset_edit.text() == "20"
+
+
+def test_tempo_offset_dialog_rejects_non_numeric_input(window):
+    dialog = TempoOffsetDialog(window)
+    validator = dialog.offset_edit.validator()
+
+    assert validator.validate("abc", 0)[0] == QValidator.State.Invalid
+
+
+def test_f_s_d_shortcuts_fire_from_any_region(window, qtbot, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+    _focus(window.region_1)
+
+    qtbot.keyClick(window, Qt.Key.Key_F)
+    assert window._music_data.playback_tempo_offset == 10
+
+    qtbot.keyClick(window, Qt.Key.Key_S)
+    qtbot.keyClick(window, Qt.Key.Key_S)
+    assert window._music_data.playback_tempo_offset == -10
+
+    qtbot.keyClick(window, Qt.Key.Key_D)
+    assert window._music_data.playback_tempo_offset == 0
+
+
+# --- E5: play/pause/stop (Ref 10) ----------------------------------------
+
+def test_space_starts_playback_from_the_cursor(window, qtbot, null_synth, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+    null_synth.played.clear()
+
+    window.toggle_play_stop()
+
+    assert window.sequencer.is_playing is True
+    assert null_synth.played[0]["midi_notes"] == [60]  # C4, the cursor's starting note
+
+
+def test_space_again_stops_and_reverts_the_cursor(window, qtbot, null_synth, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+    window.toggle_play_stop()
+    window._music_data.active_event_index = 2  # simulate a step having advanced the cursor
+
+    window.toggle_play_stop()
+
+    assert window.sequencer.is_playing is False
+    assert window._music_data.active_event_index == 0
+
+
+def test_space_and_ctrl_space_shortcuts_fire_via_real_keypress_from_any_region(
+    window, qtbot, null_synth, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+    _focus(window.region_1)
+
+    qtbot.keyClick(window, Qt.Key.Key_Space)
+    assert window.sequencer.is_playing is True
+
+    qtbot.keyClick(window, Qt.Key.Key_Space, Qt.KeyboardModifier.ControlModifier)
+    assert window.sequencer.is_paused is True
+
+
+def test_ctrl_space_pauses_and_space_resumes(window, qtbot, null_synth, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+    window.toggle_play_stop()
+
+    window.toggle_pause_resume()
+    assert window.sequencer.is_paused is True
+    assert window.sequencer.is_playing is False
+
+    played_before_resume = len(null_synth.played)
+    window.toggle_play_stop()
+    assert window.sequencer.is_playing is True
+    assert window.sequencer.is_paused is False
+    assert len(null_synth.played) == played_before_resume + 1
+
+
+def test_space_and_ctrl_space_are_no_ops_before_a_score_is_loaded(window, qtbot):
+    window.toggle_play_stop()
+    window.toggle_pause_resume()
+
+    assert window.sequencer is None
+
+
+def test_sequencer_steps_advance_the_cursor_and_regions_over_real_time(
+    window, qtbot, null_synth, minimal_score
+):
+    """Only the wiring is exercised here - the Sequencer's own scheduling
+    math is covered deterministically in tests/audio/test_sequencer.py with
+    a FakeTimer. This one real QTimer is sped up via a very high tempo so
+    the whole 4-note piece finishes in well under a second."""
+    load_and_wait(window, qtbot, minimal_score)
+    window._music_data.tempo_bpm = 60000  # 1 quarter = 1ms
+    null_synth.played.clear()
+
+    window.toggle_play_stop()
+    qtbot.waitUntil(lambda: not window.sequencer.is_playing, timeout=2000)
+
+    assert window._music_data.active_event_index == 3
+    assert [p["midi_notes"] for p in null_synth.played] == [[60], [62], [64], [65]]
+    assert window.status_bar._fields[0].text() == "Measure 1 beat 4"
+
+
+# --- E6: two-bar phrase audition on Enter (Ref 11) -----------------------
+
+def test_audition_phrase_plays_from_beat_1_without_moving_the_cursor(
+    window, qtbot, null_synth, many_measures_score
+):
+    load_and_wait(window, qtbot, many_measures_score)
+    null_synth.played.clear()
+
+    window.audition_phrase()
+
+    assert window.sequencer.is_playing is True
+    assert window._music_data.active_event_index == 0
+    assert null_synth.played[0]["midi_notes"] == [60]  # C, measure 1
+
+
+def test_enter_keypress_with_no_pending_digits_starts_phrase_audition(
+    window, qtbot, null_synth, many_measures_score
+):
+    load_and_wait(window, qtbot, many_measures_score)
+    null_synth.played.clear()
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Return)
+
+    assert window.sequencer.is_playing is True
+    assert null_synth.played[0]["midi_notes"] == [60]
+
+
+def test_phrase_audition_stops_at_the_end_of_the_next_measure(
+    window, qtbot, null_synth, many_measures_score
+):
+    load_and_wait(window, qtbot, many_measures_score)
+    window._music_data.tempo_bpm = 60000  # 1 beat = 1ms
+    null_synth.played.clear()
+
+    window.audition_phrase()
+    qtbot.waitUntil(lambda: not window.sequencer.is_playing, timeout=2000)
+
+    assert [p["midi_notes"] for p in null_synth.played] == [[60], [62]]  # C, D only
+    assert window._music_data.active_event_index == 0, "phrase audition never moves the cursor"
+
+
+def test_a_second_enter_while_a_phrase_is_playing_stops_it(
+    window, qtbot, null_synth, many_measures_score
+):
+    load_and_wait(window, qtbot, many_measures_score)
+    window.audition_phrase()
+    assert window.sequencer.is_playing is True
+
+    window.audition_phrase()
+
+    assert window.sequencer.is_playing is False
+    assert window._music_data.active_event_index == 0
+
+
+def test_phrase_audition_from_the_last_measure_plays_to_the_end_of_the_piece(
+    window, qtbot, null_synth, many_measures_score
+):
+    load_and_wait(window, qtbot, many_measures_score)
+    assert window._music_data.jump_to_measure(12) is True
+    null_synth.played.clear()
+
+    window.audition_phrase()
+
+    assert window.sequencer.is_playing is False, "only one note left - finishes immediately"
+    assert null_synth.played[-1]["midi_notes"] == [79]  # G5, measure 12
+    assert window._music_data.active_event_index == 11, "jump_to_measure moved it, not audition_phrase"
+
+
+# --- E7: chord audition retrigger on Shift+Space (Ref 13) ----------------
+
+def test_shift_space_plays_the_current_chord_with_no_navigation(
+    window, qtbot, null_synth, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+    _focus(window.region_3)
+    null_synth.played.clear()
+
+    qtbot.keyClick(window, Qt.Key.Key_Space, Qt.KeyboardModifier.ShiftModifier)
+
+    assert window._music_data.active_event_index == 0
+    assert null_synth.played[-1]["midi_notes"] == [60]  # C4, the cursor's current note
+
+
+def test_shift_space_pressed_twice_retriggers_rather_than_holding(
+    window, qtbot, null_synth, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+    _focus(window.region_3)
+    null_synth.played.clear()
+
+    qtbot.keyClick(window, Qt.Key.Key_Space, Qt.KeyboardModifier.ShiftModifier)
+    qtbot.keyClick(window, Qt.Key.Key_Space, Qt.KeyboardModifier.ShiftModifier)
+
+    assert len(null_synth.played) == 2
+    assert null_synth.played[0]["midi_notes"] == null_synth.played[1]["midi_notes"] == [60]
+
+
+def test_shift_space_fires_from_any_region(window, qtbot, null_synth, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+    _focus(window.region_1)
+    null_synth.played.clear()
+
+    qtbot.keyClick(window, Qt.Key.Key_Space, Qt.KeyboardModifier.ShiftModifier)
+
+    assert null_synth.played[-1]["midi_notes"] == [60]
+
+
+# --- Reported bugs, live-tested 2026-08-07 --------------------------------
+
+def test_space_at_the_last_active_note_plays_the_boundary_cue_instead_of_playing(
+    window, qtbot, null_synth, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    window._music_data.move_timeline_end()  # last note, F
+    null_synth.played.clear()
+
+    window.toggle_play_stop()
+
+    assert window.sequencer.is_playing is False
+    assert null_synth.last_played["channel"] == window.BOUNDARY_CHANNEL
+
+
+def test_playback_status_field_reflects_playing_paused_and_stopped(
+    window, qtbot, null_synth, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    assert window.status_bar._fields[4].text() == "Playback: Stopped"
+
+    window.toggle_play_stop()
+    assert window.status_bar._fields[4].text() == "Playback: Playing"
+
+    window.toggle_pause_resume()
+    assert window.status_bar._fields[4].text() == "Playback: Paused"
+
+    window.toggle_play_stop()  # Space resumes from a paused state
+    assert window.status_bar._fields[4].text() == "Playback: Playing"
+
+    window.toggle_play_stop()
+    assert window.status_bar._fields[4].text() == "Playback: Stopped"
+
+
+def test_playback_status_field_updates_for_phrase_audition_without_moving_position_fields(
+    window, qtbot, null_synth, many_measures_score
+):
+    load_and_wait(window, qtbot, many_measures_score)
+    position_before = window.status_bar._fields[0].text()
+
+    window.audition_phrase()
+
+    assert window.status_bar._fields[4].text() == "Playback: Playing"
+    assert window.status_bar._fields[0].text() == position_before
+
+    window.audition_phrase()  # re-press stops it
+
+    assert window.status_bar._fields[4].text() == "Playback: Stopped"
+    assert window.status_bar._fields[0].text() == position_before
+
+
+def test_playback_status_field_shows_stopped_when_playback_finishes_naturally(
+    window, qtbot, null_synth, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    window._music_data.tempo_bpm = 60000  # finishes in well under a second
+    window.toggle_play_stop()
+
+    qtbot.waitUntil(lambda: not window.sequencer.is_playing, timeout=2000)
+
+    assert window.status_bar._fields[4].text() == "Playback: Stopped"
+
+
+def test_space_resumes_from_the_paused_position_not_stops(
+    window, qtbot, null_synth, minimal_score
+):
+    """Regression for the reported sequence: Space (play), Ctrl+Space
+    (pause), Space was wrongly treated the same as "stop" and reverted to
+    the original start, requiring a second Space to actually restart
+    playback. Space while paused must resume in place instead - stopping
+    is still available, just not via the first post-pause Space press."""
+    load_and_wait(window, qtbot, minimal_score)
+
+    window.toggle_play_stop()  # play
+    window.toggle_pause_resume()  # pause
+    assert window.sequencer.is_paused is True
+    paused_index = window.sequencer.current_index
+
+    window.toggle_play_stop()  # resumes from the paused position
+    assert window.sequencer.is_playing is True
+    assert window.sequencer.is_paused is False
+    assert window.sequencer.current_index == paused_index

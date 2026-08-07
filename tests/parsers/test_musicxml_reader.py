@@ -39,6 +39,19 @@ def test_tempo_display_reflects_the_scores_own_beat_unit(score_duet):
 
 
 @pytest.mark.slow
+def test_status_bar_tempo_matches_region_1_not_the_internal_quarter_bpm(score_duet):
+    """E1/E2 fix - reported bug, live-tested: the status bar's "Playback
+    tempo" field showed the raw quarter-note-equivalent value (48) instead
+    of the score's own beat unit (96), inconsistent with Region 1's tempo
+    display right above it (A9)."""
+    data = MusicXMLReader(score_duet).load()
+
+    assert data.get_status_bar_fields()[3] == "Playback tempo: 96 eighth notes per minute (score default)"
+    assert data.score_tempo_display_bpm() == 96
+    assert data.tempo_beat_unit_name == "eighth"
+
+
+@pytest.mark.slow
 def test_guitar_notes_play_the_guitar_program_not_the_piano_program(score_duet):
     """A8, Ref 8: reported bug - Chessel Duet's guitar (P2) used to play as
     piano because playback always read parts_info[0]'s program."""

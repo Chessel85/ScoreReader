@@ -6,6 +6,7 @@ from models.event_slice import EventSlice
 from models.key_signatures import FIFTHS_MAP
 from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
+from models.tempo_change import TempoChange
 from parsers.timeline_builder import TimelineBuilder
 
 
@@ -16,6 +17,36 @@ class MusicData:
     parts_info: List[PartStructureInfo] = field(default_factory=list)
     file_path: str = ""
     tempo_bpm: int = 120
+
+    # A9: tempo_bpm is always quarter-note BPM (music21's getQuarterBPM()),
+    # for playback timing. tempo_beat_unit_quarter_length/name are the ratio
+    # and label needed to convert that back to the score's OWN beat unit -
+    # e.g. a score marked eighth=96 has tempo_bpm=48,
+    # tempo_beat_unit_quarter_length=0.5, tempo_beat_unit_name="eighth", so
+    # 48 / 0.5 = 96, matching what Region 1 already displays (A9's
+    # tempo_display string) instead of the internal 48. Needed live (not
+    # just once for Region 1's summary) by E1-E3's tempo offset/F/S/D/dialog
+    # - reported bug, live-tested: the status bar and Tempo Offset dialog
+    # were showing/accepting the raw quarter-BPM number, not the score's own
+    # displayed tempo.
+    tempo_beat_unit_quarter_length: float = 1.0
+    tempo_beat_unit_name: str = "quarter"
+
+    # Ref 12: playback tempo is a temporary offset from the score's own
+    # tempo, never a mutation of tempo_bpm itself (AC1) - Region 1 keeps
+    # showing the score-defined tempo unchanged regardless of this offset.
+    # Stored in the score's own DISPLAY units (see above), not quarter-note
+    # terms, so F/S's "+10" means +10 in what the user actually sees/reads.
+    playback_tempo_offset: float = 0.0
+
+    # Ref 12 "multi-tempo scope": every tempo marking after the first,
+    # sorted by position - populated from TimelineBuilder as a side effect
+    # of build() (see __post_init__). tempo_bpm/tempo_beat_unit_* above
+    # remain the score's opening tempo (what Region 1's one-off summary
+    # shows); this list is what makes the status bar/dialog/Sequencer look
+    # up the tempo actually in effect at a given position instead of always
+    # that opening one.
+    tempo_changes: List[TempoChange] = field(default_factory=list)
 
     # Pre-parsed ElementTree root from MusicXMLReader, if it already parsed
     # the file - lets TimelineBuilder skip a second parse of the same file
@@ -35,9 +66,9 @@ class MusicData:
 
     def __post_init__(self):
         if self.file_path:
-            self.timeline_slices = TimelineBuilder(
-                self.file_path, self.parts_info, root=self.xml_root
-            ).build()
+            builder = TimelineBuilder(self.file_path, self.parts_info, root=self.xml_root)
+            self.timeline_slices = builder.build()
+            self.tempo_changes = builder.tempo_changes
             self.active_event_index = 0
         # measure_numbers() is safe to cache forever - timeline_slices is
         # never reassigned after this point. The other two are keyed off
@@ -290,6 +321,15 @@ class MusicData:
         self.active_event_index = bounds[0]
         return True
 
+    def last_sounding_event_index(self) -> Optional[int]:
+        """Index of the last visible event with a real sounding note, or
+        None if nothing currently sounds - the true end of playable content
+        (C5), excluding trailing rest-only padding. Used by phrase audition
+        (E6) to bound how far a run can play, the same way Home/End (C3)
+        already bound navigation."""
+        bounds = self._sounding_bounds()
+        return bounds[1] if bounds else None
+
     def move_timeline_end(self) -> bool:
         """End (Ref 5): jump to the last event with a real sounding note -
         e.g. a final bar padded out with rests in every voice does not push
@@ -324,15 +364,23 @@ class MusicData:
         self.active_voice_filter = set(active_tuples)
         self._invalidate_visibility_cache()
 
-    def _visible_notes(self) -> List[NoteData]:
-        """Notes at the current slice that pass the Region 2 filter (Ref 7).
+    def _visible_notes(self, index: Optional[int] = None) -> List[NoteData]:
+        """Notes at the given slice that pass the Region 2 filter (Ref 7),
+        or at the current cursor position when index is None (the default,
+        used by every UI-facing accessor).
 
         All of get_region_3_data/get_region_4_data_for_indices/
         get_midi_notes_for_indices/get_playback_events_for_indices read
         through this so a row index always means the same note everywhere -
-        Region 3 only ever displays what this returns.
+        Region 3 only ever displays what this returns. The explicit-index
+        form is for the Sequencer (E4), which plays slices by absolute
+        timeline index without disturbing active_event_index/Region 3's
+        selection (so phrase audition, E6, can leave the cursor untouched).
         """
-        current = self.get_current_slice()
+        if index is None:
+            current = self.get_current_slice()
+        else:
+            current = self.timeline_slices[index] if 0 <= index < len(self.timeline_slices) else None
         if not current or not current.notes:
             return []
         if self.active_voice_filter is None:
@@ -395,6 +443,80 @@ class MusicData:
             if 0 <= i < len(notes) and notes[i].midi_pitch is not None
         ]
 
+    # Ref 12 AC2: hard playback tempo boundaries, expressed in the score's
+    # own DISPLAY units (tempo_beat_unit_name) - what the user actually
+    # reads and types, not the internal quarter-note equivalent.
+    MIN_TEMPO_BPM = 30
+    MAX_TEMPO_BPM = 300
+
+    def _tempo_change_at(self, index: Optional[int] = None) -> Tuple[int, float, str]:
+        """(tempo_bpm, beat_unit_quarter_length, beat_unit_name) actually in
+        effect at the given timeline index, or the cursor (active_event_index)
+        when index is None - the same default-to-cursor convention
+        _visible_notes uses. Falls back to the score's opening tempo
+        (tempo_bpm/tempo_beat_unit_*) when tempo_changes is empty or the
+        position is before the first marking (Ref 12 "multi-tempo scope").
+        tempo_changes is kept sorted by quarters_from_start (TimelineBuilder's
+        job), so the last entry not past the position wins."""
+        idx = self.active_event_index if index is None else index
+        quarters = self.timeline_slices[idx].quarters_from_start if 0 <= idx < len(self.timeline_slices) else 0.0
+
+        result = (self.tempo_bpm, self.tempo_beat_unit_quarter_length, self.tempo_beat_unit_name)
+        for change in self.tempo_changes:
+            if change.quarters_from_start > quarters:
+                break
+            result = (change.tempo_bpm, change.beat_unit_quarter_length, change.beat_unit_name)
+        return result
+
+    def score_tempo_display_bpm(self, index: Optional[int] = None) -> float:
+        """The tempo actually in effect at `index` (or the cursor), in the
+        beat unit it was authored in (A9) - e.g. 96 for a passage marked
+        eighth=96, not the quarter-note-equivalent BPM used internally for
+        playback timing."""
+        bpm, beat_unit_ql, _ = self._tempo_change_at(index)
+        return bpm / beat_unit_ql
+
+    def effective_tempo_display_bpm(self, index: Optional[int] = None) -> float:
+        """score_tempo_display_bpm() plus the current offset - what F/S/D,
+        the status bar and the Tempo Offset dialog show and read (Ref 12),
+        in the same units Region 1 already displays the score's tempo in
+        (A9). playback_tempo_offset is stored in these display units
+        directly (not quarter-note terms) precisely so this is a plain sum."""
+        return self.score_tempo_display_bpm(index) + self.playback_tempo_offset
+
+    def effective_tempo_bpm(self, index: Optional[int] = None) -> float:
+        """Quarter-note BPM for real playback timing (Sequencer,
+        get_duration_ms_for_index) - converts the display-unit offset back
+        to quarter-note terms via whichever beat unit is in effect at
+        `index`."""
+        bpm, beat_unit_ql, _ = self._tempo_change_at(index)
+        display = bpm / beat_unit_ql + self.playback_tempo_offset
+        return display * beat_unit_ql
+
+    def tempo_beat_unit_name_at(self, index: Optional[int] = None) -> str:
+        """The beat unit label (e.g. "eighth") in effect at `index` (or the
+        cursor) - lets the status bar show the right unit even where a
+        mid-score tempo marking changes beat unit, not just the number."""
+        _, _, name = self._tempo_change_at(index)
+        return name
+
+    def set_playback_tempo_offset(self, offset: float) -> None:
+        """Clamp offset so effective_tempo_display_bpm() always stays within
+        [MIN_TEMPO_BPM, MAX_TEMPO_BPM] (Ref 12 AC2) - the boundary the user
+        actually reads/types, not tempo_bpm's internal quarter-note
+        equivalent - without ever touching tempo_bpm itself (AC1). Clamped
+        against whichever tempo is in effect at the cursor right now (Ref 12
+        "multi-tempo scope": F/S/D and this dialog add/subtract from
+        "whatever the current tempo is", which can change mid-score)."""
+        base = self.score_tempo_display_bpm()
+        min_offset = self.MIN_TEMPO_BPM - base
+        max_offset = self.MAX_TEMPO_BPM - base
+        self.playback_tempo_offset = max(min_offset, min(max_offset, offset))
+
+    def reset_playback_tempo(self) -> None:
+        """Ref 12 AC4: reset control returns to the score's own tempo."""
+        self.playback_tempo_offset = 0.0
+
     # MIDI channel 10 (0-indexed 9) is reserved for percussion and must be
     # skipped when allocating one channel per part (D-5).
     PERCUSSION_CHANNEL = 9
@@ -428,15 +550,19 @@ class MusicData:
         return "Standard stave"
 
     def get_playback_events_for_indices(
-        self, selected_indices: List[int]
+        self, selected_indices: List[int], index: Optional[int] = None
     ) -> List[Tuple[int, int, List[int]]]:
         """Group selected notes by part for simultaneous multi-instrument playback.
 
         Each group is (channel, zero-indexed GM program, midi pitches) so a
         chord spanning two parts sounds both instruments together instead
         of collapsing onto parts_info[0]'s instrument (Ref 8, Ref 9 AC2).
+
+        index: an explicit timeline slice to read from instead of the
+        current cursor (see _visible_notes) - used by
+        get_playback_events_at_index (E4/Sequencer).
         """
-        notes = self._visible_notes()
+        notes = self._visible_notes(index)
         if not notes:
             return []
 
@@ -461,20 +587,57 @@ class MusicData:
         return events
 
     def get_current_duration_ms(self) -> int:
-        current = self.get_current_slice()
-        if not current:
+        return self.get_duration_ms_for_index(self.active_event_index)
+
+    def get_duration_ms_for_index(self, index: int) -> int:
+        """Like get_current_duration_ms, but for an arbitrary timeline index
+        rather than the cursor - used by the Sequencer (E4)."""
+        if not (0 <= index < len(self.timeline_slices)):
             return 500
-        ms = (current.quarter_length * 60000.0) / float(self.tempo_bpm)
+        quarter_length = self.timeline_slices[index].quarter_length
+        ms = (quarter_length * 60000.0) / float(self.effective_tempo_bpm(index))
         return max(100, int(ms))
 
+    def get_playback_events_at_index(self, index: int) -> List[Tuple[int, int, List[int]]]:
+        """All visible notes at timeline index `index`, grouped by part
+        (Ref 8) - the Sequencer (E4) equivalent of
+        get_playback_events_for_indices for Region 3's selection, playing a
+        slice by absolute index independent of active_event_index."""
+        notes = self._visible_notes(index)
+        if not notes:
+            return []
+        return self.get_playback_events_for_indices(list(range(len(notes))), index=index)
+
+    def next_visible_event_index(
+        self, index: int, end_index: Optional[int] = None
+    ) -> Optional[int]:
+        """Next timeline index after `index` with at least one note passing
+        the active Region 2 filter (Ref 7) - rests included, unlike
+        _sounding_bounds()'s navigation range, since real playback (E4)
+        should advance through and take up the time of a rest, not skip
+        over it. Bounded by end_index (inclusive) if given, else the whole
+        timeline. None if there is no further visible event - the Sequencer
+        treats that as the end of playback."""
+        limit = end_index if end_index is not None else len(self.timeline_slices) - 1
+        idx = index
+        while idx < limit:
+            idx += 1
+            if self._slice_has_visible_notes(idx):
+                return idx
+        return None
+
     def get_status_bar_fields(self) -> List[str]:
-        """C6: three fields in Tab order for the status bar - measure/beat
-        position, key signature, and time signature, all read from the
-        *current* slice rather than the score's opening values, since either
-        can change mid-score (D-11) unlike Region 1's one-off summary."""
+        """C6/E2: four fields in Tab order for the status bar - measure/beat
+        position, key signature, time signature and playback tempo. All four
+        read from the *current* slice/position rather than the score's
+        opening values, since any of them can change mid-score (D-11, Ref 12
+        "multi-tempo scope") unlike Region 1's one-off summary. The tempo
+        field is the one place a screen-reader user can check the current
+        playback tempo without a forced announcement (Phase D deliberately
+        skipped for now)."""
         current = self.get_current_slice()
         if current is None:
-            return ["Measure - beat -", "Key: -", "Time: -"]
+            return ["Measure - beat -", "Key: -", "Time: -", self._tempo_status_field()]
 
         beat = current.beat_position
         beat_str = str(int(beat)) if float(beat).is_integer() else str(beat)
@@ -485,4 +648,18 @@ class MusicData:
             f"Measure {current.measure} beat {beat_str}",
             f"Key: {key_name}",
             f"Time: {ts_num}/{ts_den}",
+            self._tempo_status_field(),
         ]
+
+    def _tempo_status_field(self) -> str:
+        """Reported bug, live-tested: this used to show effective_tempo_bpm()
+        (the internal quarter-note-equivalent value, e.g. 48 for a score
+        marked eighth=96) instead of the score's own display units (96) -
+        the same units Region 1's tempo credit already uses (A9). Now reads
+        through effective_tempo_display_bpm() so the two stay consistent."""
+        effective = self.effective_tempo_display_bpm()
+        effective_str = str(int(effective)) if float(effective).is_integer() else str(round(effective, 2))
+        unit = f"{self.tempo_beat_unit_name_at()} notes per minute"
+        if self.playback_tempo_offset == 0.0:
+            return f"Playback tempo: {effective_str} {unit} (score default)"
+        return f"Playback tempo: {effective_str} {unit}"

@@ -119,6 +119,79 @@ def test_divisions_change_mid_score_is_tracked_per_measure(timeline, ts_change_s
     assert d5_note.ts_duration == 1.0
 
 
+def test_quarters_from_start_accumulates_through_time_signature_changes(timeline, ts_change_score):
+    """E4: real elapsed-time offset for the Sequencer, independent of
+    beat_position's ts-relative display units (Ref 18). Measure 1 is 4/4
+    (4.0 quarters long), measure 2 is 6/8 (3.0 quarters long) - measure 3
+    must start at 4.0 + 3.0 = 7.0, not 4.0 + 4.0 as it would if measure 2's
+    own (shorter) length were ignored."""
+    md = timeline(ts_change_score)
+
+    m1_first = next(s for s in md.timeline_slices if s.measure == 1)
+    m2_first = next(s for s in md.timeline_slices if s.measure == 2)
+    m3_first = next(s for s in md.timeline_slices if s.measure == 3)
+
+    assert m1_first.quarters_from_start == 0.0
+    assert m2_first.quarters_from_start == 4.0
+    assert m3_first.quarters_from_start == 7.0
+
+
+def test_every_tempo_marking_is_captured_not_just_the_first(timeline, tempo_change_score):
+    """Ref 12 "multi-tempo scope": TimelineBuilder walks the whole file for
+    <sound tempo=.../> markings, not just the first one MusicXMLReader's own
+    music21-based _extract_tempo looks at."""
+    md = timeline(tempo_change_score)
+
+    assert [c.tempo_bpm for c in md.tempo_changes] == [100, 200]
+    assert [c.quarters_from_start for c in md.tempo_changes] == [0.0, 4.0]
+    assert [c.beat_unit_name for c in md.tempo_changes] == ["quarter", "quarter"]
+
+
+def test_effective_tempo_bpm_follows_the_marking_in_effect_at_each_index(
+    timeline, tempo_change_score
+):
+    """The tempo used for playback timing must switch exactly at the
+    measure the new marking belongs to, not apply retroactively or lag."""
+    md = timeline(tempo_change_score)
+
+    m1_last_index = next(i for i, s in enumerate(md.timeline_slices) if s.measure == 1 and s.notes[0].step_name == "F")
+    m2_first_index = next(i for i, s in enumerate(md.timeline_slices) if s.measure == 2 and s.notes[0].step_name == "G")
+
+    assert md.effective_tempo_bpm(m1_last_index) == 100
+    assert md.effective_tempo_bpm(m2_first_index) == 200
+
+
+def test_playback_tempo_offset_applies_on_top_of_whichever_tempo_is_current(
+    timeline, tempo_change_score
+):
+    """F/S (Ref 12 AC3) add to "whatever the current tempo is" per-position,
+    not always the score's opening tempo."""
+    md = timeline(tempo_change_score)
+    md.active_event_index = 0  # measure 1, tempo 100
+    md.set_playback_tempo_offset(10)
+
+    assert md.effective_tempo_bpm(0) == 110
+
+    m2_first_index = next(i for i, s in enumerate(md.timeline_slices) if s.measure == 2)
+    assert md.effective_tempo_bpm(m2_first_index) == 210
+
+
+def test_quarters_from_start_is_continuous_across_the_pickup_boundary(timeline, score_duet):
+    """E4: the pickup bar's real duration is however much of it is actually
+    filled (pickup_filled_quarters), not a full bar - measure 1 must start
+    exactly where the pickup's last event ends, with no gap or overlap."""
+    md = timeline(score_duet)
+
+    pickup_slices = [s for s in md.timeline_slices if s.measure == 0]
+    measure_1_first = next(s for s in md.timeline_slices if s.measure == 1)
+
+    last_pickup_slice = pickup_slices[-1]
+    assert (
+        last_pickup_slice.quarters_from_start + last_pickup_slice.quarter_length
+        == measure_1_first.quarters_from_start
+    )
+
+
 def test_explicit_rest_becomes_its_own_timeline_event(timeline, rest_score):
     """Ref 16 AC2: an explicit <rest/> is a navigable event, not skipped."""
     md = timeline(rest_score)

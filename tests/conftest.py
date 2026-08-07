@@ -68,6 +68,16 @@ def ts_change_score() -> str:
 
 
 @pytest.fixture
+def tempo_change_score() -> str:
+    """One part, two complete 4/4 bars: quarter=100 (M1) -> quarter=200 (M2).
+
+    Proves every tempo marking is tracked as the score plays through it,
+    not just the first (Ref 12 "multi-tempo scope").
+    """
+    return _require(FIXTURES_DIR / "tempo_change.musicxml")
+
+
+@pytest.fixture
 def chord_score() -> str:
     """One part, one complete 4/4 bar with a two-note chord on the second beat."""
     return _require(FIXTURES_DIR / "chord.musicxml")

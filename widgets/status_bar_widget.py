@@ -52,29 +52,37 @@ class _StatusField(QLabel):
 
 
 class StatusBarWidget(QStatusBar):
-    """C6/C7: measure/beat position, key signature and time signature, each
-    its own focusable field. Tab/Shift+Tab cycle only among these three
-    fields and wrap, rather than leaving the pane the way every region
-    widget's Tab does - F6/Shift+F6 (C7) have sole ownership of leaving the
-    status bar.
+    """C6/C7/E2/E5: measure/beat position, key signature, time signature,
+    playback tempo and playback status (Playing/Paused/Stopped), each its
+    own focusable field. Tab/Shift+Tab cycle only among these five fields
+    and wrap, rather than leaving the pane the way every region widget's
+    Tab does - F6/Shift+F6 (C7) have sole ownership of leaving the status
+    bar.
 
     Using the real QStatusBar (via QMainWindow.setStatusBar) is what makes
     NVDA's "report status bar" command (NVDA+End) work through Qt's native
     accessibility role - no extra plumbing needed here for that.
     """
 
-    FIELD_COUNT = 3
+    FIELD_COUNT = 5
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._fields = [_StatusField(self, i, self) for i in range(self.FIELD_COUNT)]
         for field in self._fields:
             self.addWidget(field)
-        self.set_fields(["Measure - beat -", "Key: -", "Time: -"])
+        self.set_fields([
+            "Measure - beat -", "Key: -", "Time: -", "Playback tempo: -", "Playback: Stopped",
+        ])
 
     def set_fields(self, texts: List[str]) -> None:
         for field, text in zip(self._fields, texts):
             field.setText(text)
+
+    def set_field(self, index: int, text: str) -> None:
+        """Updates a single field without touching the others - used when
+        only playback status changes (E6 phrase audition, pause/resume)."""
+        self._fields[index].setText(text)
 
     def first_field(self) -> _StatusField:
         return self._fields[0]

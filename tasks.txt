@@ -793,11 +793,65 @@ PHASE C - NAVIGATION AND WINDOW CHROME                    (8 tasks)
              f6_shortcut/select_all_shortcut were already stored.
           Also: introduced version.py (__version__ = "0.1.1") and put it in
           the About dialog - see D-13. Full suite: 107 passed.
+        > FOLLOW-UP 2026-08-07 (live-tested refinements, reported by the
+          user): five more small changes.
+          1. GotoMeasureDialog.measure_edit label simplified from "Measure
+             number (whole numbers only, no beat position):" to just
+             "Measure number:" - too verbose for daily use now the decimal
+             rejection itself is well established.
+          2. GotoMeasureDialog focus fix: setFocus() was called in __init__,
+             before the dialog's native window existed, so Qt accepted the
+             focus internally but no accessibility focus-changed event ever
+             reached NVDA - it kept announcing whatever had focus before
+             Ctrl+G, only catching up once Tab was pressed. Deferred to
+             showEvent via QTimer.singleShot(0, ...), so the native window
+             (and its accessible object) exist before the focus change fires.
+          3. Reverted item 3 of the 2026-08-06 FOLLOW-UP above: "Move to
+             First/Last Note"
+             firing from any region (via the WindowShortcut-context QAction)
+             turned out to be exactly the confusing, non-standard-Windows
+             behaviour the RESOLVED "global navigation keystrokes" Discussion
+             Point (PDD) had already ruled out - discovered by the user
+             actually using it, not by re-reading the earlier decision.
+             first_measure_action/last_measure_action are now disabled
+             (greyed out) unless Region 3 already has focus, tracked via the
+             existing focusChanged hookup (_update_navigation_actions_enabled,
+             called from _on_focus_changed). This also brings Ctrl+G's menu
+             siblings into compliance with Ref 4 AC1, which they never
+             actually satisfied before now.
+          4. New Navigation > Move to Notes (N), always enabled: sets focus
+             to Region 3 without moving the timeline. This is the direct
+             answer to the "too much Tabbing back" concern the original
+             Discussion Point flagged as a reason to revisit - solved by a
+             dedicated jump-to-Note-region command instead of making
+             navigation itself global again.
+          5. AboutDialog text split into three separate QLabel widgets (name/
+             version/description), each given Qt.FocusPolicy.StrongFocus, so
+             NVDA users can Tab through the About text piece by piece instead
+             of hearing one large label read all at once - same pattern as
+             StatusBarWidget's _StatusField.
+          PDD updated to match: Key Strokes table row for Ctrl+G trimmed back
+          to a bare keystroke->action mapping (the prefill detail lives here,
+          not there); Home/End rows reworded now the menu items no longer
+          act from elsewhere; new N row added. Discussion Points' "global
+          navigation keystrokes" entry annotated REVISITED 2026-08-07 with
+          the outcome above. version.py bumped to 0.1.3. Full suite: 117
+          passed.
 
 
 ###
 PHASE D - SCREEN READER ANNOUNCEMENTS                     (4 tasks)
 ###
+SKIPPED FOR NOW 2026-08-07: default NVDA behaviour (reading whatever gains
+focus) already covers the app adequately - forcing announcements isn't worth
+building speculatively. Revisit D1-D4 if a later feature (e.g. phase E
+playback) turns out to need a forced/interrupting announcement that focus
+changes alone can't provide. Phase E's design below deliberately avoids
+depending on D1-D4 - tempo feedback lands as a 4th status bar field (E2)
+rather than a forced announcement, and E4-E7 already update the regions via
+the existing _update_timeline_views path rather than inventing a new
+announcement channel.
+
 [ ] D1  Spike: how to force an NVDA / VoiceOver announcement from PySide6.
         Decide the mechanism and record it as D-3 below - Ref 1 AC4
 [ ] D2  Announcement service module; announce region name on region change
@@ -810,21 +864,446 @@ PHASE D - SCREEN READER ANNOUNCEMENTS                     (4 tasks)
 ###
 PHASE E - PLAYBACK ENGINE                                 (10 tasks)
 ###
-[ ] E1  Separate playback tempo from score tempo; enforce 30-300 bpm - Ref 12 AC1/AC2
-[ ] E2  Tempo up/down in 10 bpm steps and a reset control - Ref 12 AC3/AC4
-[ ] E3  Tempo dialog accepting decimal values - Ref 12 AC5
-[ ] E4  Sequencer: schedule events over time from a start index, with
+PLANNED 2026-08-07 (E1-E7 detailed below; E8-E10 deliberately left as
+one-liners - metronome is being left for another session). Three scope
+decisions made while planning, all confirmed with the user rather than
+assumed:
+  - F/S/D and the Space/Ctrl+Space/Shift+Space playback keys are GLOBAL
+    (WindowShortcut context, like the existing Ctrl+M/F6), not Note-region-
+    scoped like arrow-key timeline navigation. Rationale: D-2 scoped timeline
+    navigation to the Note region because those keys mean something else in
+    other regions (e.g. Up/Down moving table rows); tempo/transport controls
+    have no such collision and are playback-wide settings, not per-row
+    navigation.
+  - Tempo feedback without Phase D: a 4th status bar field ("Playback tempo:
+    X bpm"), not a forced announcement. Reachable via F6/Tab like the
+    existing three (C6) - something to read on demand, consistent with the
+    Phase D skip above.
+  - Multi-tempo scope: MusicData.tempo_bpm stays a single score-wide value
+    (today's reality - no sample score has more than one tempo mark). The
+    30-300 hard bounds (Ref 12 AC2) are enforced by clamping the OFFSET to
+    [30 - tempo_bpm, 300 - tempo_bpm] once at load, not by tracking tempo
+    per-position through TimelineBuilder the way time signature/key are
+    (A6/C6/D-11). Revisit as its own task if/when a real multi-tempo score
+    shows up, same pattern A6/C6 themselves followed.
+    > REVISITED 2026-08-07: the user generated "Slow then quick" (files/
+      Slow then quick/score.xml, 5 measures, tempo 100 -> 80/140 -> 60) and
+      reported playback ignored every marking after the first. Per-position
+      tempo tracking built after all - see E1's second FIX note below.
+
+[x] E1  Separate playback tempo from score tempo; enforce 30-300 bpm - Ref 12 AC1/AC2
+        > models/music_data.py: new class constants MIN_TEMPO_BPM=30,
+          MAX_TEMPO_BPM=300 (same pattern as PERCUSSION_CHANNEL/
+          MAX_MIDI_CHANNELS). New field playback_tempo_offset: float = 0.0 -
+          tempo_bpm itself is never written to by this task (AC1: "playback
+          tempo changes do not change tempo definitions within the piece" -
+          Region 1's displayed tempo stays exactly what A9 already built).
+        > effective_tempo_bpm() -> float: tempo_bpm + playback_tempo_offset,
+          already guaranteed in-range by the clamp below so no reclamping
+          needed at read time.
+        > set_playback_tempo_offset(offset: float): clamps offset to
+          [MIN_TEMPO_BPM - tempo_bpm, MAX_TEMPO_BPM - tempo_bpm] before
+          storing - this is the one guard point; because tempo_bpm is a
+          single fixed value (see the multi-tempo scope decision above), one
+          clamp at write time is sufficient, no per-read reclamping.
+        > reset_playback_tempo(): sets the offset back to 0.0 (Ref 12 AC4 -
+          D key wires to this in E2).
+        > get_current_duration_ms() (line ~467) switches from self.tempo_bpm
+          to self.effective_tempo_bpm() - the one existing call site where
+          tempo becomes real playback timing today. This is also what makes
+          Shift+Space chord audition (E7) automatically respect the offset
+          with no separate work in E7.
+        > TESTS: tests/models/test_music_data.py - offset clamps at both
+          hard boundaries (e.g. asking for +500 on a 120bpm score clamps to
+          +180, not 620); reset returns effective_tempo_bpm to tempo_bpm;
+          get_current_duration_ms reflects an active offset; tempo_bpm field
+          itself never changes regardless of offset.
+        > DONE 2026-08-07. Built exactly as planned, no deviations.
+        > FIX 2026-08-07 (live-tested bug, reported by the user against
+          Chessel Duet, eighth=96): the plan above clamped and computed
+          everything in tempo_bpm's own units (quarter-note BPM, e.g. 48)
+          without accounting for A9's separate score-display units (e.g. 96
+          eighth-notes-per-minute) - so raising the offset by "10" via F
+          silently meant 10 quarter-BPM (20 in the score's own displayed
+          units), and the hard 30-300 boundary applied to the quarter-BPM
+          number instead of what the user actually reads/types. New
+          MusicData fields tempo_beat_unit_quarter_length/tempo_beat_unit_name
+          (populated by parsers/musicXML_reader.py's _extract_tempo, which
+          already computed this ratio for A9's display string but never
+          exposed it numerically). playback_tempo_offset now lives in the
+          score's own display units, not quarter-note terms;
+          effective_tempo_bpm() (quarter-note BPM, unchanged contract, used
+          by get_duration_ms_for_index/Sequencer) converts the offset back
+          via the ratio; new score_tempo_display_bpm()/
+          effective_tempo_display_bpm() are what E2/E3 now read/write. For
+          every fixture without a real metronome mark (ratio defaults to
+          1.0/"quarter") this is numerically a no-op - only scores with a
+          non-quarter beat unit were ever affected. New regression tests:
+          test_score_tempo_display_bpm_converts_out_of_the_internal_quarter_bpm,
+          test_playback_tempo_offset_is_in_display_units_not_quarter_units,
+          test_playback_tempo_offset_clamp_bounds_use_display_units
+          (tests/models/test_music_data.py), plus
+          test_status_bar_tempo_matches_region_1_not_the_internal_quarter_bpm
+          on the real score_duet fixture
+          (tests/parsers/test_musicxml_reader.py).
+        > FIX 2026-08-07 (second round, live-tested against a user-generated
+          score with real mid-score tempo changes - see the Multi-tempo
+          scope REVISITED note above): TimelineBuilder now walks every
+          <direction><sound tempo=.../>+<metronome> marking in the file, not
+          just the first (MusicXMLReader._extract_tempo's job, unchanged) -
+          new models/tempo_change.py (TempoChange: quarters_from_start,
+          tempo_bpm, beat_unit_quarter_length, beat_unit_name,
+          display_number) and models/duration_units.py (beat-unit-name <->
+          quarter-length ratio, shared with MusicXMLReader._beat_unit_name
+          which now delegates to it instead of keeping its own copy of the
+          DURATION_TYPE_NAMES/DOTS_PREFIX dicts). MusicXML's <sound
+          tempo="X"> is always quarter-notes-per-minute regardless of the
+          marking's own beat unit, so no conversion is needed there - only
+          the beat-unit label needs translating, from <beat-unit>/
+          <beat-unit-dot> elements.
+          MusicData.tempo_changes (populated from TimelineBuilder.build() as
+          a side effect, so the fast ElementTree-only path timeline tests
+          use gets it too, no music21 needed) is a sorted list callers query
+          via the new _tempo_change_at(index). score_tempo_display_bpm(),
+          effective_tempo_display_bpm() and effective_tempo_bpm() all gained
+          an optional `index` parameter (default: the cursor, same
+          convention _visible_notes() already uses) so each reads whichever
+          tempo is actually in effect at that position; new
+          tempo_beat_unit_name_at(index) for the matching label.
+          set_playback_tempo_offset() clamps against the CURRENT position's
+          tempo, not the score's opening one - matches the original E1/E2
+          design intent ("F/S add to whatever the current tempo is, since it
+          can change throughout a score"), which was already the documented
+          plan but had no per-position tempo to actually read until now.
+          get_duration_ms_for_index() and Sequencer._delay_ms_to() both pass
+          the relevant index explicitly rather than relying on the cursor
+          default - _delay_ms_to in particular uses the CURRENT step's own
+          tempo (not the next step's) since a marking takes effect starting
+          at its own position, not before it. New fixture
+          tests/fixtures/tempo_change.musicxml (quarter=100 M1 ->
+          quarter=200 M2) backs new tests in
+          tests/models/test_timeline_characterisation.py,
+          tests/audio/test_sequencer.py (delay actually changes exactly at
+          the boundary, using the old tempo for the approach and the new
+          one from the marked point onward).
+
+[x] E2  Tempo up/down in 10 bpm steps and a reset control - Ref 12 AC3/AC4
+        > New MainWindow methods tempo_faster()/tempo_slower()/tempo_reset(),
+          each calling the matching MusicData method then _update_status_bar()
+          only - no timeline movement, no re-audition (these change how fast
+          things play, not what's currently selected).
+        > Three new global QShortcut objects on MainWindow (Key_F, Key_S,
+          Key_D; WindowShortcut context per the scope decision above), stored
+          as self.tempo_faster_shortcut etc. (C8's lesson: QAction/QShortcut
+          objects must be kept as attributes, not locals, or PySide's Python
+          wrapper gets garbage-collected out from under the live C++ object).
+        > Live-check for key collisions before committing: F/S/D must not
+          already be claimed by an existing shortcut or menu mnemonic
+          (Alt+letter mnemonics use a different modifier so should be clear,
+          but confirm by running the app, not by inspection alone).
+        > widgets/status_bar_widget.py: StatusBarWidget grows from 3 fields to
+          4 - _StatusField Tab/Backtab index math (C6) and any hardcoded field
+          count in tests both need updating for the new wrap-around.
+        > models/music_data.py: get_status_bar_fields() appends a 4th string -
+          "Playback tempo: {effective} bpm" when the offset is non-zero, else
+          "Playback tempo: {tempo_bpm} bpm (score default)" so it's obvious
+          when no offset is applied.
+        > PDD Key Strokes table gains F/S/D rows once built and verified live.
+        > TESTS: tests/test_main_window.py (F/S/D update MusicData's offset
+          and the status bar's 4th field, D resets to score default);
+          tests/widgets/test_status_bar_widget.py (4-field Tab wrap).
+        > DONE 2026-08-07. Built exactly as planned. PDD Key Strokes table
+          updated with the F/S/D rows. "Verified live" only covers the
+          automated suite (including a real QShortcut activation test via a
+          shown, offscreen window, same technique C7/C8 used for F6/Ctrl+G) -
+          this has not yet been exercised by the user in the real app.
+        > FIX 2026-08-07 (live-tested bug, reported by the user): the status
+          field showed effective_tempo_bpm() (raw quarter-note BPM, e.g. 48)
+          instead of the score's own display units (96) - see E1's FIX note,
+          same root cause. _tempo_status_field() now reads
+          effective_tempo_display_bpm() and includes the beat unit name in
+          the text, e.g. "Playback tempo: 96 eighth notes per minute", not
+          a bare "48 bpm".
+        > FOLLOW-UP 2026-08-07 (requested by the user): a 5th status bar
+          field, "Playback: Stopped/Playing/Paused" (Ref 10) - not part of
+          the original E2 plan, added after live testing showed no way to
+          check playback state without watching/listening for it directly.
+          StatusBarWidget.FIELD_COUNT is now 5; new set_field(index, text)
+          for updating just this one field without disturbing the other
+          four (needed because phrase audition, E6, and pause/resume must
+          NOT touch the position fields the way a full status bar refresh
+          would - the user specifically praised position fields staying put
+          during audition). MainWindow._playback_status_text()/
+          _update_playback_status_field(), wired into toggle_play_stop,
+          toggle_pause_resume, _stop_sequencer, audition_phrase, and a new
+          Sequencer.finished connection (_on_sequencer_finished) so the
+          field also catches a run ending naturally, not just an explicit
+          stop.
+
+[x] E3  Tempo dialog accepting decimal values - Ref 12 AC5
+        > New widgets/tempo_offset_dialog.py: TempoOffsetDialog(QDialog),
+          same shape as GotoMeasureDialog (C8) - label + QDoubleValidator-
+          backed QLineEdit + OK/Cancel. This is a TEMPO OFFSET dialog, not an
+          absolute-tempo dialog, per the user's own reasoning: the score's
+          tempo is the default and F/S/D/this dialog all adjust an offset
+          from it, since a score's own tempo can vary by position (future
+          multi-tempo work) and an absolute-value dialog would fight that.
+          Pre-filled with the current offset, decimal point allowed (unlike
+          GotoMeasureDialog's QIntValidator).
+        > Menu placement: Options menu (its first entry - Options doesn't
+          exist yet, C8 deferred it to F2's Note Display dialog; this task
+          creates it a version earlier). Revisit placement if F2 lands first
+          and prefers a different structure.
+        > On accept: parse the decimal, call
+          MusicData.set_playback_tempo_offset() (E1) - a value outside the
+          hard boundaries is CLAMPED and accepted, not rejected (matches AC2
+          "boundaries are enforced" rather than a validation error).
+        > Focus returns to whatever had it before the dialog opened (capture
+          QApplication.focusWidget() on open) - unlike GotoMeasureDialog,
+          which deliberately moves focus to Region 3 on success, there's no
+          equivalent "obvious next place" for a tempo change.
+        > TESTS: tests/test_main_window.py (dialog accepts a decimal value,
+          rejects non-numeric input via the validator, clamps rather than
+          rejects an out-of-range value).
+        > DONE 2026-08-07. Built exactly as planned. Options menu created
+          with just this one entry, as planned.
+        > FIX 2026-08-07 (live-tested bug, reported by the user): "when the
+          offset was already 130, the dialogue prepopulated to 82" - same
+          root cause as E1/E2's tempo-unit fix, the dialog was reading/
+          writing playback_tempo_offset before it meant "score display
+          units". The dialog itself needed no logic change once E1's fix
+          landed (it already just reads/writes the offset verbatim) - only
+          its label, which now names the actual unit
+          (TempoOffsetDialog(beat_unit_name=...)) so entering "10" and
+          seeing "10" reflected elsewhere is never ambiguous again.
+        > FOLLOW-UP 2026-08-07 (requested by the user): opens on Ctrl+T too,
+          same scope as Ctrl+G (C8) - fires from the main application area
+          and the status bar, anywhere a shortcut normally works.
+
+[x] E4  Sequencer: schedule events over time from a start index, with
         stop/pause/resume. Foundation for E5-E9.
-[ ] E5  Play / pause / stop keystrokes; pause refreshes the regions to the
+        > PREREQUISITE: timeline_slices only carries ts-relative
+          beat_position (resets every measure, Ref 18) - not enough to
+          compute real elapsed time between two events for scheduling. New
+          EventSlice.quarters_from_start: float, stamped by
+          parsers/timeline_builder.py as it walks (running total of quarters
+          per measure using each measure's own ts_num/beat_unit, independent
+          of the ts-relative display units) - same per-slice-state pattern
+          already used for time_sig/key_fifths (C6/D-11), so this is additive
+          to the existing walk, not a rewrite of it.
+        > New audio/sequencer.py (one class per file, per the established
+          layout) - Sequencer(music_data, synth). Uses a single QTimer,
+          rescheduled one step at a time (not N pre-scheduled timers), so
+          pause/stop/an F/S tempo change mid-playback just cancels and
+          reschedules the next step instead of unwinding a queue built with
+          stale timing.
+        > API: play_from(start_index, end_index=None, update_cursor=True),
+          pause(), resume(), stop(). Internal state: _current_index,
+          _is_playing, _is_paused, _original_start_index (Ref 10 AC5, "stop
+          reverts to the original position"). The update_cursor flag exists
+          for E6 (phrase audition should not permanently move
+          active_event_index once it finishes).
+        > Each step: play the slice's currently-visible notes via
+          MusicData.get_playback_events_for_indices() (so Region 2 filtering,
+          Ref 7, still applies during playback, not just during manual
+          navigation), then compute delay_ms to the NEXT visible slice from
+          the quarters_from_start delta and
+          MusicData.effective_tempo_bpm() (E1) - re-read live on every step,
+          not cached at play_from time, so an F/S press during playback
+          changes pace immediately.
+        > Stopping mid-note calls synth.stop_all_notes() before tearing down
+          the pending QTimer.
+        > No dependency on metronome (E8/E9 deferred this session).
+        > TESTS: new tests/audio/test_sequencer.py using null_synth - confirm
+          play_from schedules the right sequence of play_chord calls with the
+          right relative delays on a small fixture score (needs a way to
+          advance the QTimer deterministically under pytest-qt, e.g.
+          qtbot.wait or a fake clock - decide the mechanism when writing the
+          test, matching how other Qt-timer-driven code in this repo is
+          tested); pause freezes _current_index; stop reverts it to
+          _original_start_index; resume continues from the paused index, not
+          the original start.
+        > DONE 2026-08-07. Built mostly as planned, one addition beyond the
+          plan: new tests/support/fake_timer.py (mirrors NullSynth/D-7) -
+          Sequencer takes an injectable `timer` constructor argument
+          (defaults to a real QTimer), so tests/audio/test_sequencer.py
+          drives every scheduling decision deterministically via
+          FakeTimer.fire() instead of a real wall-clock wait. One design
+          refinement made while implementing resume(): the plan didn't
+          specify whether resume continues a note already in flight or
+          restarts it - went with the spec's own literal wording ("the
+          position to restart playback") and had resume() re-sound the
+          paused step before continuing forward, not attempt to pick up
+          mid-note. get_playback_events_for_indices() gained an optional
+          `index` parameter (defaults to the cursor, so all pre-existing
+          Region-3-selection call sites are unaffected) and
+          MusicData._visible_notes() likewise, both needed so the Sequencer
+          can read an arbitrary slice without disturbing
+          active_event_index/Region 3's selection - the E6 update_cursor
+          requirement, landing here since it's a MusicData-layer concern.
+          New MusicData helpers: get_playback_events_at_index(),
+          get_duration_ms_for_index(), next_visible_event_index() (rests
+          included, unlike _sounding_bounds() - real playback should take up
+          a rest's time, not skip over it the way navigation does).
+        > FIX 2026-08-07 (live-tested bug, reported by the user as "the
+          pause feature is not working"): pause() left the currently-
+          sounding note ringing out on its own natural duration rather than
+          silencing it - for a short note that duration elapses in well
+          under a second regardless, so there was no audible confirmation
+          that pause had done anything, and the following Space press (see
+          E5's FIX note) then looked like it "did nothing" too since the
+          note had usually already gone silent on its own by then. pause()
+          now also calls synth.stop_all_notes() immediately. Test renamed
+          test_pause_freezes_the_index_and_silences_the_sounding_note,
+          assertion inverted to require the extra stop.
+
+[x] E5  Play / pause / stop keystrokes; pause refreshes the regions to the
         new position; stop reverts to the original start - Ref 10
-[ ] E6  Two-bar phrase audition on Enter; re-trigger while playing stops it - Ref 11
-[ ] E7  Chord audition on Shift+Space, holding until released or re-pressed - Ref 13
+        > Space (already in the PDD Key Strokes table): not playing ->
+          Sequencer.play_from(active_event_index); playing -> stop() (the
+          table already documents Space as "play/stop", not "play/pause" -
+          Ctrl+Space is the separate pause key).
+        > Ctrl+Space (already in the table): pause()/resume() toggle.
+        > Wire Sequencer step callbacks back into MainWindow: each step sets
+          MusicData.active_event_index and calls
+          _update_timeline_views(play_all=False) - audio is already sounding
+          via the sequencer's own call, so play_all=False avoids double-
+          triggering. This is what satisfies AC4 ("pausing refreshes the
+          regions") for free, since the regions already track the live index
+          throughout playback rather than only updating on pause.
+        > On stop: active_event_index reset to
+          Sequencer._original_start_index, then
+          _update_timeline_views(play_all=False) to reflect the reverted
+          position (AC5).
+        > Reaching the end of the piece behaves like a natural stop but
+          WITHOUT reverting position (AC2 doesn't ask for a revert there,
+          only AC5's explicit stop does).
+        > Global shortcuts (scope decision above) - Space/Ctrl+Space are
+          playback transport, not timeline navigation, so D-2's Note-region
+          scoping doesn't apply to them any more than it does to Ctrl+M.
+        > TESTS: tests/test_main_window.py with null_synth - Space starts
+          sequencing through a small fixture and active_event_index advances
+          step by step; a second Space stops and reverts the index;
+          Ctrl+Space pauses (index freezes, regions still reflect the last
+          position) then resumes from there, not from the original start.
+        > DONE 2026-08-07. Built as planned. One real QTimer integration
+          test included (test_sequencer_steps_advance_the_cursor_and_regions_over_real_time),
+          sped up via a very high tempo_bpm so it finishes in well under a
+          second rather than needing a fake clock at the MainWindow layer -
+          the Sequencer's own scheduling math is already covered
+          deterministically by E4's FakeTimer-driven suite, so this one just
+          proves the real QTimer wiring works end to end.
+        > FIX 2026-08-07 (requested by the user): pressing Space to start
+          playback while already on the last active note now plays the
+          boundary ("doh") cue instead of starting the Sequencer - there's
+          nothing ahead of the cursor to play forward, the same "can't move
+          further" signal Left/Right/Ctrl+Left/Right already give (C5).
+          Checked via MusicData.next_visible_event_index() (E4) returning
+          None from the current position.
+        > FIX 2026-08-07 (second live-tested round, reported by the user):
+          Space while paused was treated the same as Space while playing
+          (stop and revert to the original start), so resuming after
+          Ctrl+Space required pressing Space twice - once to "stop" the
+          pause, once more to actually restart. toggle_play_stop() now
+          checks is_paused first and calls Sequencer.resume() there instead
+          of _stop_sequencer(). Ctrl+Space (toggle_pause_resume) narrowed to
+          pause-only - it used to also resume on a second press, which
+          collided with Space's new job. Tests updated:
+          test_space_resumes_from_the_paused_position_not_stops (replaces a
+          test that had locked in the buggy "Space=stop" behaviour as
+          correct), test_ctrl_space_pauses_and_space_resumes.
+
+[x] E6  Two-bar phrase audition on Enter; re-trigger while playing stops it - Ref 11
+        > Enter is already dual-purpose: C4 built the "pending typed digits"
+          branch (jump to that bar); this task fills in the "buffer empty"
+          branch C4 explicitly left "reserved but inert".
+        > MainWindow.audition_phrase(): start index =
+          first_visible_event_index_of_measure(current.measure) (reused from
+          C2); end bound = the last visible event of the NEXT measure, or the
+          piece's own last sounding event if the current measure is already
+          the last one (bounded by _sounding_bounds(), same guard C5 already
+          applies elsewhere so phrase audition can't run off the end into
+          trailing rest padding).
+        > Sequencer.play_from(start_index, end_index=phrase_end,
+          update_cursor=False) - E4's update_cursor flag means
+          active_event_index is untouched once the phrase finishes, matching
+          AC1/AC2 (this is a listen-to-context action, not a navigation one).
+        > Re-pressing Enter while a phrase is already auditioning stops it
+          (AC3) rather than restarting - same toggle shape as Space (E5), but
+          tracked separately (a distinct "phrase is auditioning" flag on the
+          Sequencer, or on MainWindow) since phrase audition and full
+          from-cursor playback are two different Sequencer.play_from() calls
+          that shouldn't be confused with each other if one is somehow
+          triggered while the other is active (starting either stops
+          whichever is running).
+        > TESTS: tests/test_main_window.py - Enter with an empty digit buffer
+          starts phrase playback from beat 1 of the current measure through
+          the end of the next; a second Enter mid-playback stops it;
+          active_event_index is unchanged after a phrase finishes on its own.
+        > DONE 2026-08-07. Built mostly as planned, two refinements made
+          while implementing:
+          1. "Starting either stops whichever is running" (the plan's own
+             words) turned out to mean Enter should stop ANY active
+             Sequencer run, not just another phrase - pressing Enter while
+             Space-driven full playback (E5) is going now stops that too,
+             symmetric with how Space already stops an in-progress phrase.
+             Factored into a shared MainWindow._stop_sequencer() used by
+             both toggle_play_stop() (E5) and audition_phrase(), rather than
+             a separate "is a phrase auditioning" flag as the plan
+             originally sketched - the Sequencer's own existing
+             update_cursor flag already distinguishes the two cases (only a
+             cursor-tracking run syncs active_event_index back after
+             stopping), so a second flag would have been redundant state.
+          2. New MusicData.last_sounding_event_index() (a public wrapper
+             around the existing private _sounding_bounds(), C5) rather than
+             reaching into the private method directly from main_window.py -
+             kept the module boundary the codebase has consistently held
+             everywhere else (grepped: MainWindow never otherwise calls a
+             MusicData `_`-prefixed method).
+          End-of-piece and last-measure edge cases (no "next measure" to
+          bound by) verified via
+          test_phrase_audition_from_the_last_measure_plays_to_the_end_of_the_piece.
+
+[x] E7  Chord audition on Shift+Space, holding until released or re-pressed - Ref 13
+        > Per the user's clarification: no keystroke-held tracking needed -
+          AC2's "notes hold for their marked length" is already satisfied by
+          each note's own duration via get_current_duration_ms() (E1's
+          effective tempo flows through this automatically, no separate work
+          needed here), and "or pressed again" is satisfied by a plain
+          re-trigger, not by watching for a key-release event.
+        > Most of this already exists: _play_selected_region_3_notes() /
+          synth.play_chord() (main_window.py) already plays the currently
+          selected Region 3 notes at the right duration - today it only fires
+          automatically from navigation (_update_timeline_views(play_all=True)).
+          What's missing is an explicit on-demand trigger independent of
+          moving.
+        > New global Shift+Space QShortcut calling
+          _play_selected_region_3_notes() directly. Re-pressing it while the
+          same chord is already sounding just calls play_chord again -
+          SynthEngine.play_chord already stops previously-active notes before
+          starting new ones (A8), so a re-press naturally retriggers rather
+          than layering notes on top of each other.
+        > TESTS: tests/test_main_window.py - Shift+Space plays the current
+          chord via null_synth with no navigation involved; pressing it twice
+          in a row produces two separate play_chord calls (retrigger
+          behaviour, not held-key state).
+        > DONE 2026-08-07. Built exactly as planned - genuinely needed no
+          Sequencer involvement at all, just one new global QShortcut.
+          Full suite after E1-E7 together: 158 passed, 1.6s. E8/E9
+          (metronome) remain deferred to a future session as planned; E10
+          (latency harness) is still open too.
+
 [ ] E8  Metronome: click every beat, accented click on beat 1, tick when
         stepping onto a beat position - Ref 14 AC1-AC3
+        > Left as a one-liner - deferred to a future session (user decision
+          2026-08-07). Will need per-beat-position navigable events (Ref 14
+          AC4, see E9) as a prerequisite once picked up.
 [ ] E9  With metronome on, beat positions become navigable events even where
         no note sounds - Ref 14 AC4, depends on A4
 [ ] E10 Latency harness; verify audition stays within 25 ms - Ref 9 AC3, NFR-04
         > Recover the old benchmark: git show 520f743:test_midi_latency.py
+        > Now also relevant to E4-E7's Sequencer-driven playback, not just
+          the original per-note navigation audition (Ref 9) - measure both.
 
 
 ###

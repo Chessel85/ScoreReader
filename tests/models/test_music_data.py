@@ -388,7 +388,10 @@ def test_status_bar_fields_reflect_the_time_and_key_signature_at_the_current_pos
 def test_status_bar_fields_before_a_score_is_loaded():
     md = MusicData()
 
-    assert md.get_status_bar_fields() == ["Measure - beat -", "Key: -", "Time: -"]
+    assert md.get_status_bar_fields() == [
+        "Measure - beat -", "Key: -", "Time: -",
+        "Playback tempo: 120 quarter notes per minute (score default)",
+    ]
 
 
 def test_get_channel_for_part_assigns_one_channel_per_part_in_order():
@@ -450,3 +453,146 @@ def test_playback_events_skip_indices_with_no_pitch(timeline, rest_score):
     md.active_event_index = 1  # C, rest, E, F
 
     assert md.get_playback_events_for_indices([0]) == []
+
+
+# --- E1: playback tempo offset (Ref 12) ---------------------------------
+
+def test_effective_tempo_defaults_to_the_scores_own_tempo():
+    md = MusicData(tempo_bpm=120)
+
+    assert md.effective_tempo_bpm() == 120
+
+
+def test_playback_tempo_offset_shifts_effective_tempo_without_touching_score_tempo():
+    md = MusicData(tempo_bpm=120)
+
+    md.set_playback_tempo_offset(30)
+
+    assert md.effective_tempo_bpm() == 150
+    assert md.tempo_bpm == 120, "AC1: offset must never mutate the score's own tempo"
+
+
+def test_playback_tempo_offset_clamps_at_the_upper_hard_boundary():
+    md = MusicData(tempo_bpm=120)
+
+    md.set_playback_tempo_offset(500)  # would be 620bpm, way past MAX_TEMPO_BPM
+
+    assert md.effective_tempo_bpm() == MusicData.MAX_TEMPO_BPM
+
+
+def test_playback_tempo_offset_clamps_at_the_lower_hard_boundary():
+    md = MusicData(tempo_bpm=40)
+
+    md.set_playback_tempo_offset(-500)  # would be negative, way past MIN_TEMPO_BPM
+
+    assert md.effective_tempo_bpm() == MusicData.MIN_TEMPO_BPM
+
+
+def test_reset_playback_tempo_returns_to_the_scores_own_tempo():
+    md = MusicData(tempo_bpm=96)
+    md.set_playback_tempo_offset(-20)
+    assert md.effective_tempo_bpm() == 76
+
+    md.reset_playback_tempo()
+
+    assert md.effective_tempo_bpm() == 96
+
+
+def test_get_current_duration_ms_reflects_the_playback_tempo_offset(timeline, minimal_score):
+    md = timeline(minimal_score, tempo_bpm=120)
+
+    baseline_ms = md.get_current_duration_ms()
+    md.set_playback_tempo_offset(120)  # double the effective tempo -> half the duration
+
+    assert md.get_current_duration_ms() == baseline_ms // 2
+
+
+def test_score_tempo_display_bpm_converts_out_of_the_internal_quarter_bpm():
+    """Reported bug: a score marked eighth=96 stores tempo_bpm=48
+    internally (quarter-note BPM, for playback timing) - the score's own
+    displayed tempo must still read as 96, matching Region 1 (A9)."""
+    md = MusicData(tempo_bpm=48, tempo_beat_unit_quarter_length=0.5, tempo_beat_unit_name="eighth")
+
+    assert md.score_tempo_display_bpm() == 96
+
+
+def test_playback_tempo_offset_is_in_display_units_not_quarter_units():
+    """F/S's "+10" (Ref 12 AC3) must mean +10 in the units the user reads -
+    e.g. +10 eighth notes per minute, not +10 quarter-note-equivalent bpm
+    (which would display as +20 eighth notes per minute)."""
+    md = MusicData(tempo_bpm=48, tempo_beat_unit_quarter_length=0.5, tempo_beat_unit_name="eighth")
+
+    md.set_playback_tempo_offset(10)
+
+    assert md.effective_tempo_display_bpm() == 106
+    assert md.effective_tempo_bpm() == 53, "internal quarter-BPM timing must still be correct: 48 + 10*0.5"
+
+
+def test_playback_tempo_offset_clamp_bounds_use_display_units():
+    """The 30-300 hard boundary (Ref 12 AC2) is what the user reads/types
+    (score display units), not the internal quarter-BPM equivalent."""
+    md = MusicData(tempo_bpm=48, tempo_beat_unit_quarter_length=0.5, tempo_beat_unit_name="eighth")
+
+    md.set_playback_tempo_offset(1000)  # would be far past 300 eighth-notes-per-minute
+
+    assert md.effective_tempo_display_bpm() == MusicData.MAX_TEMPO_BPM
+
+
+# --- E4: Sequencer support methods ---------------------------------------
+
+def test_get_playback_events_at_index_reads_an_explicit_slice_not_the_cursor(
+    timeline, minimal_score
+):
+    md = timeline(minimal_score, parts_info=[PartStructureInfo(part_id="P1", gmidi_program=1)])
+    assert md.active_event_index == 0  # C
+
+    events = md.get_playback_events_at_index(2)  # E, without moving the cursor
+
+    assert md.active_event_index == 0
+    assert len(events) == 1
+    _, _, midi_notes = events[0]
+    assert midi_notes == [64]  # E4
+
+
+def test_get_duration_ms_for_index_uses_that_slices_own_quarter_length(timeline, six_eight_score):
+    md = timeline(six_eight_score, tempo_bpm=120)
+    # six_eight_score: quarter C, quarter D, eighth E, eighth F - the eighth
+    # notes must resolve to half the duration of the quarter notes.
+    quarter_ms = md.get_duration_ms_for_index(0)
+    eighth_ms = md.get_duration_ms_for_index(2)
+
+    assert eighth_ms == quarter_ms // 2
+
+
+def test_next_visible_event_index_skips_slices_hidden_by_voice_filter(
+    timeline, flute_crotchets_viola_semibreves_score
+):
+    md = timeline(flute_crotchets_viola_semibreves_score)
+    md.set_active_voice_filter({("P2", 1, 1)})  # viola only
+
+    assert md.next_visible_event_index(0) == 4  # bar 2 beat 1, not the flute's crotchets
+
+
+def test_next_visible_event_index_respects_end_index_bound():
+    md = MusicData(file_path="")  # empty timeline is fine - just exercising the bound math
+
+    assert md.next_visible_event_index(0, end_index=0) is None
+
+
+def test_next_visible_event_index_returns_none_at_the_last_event(timeline, minimal_score):
+    md = timeline(minimal_score)
+
+    assert md.next_visible_event_index(3) is None
+
+
+def test_last_sounding_event_index_excludes_trailing_rest_padding(timeline, score_duet):
+    """C5/E6: same guard already used by Home/End - a phrase audition must
+    not be able to run on into rest-only padding at the end of the piece.
+    Chessel Duet's final bar rests out in every voice after its last real
+    note (see C5's DONE note in tasks.txt)."""
+    md = timeline(score_duet)
+
+    last_sounding = md.last_sounding_event_index()
+
+    assert last_sounding is not None
+    assert last_sounding < md.last_event_index()

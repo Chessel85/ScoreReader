@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Tuple
 
 import music21
 
+from models.duration_units import beat_unit_display_name
 from models.key_signatures import FIFTHS_MAP
 from models.music_data import MusicData
 from models.parts_structure import PartStructureInfo
@@ -12,21 +13,6 @@ class MusicXMLReader:
     """Parses MusicXML metadata via ElementTree and streams via music21 into MusicData."""
 
     PLACEHOLDERS = {"untitled score", "composer / arranger", "subtitle"}
-
-    DURATION_TYPE_NAMES = {
-        "whole": "whole",
-        "half": "half",
-        "quarter": "quarter",
-        "eighth": "eighth",
-        "16th": "sixteenth",
-        "32nd": "thirty-second",
-        "64th": "sixty-fourth",
-        "128th": "hundred-twenty-eighth",
-        "breve": "double whole",
-        "longa": "longa",
-    }
-
-    DOTS_PREFIX = {0: "", 1: "dotted ", 2: "double-dotted ", 3: "triple-dotted "}
 
     def __init__(self, file_path: str):
         self.file_path = file_path
@@ -47,7 +33,9 @@ class MusicXMLReader:
         except Exception as e:
             print(f"[ERROR] music21 parse failed: {e}")
 
-        tempo_bpm, tempo_display = self._extract_tempo(score) if score else (120, "120 quarter notes per minute")
+        tempo_bpm, tempo_display, tempo_beat_unit_quarter_length, tempo_beat_unit_name = (
+            self._extract_tempo(score) if score else (120, "120 quarter notes per minute", 1.0, "quarter")
+        )
         key_sig = self._extract_key(score) or etree_key
         time_sig = self._extract_time(score) or etree_time
 
@@ -61,6 +49,8 @@ class MusicXMLReader:
             file_path=self.file_path,
             score=score,
             tempo_bpm=tempo_bpm,
+            tempo_beat_unit_quarter_length=tempo_beat_unit_quarter_length,
+            tempo_beat_unit_name=tempo_beat_unit_name,
             xml_root=root,
         )
 
@@ -73,10 +63,15 @@ class MusicXMLReader:
             print(f"[ERROR] Failed to parse XML file: {e}")
             return None
 
-    def _extract_tempo(self, score: music21.stream.Score) -> Tuple[int, str]:
-        """Returns (quarter-note BPM for playback timing, display string in the
-        score's own beat unit - e.g. "96 eighth notes per minute" for a score
-        marked eighth=96, rather than music21's quarter-converted "48 BPM")."""
+    def _extract_tempo(self, score: music21.stream.Score) -> Tuple[int, str, float, str]:
+        """Returns (quarter-note BPM for playback timing, display string in
+        the score's own beat unit - e.g. "96 eighth notes per minute" for a
+        score marked eighth=96, rather than music21's quarter-converted
+        "48 BPM" - beat_unit_quarter_length and beat_unit_name, the ratio
+        and label E1 needs to convert the internal quarter-note BPM back to
+        that same beat unit live, for the status bar/F/S/D/Tempo Offset
+        dialog (Ref 12) - reported bug: those were showing/accepting the raw
+        quarter-BPM number instead of the score's own displayed tempo)."""
         try:
             tempos = score.flatten().getElementsByClass(music21.tempo.MetronomeMark)
             if tempos:
@@ -85,15 +80,18 @@ class MusicXMLReader:
                 if quarter_bpm and mm.number and mm.referent:
                     beat_unit = self._beat_unit_name(mm.referent)
                     number = self._format_number(mm.number)
-                    return int(quarter_bpm), f"{number} {beat_unit} notes per minute"
+                    return (
+                        int(quarter_bpm),
+                        f"{number} {beat_unit} notes per minute",
+                        float(mm.referent.quarterLength),
+                        beat_unit,
+                    )
         except Exception as e:
             print(f"[WARN] Error reading tempo: {e}")
-        return 120, "120 quarter notes per minute"
+        return 120, "120 quarter notes per minute", 1.0, "quarter"
 
     def _beat_unit_name(self, duration: music21.duration.Duration) -> str:
-        base = self.DURATION_TYPE_NAMES.get(duration.type, duration.type)
-        dots_prefix = self.DOTS_PREFIX.get(duration.dots, f"{duration.dots}x-dotted ")
-        return f"{dots_prefix}{base}"
+        return beat_unit_display_name(duration.type, duration.dots)
 
     @staticmethod
     def _format_number(n: float) -> str:

@@ -2,9 +2,11 @@
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Tuple
 
+from models.duration_units import beat_unit_display_name, beat_unit_quarter_length
 from models.event_slice import EventSlice
 from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
+from models.tempo_change import TempoChange
 
 
 def _duration_divs(elem) -> int:
@@ -111,6 +113,11 @@ class TimelineBuilder:
         self.file_path = file_path
         self.parts_info = parts_info
         self._root = root
+        # Ref 12 "multi-tempo scope": populated by build() as a side effect -
+        # every <sound tempo=.../> marking in the piece, not just the first
+        # (MusicXMLReader._extract_tempo's job), so callers can look up
+        # whichever tempo is actually in effect at a given position.
+        self.tempo_changes: List[TempoChange] = []
 
     def build(self) -> List[EventSlice]:
         root = self._root
@@ -132,6 +139,8 @@ class TimelineBuilder:
             )
 
         first_measure_number, needs_reindex, pickup_filled_quarters = self._detect_pickup(root)
+        measure_start_quarters = self._measure_start_quarters(root, needs_reindex, pickup_filled_quarters)
+        self.tempo_changes = self._tempo_changes(root, needs_reindex, measure_start_quarters)
 
         buckets: Dict[Tuple[int, float], List[NoteData]] = {}
         # Time signature + key fifths in effect at each (measure, offset) key,
@@ -262,10 +271,133 @@ class TimelineBuilder:
                     notes=notes,
                     time_sig=time_sig,
                     key_fifths=key_fifths,
+                    quarters_from_start=measure_start_quarters.get(m_num, 0.0) + offset_q,
                 )
             )
 
         return slices
+
+    def _measure_start_quarters(
+        self, root, needs_reindex: bool, pickup_filled_quarters: float
+    ) -> Dict[int, float]:
+        """E4: real elapsed quarters-from-piece-start at which each measure
+        begins, independent of any part's own note content - notes within a
+        measure already carry their own quarter offset from the start of
+        that measure (offset_q, the same value used as half the (measure,
+        offset) bucket key above), so adding this gives absolute timing.
+
+        Walked from the first <part> only (mirrors _detect_pickup), on the
+        same assumption the main per-part loop above makes when a part
+        doesn't redeclare its own <time>: time signature applies uniformly
+        across parts within a measure.
+        """
+        first_part = root.find("part")
+        if first_part is None:
+            return {}
+
+        starts: Dict[int, float] = {}
+        running_total = 0.0
+        ts_num, ts_den = 4, 4
+
+        for m in first_part.findall("measure"):
+            m_attr_num = m.attrib.get("number", "1")
+            try:
+                raw_m_num = int(m_attr_num)
+            except ValueError:
+                raw_m_num = 1
+            m_num = raw_m_num - 1 if needs_reindex else raw_m_num
+
+            starts[m_num] = running_total
+
+            attrs_elem = m.find("attributes")
+            if attrs_elem is not None:
+                _, ts_num, ts_den, _ = _apply_attributes(attrs_elem, 1, ts_num, ts_den, 0)
+
+            full_bar_quarters = ts_num * (4.0 / ts_den)
+            running_total += pickup_filled_quarters if m_num == 0 else full_bar_quarters
+
+        return starts
+
+    def _tempo_changes(
+        self, root, needs_reindex: bool, measure_start_quarters: Dict[int, float]
+    ) -> List[TempoChange]:
+        """Ref 12 "multi-tempo scope": every <direction> carrying a
+        <sound tempo=.../> + <metronome> marking, at the real elapsed
+        position it occurs - not just the score's first one
+        (MusicXMLReader._extract_tempo only ever looks at tempos[0]).
+        Walked from the first <part> only, same assumption
+        _measure_start_quarters makes, using the same _MeasureOffsetWalker
+        so a mid-measure marking (not just one at beat 1) lands at the
+        right offset.
+
+        MusicXML's <sound tempo="X"> is always quarter notes per minute
+        regardless of the marking's own beat unit, so it's used directly as
+        TempoChange.tempo_bpm with no conversion - only the beat-unit
+        display fields need translating from <beat-unit>/<beat-unit-dot>
+        for the status bar/dialog to show the number the way the score
+        itself is marked (e.g. "96 eighth notes per minute").
+        """
+        first_part = root.find("part")
+        if first_part is None:
+            return []
+
+        changes: List[TempoChange] = []
+        divisions, ts_num, ts_den, fifths = 1, 4, 4, 0
+
+        for m in first_part.findall("measure"):
+            m_attr_num = m.attrib.get("number", "1")
+            try:
+                raw_m_num = int(m_attr_num)
+            except ValueError:
+                raw_m_num = 1
+            m_num = raw_m_num - 1 if needs_reindex else raw_m_num
+
+            walker = _MeasureOffsetWalker(divisions, ts_num, ts_den, fifths)
+
+            for elem in m:
+                walker.step(elem)
+
+                if elem.tag == "direction":
+                    change = self._tempo_change_from_direction(elem, m_num, walker, measure_start_quarters)
+                    if change is not None:
+                        changes.append(change)
+
+            divisions, ts_num, ts_den, fifths = walker.divisions, walker.ts_num, walker.ts_den, walker.fifths
+
+        changes.sort(key=lambda c: c.quarters_from_start)
+        return changes
+
+    @staticmethod
+    def _tempo_change_from_direction(
+        elem, m_num: int, walker: "_MeasureOffsetWalker", measure_start_quarters: Dict[int, float]
+    ) -> Optional[TempoChange]:
+        sound_el = elem.find("sound")
+        metronome_el = elem.find("direction-type/metronome")
+        if sound_el is None or metronome_el is None:
+            return None
+        tempo_attr = sound_el.attrib.get("tempo")
+        beat_unit_el = metronome_el.find("beat-unit")
+        per_minute_el = metronome_el.find("per-minute")
+        if not tempo_attr or beat_unit_el is None or not beat_unit_el.text or per_minute_el is None or not per_minute_el.text:
+            return None
+
+        try:
+            tempo_bpm = float(tempo_attr)
+            per_minute = float(per_minute_el.text.strip())
+        except ValueError:
+            return None
+
+        dots = len(metronome_el.findall("beat-unit-dot"))
+        beat_unit_ql = beat_unit_quarter_length(beat_unit_el.text.strip(), dots)
+        offset_q = walker.offset_divs / walker.divisions
+
+        return TempoChange(
+            quarters_from_start=measure_start_quarters.get(m_num, 0.0) + offset_q,
+            tempo_bpm=int(round(tempo_bpm)),
+            beat_unit_quarter_length=beat_unit_ql,
+            beat_unit_name=beat_unit_display_name(beat_unit_el.text.strip(), dots),
+            display_number=str(int(per_minute)) if per_minute.is_integer() else str(per_minute),
+        )
 
     def _detect_pickup(self, root) -> Tuple[int, bool, float]:
         """Ref 17: is the first measure a pickup bar, and if so how full is

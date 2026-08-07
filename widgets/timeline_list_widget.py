@@ -48,8 +48,9 @@ class TimelineListWidget(QListWidget):
                 self._pending_digits = ""
                 main_win.on_pending_digits_changed(self._pending_digits)
                 main_win.navigate_to_typed_measure(digits)
-            # else: no digits pending - reserved for E6 (2-bar audition on
-            # Enter), not built yet, so this key is currently inert.
+            else:
+                # Ref 11 (E6): no digits pending - two-bar phrase audition.
+                main_win.audition_phrase()
             return
         elif key == Qt.Key.Key_Escape:
             if self._pending_digits:

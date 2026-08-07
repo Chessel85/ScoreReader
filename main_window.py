@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from audio.sequencer import Sequencer
 from audio.synth_engine import SynthEngine
 from models.music_data import MusicData
 from widgets.about_dialog import AboutDialog
@@ -22,6 +23,7 @@ from widgets.goto_measure_dialog import GotoMeasureDialog
 from widgets.region2_list_widget import Region2ListWidget
 from widgets.region_table_widget import RegionTableWidget
 from widgets.status_bar_widget import StatusBarWidget
+from widgets.tempo_offset_dialog import TempoOffsetDialog
 from widgets.timeline_list_widget import TimelineListWidget
 from workers.score_load_worker import ScoreLoadThread
 
@@ -55,6 +57,9 @@ class MainWindow(QMainWindow):
         self._music_data: MusicData | None = None
         self._load_thread: ScoreLoadThread | None = None
         self.synth = synth if synth is not None else SynthEngine()
+        # E4/E5: one Sequencer per loaded score (it holds a reference to
+        # that score's MusicData) - (re)created in _on_score_loaded.
+        self.sequencer: Sequencer | None = None
 
         self.setup_ui()
         self.setup_menu()
@@ -132,6 +137,43 @@ class MainWindow(QMainWindow):
         self.shift_f6_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
         self.shift_f6_shortcut.activated.connect(self._toggle_pane)
 
+        # E2: playback tempo controls (Ref 12) are global like F6/Ctrl+M,
+        # not Note-region-scoped like arrow-key timeline navigation - they
+        # adjust a playback-wide setting, not a per-row position, so D-2's
+        # Note-region scoping rule doesn't apply to them.
+        self.tempo_faster_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F), self)
+        self.tempo_faster_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.tempo_faster_shortcut.activated.connect(self.tempo_faster)
+
+        self.tempo_slower_shortcut = QShortcut(QKeySequence(Qt.Key.Key_S), self)
+        self.tempo_slower_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.tempo_slower_shortcut.activated.connect(self.tempo_slower)
+
+        self.tempo_reset_shortcut = QShortcut(QKeySequence(Qt.Key.Key_D), self)
+        self.tempo_reset_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.tempo_reset_shortcut.activated.connect(self.tempo_reset)
+
+        # E5/E7: playback transport, also global (Ref 10/13) - not Note-
+        # region-scoped for the same reason F/S/D above aren't.
+        self.play_stop_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Space), self)
+        self.play_stop_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.play_stop_shortcut.activated.connect(self.toggle_play_stop)
+
+        self.pause_resume_shortcut = QShortcut(QKeySequence("Ctrl+Space"), self)
+        self.pause_resume_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.pause_resume_shortcut.activated.connect(self.toggle_pause_resume)
+
+        # E7 (Ref 13): re-trigger the chord at the cursor on demand,
+        # independent of navigation. No held-key tracking needed - AC2's
+        # "hold for the marked length" is already satisfied by each note's
+        # own duration (get_current_duration_ms, E1's effective tempo flows
+        # through automatically), and "or pressed again" is just a plain
+        # retrigger - SynthEngine.play_chord already stops previously
+        # sounding notes before starting new ones (A8).
+        self.chord_audition_shortcut = QShortcut(QKeySequence("Shift+Space"), self)
+        self.chord_audition_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.chord_audition_shortcut.activated.connect(self._play_selected_region_3_notes)
+
         self.region_1.setFocus()
 
     def setup_menu(self):
@@ -195,6 +237,20 @@ class MainWindow(QMainWindow):
 
         self._update_navigation_actions_enabled()
 
+        # E3: Options menu's first entry - C8 deferred Options to F2's Note
+        # Display dialog, but the tempo offset dialog (Ref 12 AC5) needs
+        # somewhere to live a version earlier.
+        options_menu = menu_bar.addMenu("&Options")
+
+        self.tempo_offset_action = QAction("&Tempo Offset...", self)
+        # Ctrl+T, same scope as Ctrl+G's Go to Measure dialog (C8) - fires
+        # from the main application area and the status bar, i.e. anywhere
+        # a shortcut normally works, not just when a particular region has
+        # focus (QAction's default ShortcutContext is already WindowShortcut).
+        self.tempo_offset_action.setShortcut(QKeySequence("Ctrl+T"))
+        self.tempo_offset_action.triggered.connect(self._show_tempo_offset_dialog)
+        options_menu.addAction(self.tempo_offset_action)
+
         help_menu = menu_bar.addMenu("&Help")
 
         self.about_action = QAction("&About Recall Score...", self)
@@ -243,6 +299,22 @@ class MainWindow(QMainWindow):
                 self.navigate_to_typed_measure(str(measure_number))
                 self.region_3.setFocus()
 
+    def _show_tempo_offset_dialog(self):
+        """Ref 12 AC5 (E3): unlike GotoMeasureDialog, there's no obvious
+        "next place" for focus to land after a tempo change, so it returns
+        to whatever had it before the dialog opened."""
+        previous_focus = self.focusWidget()
+        current_offset = self._music_data.playback_tempo_offset if self._music_data else 0.0
+        beat_unit_name = self._music_data.tempo_beat_unit_name_at() if self._music_data else "quarter"
+        dialog = TempoOffsetDialog(self, current_offset=current_offset, beat_unit_name=beat_unit_name)
+        if dialog.exec() == QDialog.DialogCode.Accepted and self._music_data:
+            offset = dialog.tempo_offset()
+            if offset is not None:
+                self._music_data.set_playback_tempo_offset(offset)
+                self._update_status_bar()
+        if previous_focus is not None:
+            previous_focus.setFocus()
+
     def _show_about_dialog(self):
         AboutDialog(self).exec()
 
@@ -283,7 +355,12 @@ class MainWindow(QMainWindow):
         self._load_thread.start()
 
     def _on_score_loaded(self, music_data: MusicData):
+        if self.sequencer is not None:
+            self.sequencer.stop()
         self._music_data = music_data
+        self.sequencer = Sequencer(music_data, self.synth, parent=self)
+        self.sequencer.step_played.connect(self._on_sequencer_step)
+        self.sequencer.finished.connect(self._on_sequencer_finished)
         self._update_ui_regions()
 
     def _on_score_load_failed(self, error_text: str):
@@ -361,6 +438,135 @@ class MainWindow(QMainWindow):
         self._music_data.move_timeline_end()
         self._update_timeline_views(play_all=True)
 
+    def toggle_play_stop(self):
+        """Space (Ref 10 AC1/AC2/AC3/AC5): not playing -> start from the
+        cursor; playing -> stop, silence, and revert to where it started;
+        paused -> resume from the paused position (reported bug, live-
+        tested: this used to treat paused the same as playing and stop
+        instead, so Space after Ctrl+Space undid the pause instead of
+        continuing it - Ctrl+Space now only handles pausing, Space alone
+        handles both starting and resuming).
+        Starting from the last active note plays the boundary cue instead of
+        starting playback (reported behaviour) - there is nothing ahead of
+        the cursor to play forward, the same "can't move further" signal
+        Left/Right/Ctrl+Left/Right already give (C5)."""
+        if not self._music_data or self.sequencer is None:
+            return
+        if self.sequencer.is_paused:
+            self.sequencer.resume()
+            self._update_playback_status_field()
+        elif self.sequencer.is_playing:
+            self._stop_sequencer()
+        else:
+            start_index = self._music_data.active_event_index
+            if self._music_data.next_visible_event_index(start_index) is None:
+                self._play_boundary_cue()
+            else:
+                self.sequencer.play_from(start_index, update_cursor=True)
+                self._update_playback_status_field()
+
+    def toggle_pause_resume(self):
+        """Ctrl+Space (Ref 10 AC3): pauses. Reported bug, live-tested: this
+        used to also resume on a second press, which collided with Space's
+        own resume-when-paused job above and left users pressing Space twice
+        to get playback moving again - resuming is Space's job alone now."""
+        if self.sequencer is None:
+            return
+        if self.sequencer.is_playing:
+            self.sequencer.pause()
+            self._update_playback_status_field()
+
+    def _stop_sequencer(self):
+        """Shared by Space (E5) and Enter (E6) - both stop whatever the
+        Sequencer is currently doing before either can start something new.
+        Only a cursor-tracking run (Space's own play-from-cursor) syncs
+        active_event_index/the regions back afterward - a phrase audition
+        (E6) never moved them in the first place, but the playback-status
+        field always reflects the real state regardless."""
+        if self.sequencer is None:
+            return
+        was_tracking_cursor = self.sequencer.update_cursor
+        self.sequencer.stop()
+        if was_tracking_cursor and self._music_data:
+            self._music_data.active_event_index = self.sequencer.current_index
+            self._update_timeline_views(play_all=False)
+        else:
+            self._update_playback_status_field()
+
+    def audition_phrase(self):
+        """Enter with no pending digit buffer (Ref 11, E6): play from beat 1
+        of the current measure through the end of the next measure (AC1).
+        Re-pressing Enter while anything is already playing stops it first
+        (AC3), matching Space's own stop-if-active behaviour, rather than
+        starting a second overlapping run."""
+        if not self._music_data or self.sequencer is None:
+            return
+        if self.sequencer.is_playing or self.sequencer.is_paused:
+            self._stop_sequencer()
+            return
+
+        current = self._music_data.get_current_slice()
+        if current is None:
+            return
+        start_index = self._music_data.first_visible_event_index_of_measure(current.measure)
+        if start_index is None:
+            return
+
+        end_index = self._phrase_end_index(current.measure, start_index)
+        self.sequencer.play_from(start_index, end_index=end_index, update_cursor=False)
+        self._update_playback_status_field()
+
+    def _phrase_end_index(self, current_measure: int, start_index: int) -> int:
+        """Through the end of the NEXT measure, or the piece's own last
+        sounding event if current_measure is already the last one - bounded
+        by last_sounding_event_index() (C5) so a phrase can't run on into
+        trailing rest-only padding."""
+        last_sounding = self._music_data.last_sounding_event_index()
+        end_index = last_sounding if last_sounding is not None else self._music_data.last_event_index()
+
+        measures = self._music_data.measure_numbers()
+        pos = measures.index(current_measure)
+        if pos + 2 < len(measures):
+            measure_after_next = measures[pos + 2]
+            candidate_end = self._music_data.first_event_index_of_measure(measure_after_next) - 1
+            if candidate_end >= start_index:
+                end_index = min(end_index, candidate_end)
+        return end_index
+
+    def _on_sequencer_step(self, index: int):
+        """Ref 10 AC4: each step of a cursor-tracking run (E5's Space, not
+        E6's phrase audition) updates active_event_index and refreshes the
+        regions as playback proceeds - this is what makes "pause refreshes
+        the regions" true for free, since the regions already track the
+        live position throughout, not only at the moment of pausing."""
+        if self.sequencer is None or not self.sequencer.update_cursor or not self._music_data:
+            return
+        self._music_data.active_event_index = index
+        self._update_timeline_views(play_all=False)
+
+    def tempo_faster(self):
+        """F (Ref 12 AC3): +10bpm to the playback tempo offset, clamped to
+        the hard 30-300bpm boundary (E1). Does not move the timeline or
+        re-audition - only the status bar's tempo field changes."""
+        if not self._music_data:
+            return
+        self._music_data.set_playback_tempo_offset(self._music_data.playback_tempo_offset + 10)
+        self._update_status_bar()
+
+    def tempo_slower(self):
+        """S (Ref 12 AC3): -10bpm to the playback tempo offset."""
+        if not self._music_data:
+            return
+        self._music_data.set_playback_tempo_offset(self._music_data.playback_tempo_offset - 10)
+        self._update_status_bar()
+
+    def tempo_reset(self):
+        """D (Ref 12 AC4): reset playback tempo to the score's own tempo."""
+        if not self._music_data:
+            return
+        self._music_data.reset_playback_tempo()
+        self._update_status_bar()
+
     def _play_boundary_cue(self):
         """Ref 2 AC4 / Ref 3 AC4: plays instead of moving, when a navigation
         key would move past a boundary of the active timeline (C5)."""
@@ -427,7 +633,34 @@ class MainWindow(QMainWindow):
     def _update_status_bar(self):
         if not self._music_data:
             return
-        self.status_bar.set_fields(self._music_data.get_status_bar_fields())
+        fields = self._music_data.get_status_bar_fields()
+        fields.append(self._playback_status_text())
+        self.status_bar.set_fields(fields)
+
+    def _playback_status_text(self) -> str:
+        """5th status bar field (Ref 10, requested): Playing/Paused/Stopped,
+        reflecting the Sequencer's state - not a MusicData concern, since it
+        describes UI/playback state rather than anything about the score."""
+        if self.sequencer is not None and self.sequencer.is_paused:
+            return "Playback: Paused"
+        if self.sequencer is not None and self.sequencer.is_playing:
+            return "Playback: Playing"
+        return "Playback: Stopped"
+
+    def _update_playback_status_field(self):
+        """Updates only the 5th field, leaving measure/beat/key/time/tempo
+        untouched - used by phrase audition (E6) and pause/resume, which
+        must not disturb the position fields the way a full
+        _update_status_bar() would."""
+        self.status_bar.set_field(4, self._playback_status_text())
+
+    def _on_sequencer_finished(self):
+        """Reaching the end of a run (full playback, Ref 10 AC2, or a
+        phrase audition finishing on its own, Ref 11) flips is_playing to
+        False without MainWindow calling stop() - only the playback-status
+        field needs to catch up; the last step_played already left the
+        cursor/regions in the right place."""
+        self._update_playback_status_field()
 
     def _populate_table(self, table: QTableWidget, data_dict: dict):
         items = list(data_dict.items())
@@ -488,5 +721,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if self._load_thread is not None:
             self._load_thread.wait()
+        if self.sequencer is not None:
+            self.sequencer.stop()
         self.synth.close()
         super().closeEvent(event)
