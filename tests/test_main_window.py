@@ -6,7 +6,7 @@ If any test here opens a window or an audio device, the harness is broken.
 import pytest
 from PySide6.QtCore import QLocale, Qt
 from PySide6.QtGui import QKeySequence, QValidator
-from PySide6.QtWidgets import QApplication, QDialog, QLabel
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QTableWidget
 
 from main_window import MainWindow, detect_default_uk_terms
 from widgets.about_dialog import AboutDialog
@@ -1105,38 +1105,59 @@ def test_detect_default_uk_terms_false_only_for_a_us_locale():
     assert detect_default_uk_terms(QLocale(QLocale.Language.English, QLocale.Country.UnitedStates)) is False
 
 
-def test_toggle_uk_terms_updates_music_data_menu_and_status_bar(window, qtbot, minimal_score):
+def test_set_uk_terms_updates_music_data_menu_and_status_bar(window, qtbot, minimal_score):
     load_and_wait(window, qtbot, minimal_score)
-    assert window.uk_terms_action.isChecked() is False
+    assert window.uk_language_action.isChecked() is False
+    assert window.us_language_action.isChecked() is True
     assert window.status_bar._fields[0].text().startswith("Measure ")
 
-    window.toggle_uk_terms()
+    window.set_uk_terms(True)
 
     assert window._music_data.uk_terms is True
-    assert window.uk_terms_action.isChecked() is True
+    assert window.uk_language_action.isChecked() is True
+    assert window.us_language_action.isChecked() is False
     assert window.status_bar._fields[0].text().startswith("Bar ")
     assert window.goto_measure_action.text() == "&Go to Bar..."
 
-    window.toggle_uk_terms()
+    window.set_uk_terms(False)
 
     assert window._music_data.uk_terms is False
-    assert window.uk_terms_action.isChecked() is False
+    assert window.uk_language_action.isChecked() is False
+    assert window.us_language_action.isChecked() is True
     assert window.status_bar._fields[0].text().startswith("Measure ")
     assert window.goto_measure_action.text() == "&Go to Measure..."
 
 
-def test_toggle_uk_terms_works_with_no_score_loaded(qtbot, null_synth):
-    """A session preference, not a per-score one - must still flip and
-    update the menu even before any file is opened (unlike
+def test_terminology_language_actions_fire_set_uk_terms(window, qtbot, minimal_score):
+    """Live-tested feedback: a submenu of two mutually exclusive, checkable
+    items (QActionGroup) rather than one toggle, so "at least one ticked" is
+    always visibly true."""
+    load_and_wait(window, qtbot, minimal_score)
+
+    window.uk_language_action.trigger()
+    assert window._music_data.uk_terms is True
+    assert window.uk_language_action.isChecked() is True
+    assert window.us_language_action.isChecked() is False
+
+    window.us_language_action.trigger()
+    assert window._music_data.uk_terms is False
+    assert window.uk_language_action.isChecked() is False
+    assert window.us_language_action.isChecked() is True
+
+
+def test_set_uk_terms_works_with_no_score_loaded(qtbot, null_synth):
+    """A session preference, not a per-score one - must still set the
+    preference and update the menu even before any file is opened (unlike
     toggle_metronome, which is a no-op with no score)."""
     w = MainWindow(synth=null_synth, uk_terms=False)
     qtbot.addWidget(w)
-    assert w.uk_terms_action.isChecked() is False
+    assert w.uk_language_action.isChecked() is False
 
-    w.toggle_uk_terms()
+    w.set_uk_terms(True)
 
     assert w._uk_terms is True
-    assert w.uk_terms_action.isChecked() is True
+    assert w.uk_language_action.isChecked() is True
+    assert w.us_language_action.isChecked() is False
 
 
 def test_uk_terms_preference_survives_loading_a_new_score(window, qtbot, minimal_score):
@@ -1144,13 +1165,36 @@ def test_uk_terms_preference_survives_loading_a_new_score(window, qtbot, minimal
     must be reapplied, or it would silently reset to MusicData's own
     bare-construction default (US) on every open."""
     load_and_wait(window, qtbot, minimal_score)
-    window.toggle_uk_terms()
+    window.set_uk_terms(True)
     assert window._music_data.uk_terms is True
 
     load_and_wait(window, qtbot, minimal_score)
 
     assert window._music_data.uk_terms is True
-    assert window.uk_terms_action.isChecked() is True
+    assert window.uk_language_action.isChecked() is True
+
+
+def test_populate_table_preserves_current_cell_across_a_rebuild(window, qtbot, minimal_score):
+    """Live-tested bug: Region 1/4's current cell jumped to the top-left on
+    every terminology-language change - _populate_table must restore the
+    previous row/column instead."""
+    load_and_wait(window, qtbot, minimal_score)
+    window.region_1.setCurrentCell(2, 1)
+
+    window.set_uk_terms(True)
+
+    assert window.region_1.currentRow() == 2
+    assert window.region_1.currentColumn() == 1
+
+
+def test_populate_table_clamps_a_now_out_of_range_row(window):
+    table = QTableWidget(3, 2)
+    table.setCurrentCell(2, 1)
+
+    window._populate_table(table, {"a": "1"})
+
+    assert table.currentRow() == 0
+    assert table.currentColumn() == 1
 
 
 def test_navigating_onto_a_beat_plays_a_click_alongside_the_note(
@@ -1194,12 +1238,11 @@ def test_region_4_attribute_menu_add_updates_region_3_without_reauditioning(
     assert _region_3_labels(window) == ["C"]
 
     actions = window._region_4_attribute_menu_actions(1)
-    # F4/D-6: "stave" renders as "staff" under this fixture's uk_terms=False
-    # (US default) - stave/staff's stored/default form is UK, so US mode
-    # translates it, unlike bar/measure which is the other way round.
+    # D-15: "stave" is NOT translated by F4's uk_terms toggle - deliberate
+    # decision, see tasks.txt.
     assert [label for label, _ in actions] == [
         "Add to notes for this voice",
-        "Add to notes in same staff",
+        "Add to notes in same stave",
         "Add to notes in the same part",
         "Add to notes in the whole score",
     ]
@@ -1233,24 +1276,27 @@ def test_region_4_attribute_menu_first_action_is_add_to_this_voice(
 def test_restore_region_4_focus_after_menu_returns_to_the_same_row_and_column(
     window, qtbot, null_synth, minimal_score
 ):
-    """Live-tested bug: selecting a menu action rebuilds Region 4's rows
-    (via _apply_display_attribute_change -> _refresh_region_3_labels ->
-    _on_region_3_selection_changed -> _populate_table) while the menu's own
-    exec() is still running, which resets the table's current cell - NVDA
-    then kept reporting the stale menu item, and the next Down landed on
-    row 0 ("step") instead of back on the row the menu was opened on.
-    _restore_region_4_focus_after_menu is called after exec() returns to
-    fix this; this test drives the rebuild directly (bypassing the real,
-    blocking QMenu.exec()) to prove the restoration works. Also covers a
-    second live-tested bug in the same area: the restored column used to be
-    hard-coded to 0, so opening the menu from the value column (1) landed
-    back on the key column (0) instead."""
+    """Originally a live-tested bug: selecting a menu action rebuilds Region
+    4's rows (via _apply_display_attribute_change -> _refresh_region_3_labels
+    -> _on_region_3_selection_changed -> _populate_table) while the menu's
+    own exec() is still running (QAction.triggered fires before exec()
+    returns), and that rebuild used to reset the table's current cell to
+    (0, 0) - NVDA kept reporting the stale menu item, and the next Down
+    landed on row 0 ("step") instead of back where the menu was opened.
+    _populate_table itself now preserves the current cell across a rebuild
+    (F4's Region 1/4 position-persistence fix), so that half of the bug is
+    fixed at the source - the current cell is already correct by the time
+    _restore_region_4_focus_after_menu runs. What that method still owns is
+    giving actual WIDGET FOCUS back: exec() steals focus to the menu while
+    it's open, and nothing else returns it to Region 4 once the menu closes."""
     load_and_wait(window, qtbot, minimal_score)
 
     window.region_4.setCurrentCell(1, 1)  # octave row, value column
     selected_notes = window._music_data.notes_for_indices([0])
     window._apply_display_attribute_change("octave", "voice", selected_notes, add=True)
-    assert window.region_4.currentRow() != 1, "sanity check: the rebuild really did reset it"
+    assert (window.region_4.currentRow(), window.region_4.currentColumn()) == (1, 1), (
+        "_populate_table already preserved the cell through the rebuild"
+    )
 
     window._restore_region_4_focus_after_menu(1, 1)
     QApplication.processEvents()
@@ -1288,7 +1334,7 @@ def test_region_4_attribute_menu_switches_to_remove_once_present(
     actions = window._region_4_attribute_menu_actions(1)
     assert [label for label, _ in actions] == [
         "Remove for notes in current voice",
-        "Remove for notes in current staff",
+        "Remove for notes in current stave",
         "Remove for notes in current part",
         "Remove for notes in the whole score",
     ]
@@ -1313,7 +1359,7 @@ def test_region_4_attribute_menu_stave_scope_fans_out_to_every_voice_on_that_sta
     assert [i.row() for i in window.region_3.selectedIndexes()] == [1]
 
     actions = window._region_4_attribute_menu_actions(1)  # row 1 = octave
-    stave_add = next(cb for label, cb in actions if label == "Add to notes in same staff")
+    stave_add = next(cb for label, cb in actions if label == "Add to notes in same stave")
     stave_add()
 
     labels = _region_3_labels(window)

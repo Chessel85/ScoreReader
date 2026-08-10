@@ -542,7 +542,9 @@ def test_get_region_1_data_tempo_credit_follows_uk_terms():
     assert md.get_region_1_data()["Title"] == "Test", "other credits pass through untouched"
 
 
-def test_get_score_structure_stave_name_follows_uk_terms():
+def test_get_score_structure_stave_name_is_unaffected_by_uk_terms():
+    """D-15: stave/staff wording is deliberately excluded from F4's toggle -
+    Region 2's clef names stay exactly as generated, regardless of dialect."""
     md = MusicData(
         parts_info=[
             PartStructureInfo(
@@ -551,12 +553,13 @@ def test_get_score_structure_stave_name_follows_uk_terms():
         ]
     )
 
-    assert md.get_score_structure()[0]["staves"][0]["name"] == "Treble staff"
+    assert md.get_score_structure()[0]["staves"][0]["name"] == "Treble stave"
     md.uk_terms = True
     assert md.get_score_structure()[0]["staves"][0]["name"] == "Treble stave"
 
 
-def test_get_stave_name_for_part_follows_uk_terms():
+def test_get_stave_name_for_part_is_unaffected_by_uk_terms():
+    """D-15: see test_get_score_structure_stave_name_is_unaffected_by_uk_terms."""
     md = MusicData(
         parts_info=[
             PartStructureInfo(
@@ -565,7 +568,7 @@ def test_get_stave_name_for_part_follows_uk_terms():
         ]
     )
 
-    assert md.get_stave_name_for_part("P1", 1) == "Treble staff"
+    assert md.get_stave_name_for_part("P1", 1) == "Treble stave"
     md.uk_terms = True
     assert md.get_stave_name_for_part("P1", 1) == "Treble stave"
 
@@ -860,8 +863,8 @@ def test_notes_for_indices_returns_the_real_note_objects(timeline, chord_score):
 def test_get_region_4_row_targets_matches_data_keys_for_a_single_note(timeline, minimal_score):
     """Row order must match, and each row's raw attribute_key must be the
     one whose F4/D-6 display label (attribute_label) produced the data
-    dict's key - not literal string equality, since "stave"'s label diverges
-    from its key by default (uk_terms=False renders it as "staff")."""
+    dict's key - not literal string equality, since "measure"'s label
+    diverges from its key under uk_terms=True (renders as "bar")."""
     md = timeline(minimal_score)
 
     data_keys = list(md.get_region_4_data_for_indices([0]).keys())

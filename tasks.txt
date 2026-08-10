@@ -674,20 +674,11 @@ PHASE F - NOTE DISPLAY CONFIGURATION                      (3 tasks)
 [x] F4  UK / US music vocabulary toggle: bar vs measure, crotchet vs quarter
         note, quaver vs eighth note - Discussion Points, see D-6
         > DONE 2026-08-10. Purely presentational per the user - internal
-          identifiers (attribute_key "measure"/"stave", method names,
-          MusicXML type strings) never change, only rendered text. Scope
-          widened beyond the PDD's literal two examples to include
-          stave/staff too, per the user's own framing ("treat it like any
-          other term... use UK and US when it surfaces to the UI"). New
-          models/vocabulary.py (Qt-free) holds the word-choice/translation
-          helpers; MusicData gained uk_terms: bool (default False - required
-          for backward compatibility with every existing test's US-dialect
-          assertions). GOTCHA: the two term families translate in OPPOSITE
-          directions because the app's hardcoded text was already
-          inconsistent - measure/duration names default US (translate to UK
-          only when uk_terms), stave/staff default UK (translate to US only
-          when NOT uk_terms) - commented explicitly at both definition sites
-          to head off future confusion.
+          identifiers (attribute_key "measure", method names, MusicXML type
+          strings) never change, only rendered text. New models/vocabulary.py
+          (Qt-free) holds the word-choice/translation helpers; MusicData
+          gained uk_terms: bool (default False - required for backward
+          compatibility with every existing test's US-dialect assertions).
         > Default dialect: UK, unless QLocale.system().territory() resolves
           confidently to United States, in which case US - any other/
           indeterminate locale stays UK (never a guess). Lives in
@@ -702,12 +693,44 @@ PHASE F - NOTE DISPLAY CONFIGURATION                      (3 tasks)
           metronome_enabled/voice_display_attributes) - MusicData is wholly
           replaced on every file load, so _on_score_loaded explicitly
           reapplies MainWindow's own self._uk_terms onto each freshly-loaded
-          MusicData, and toggle_uk_terms() (unlike toggle_metronome) still
+          MusicData, and set_uk_terms() (unlike toggle_metronome) still
           works with no score loaded. Region 1's "Tempo" credit is baked
           once at parse time in US units (MusicXMLReader) - get_region_1_data
           now overrides it live from tempo_bpm/tempo_beat_unit_quarter_length
           directly rather than returning self.credits verbatim, so toggling
           is reflected without reloading the file.
+        > FIX 2026-08-10 (live-tested, three findings):
+          1. Menu shape wrong - a single checkable "UK Terms" action doesn't
+             show "at least one option is always active" as clearly as the
+             user wanted. Replaced with Options > Terminology Language, a
+             submenu of two mutually exclusive checkable items (UK/US) via
+             QActionGroup(exclusive=True) - clicking one always leaves
+             exactly one checked, satisfying "must have at least one ticked"
+             structurally rather than by convention. toggle_uk_terms()
+             replaced by set_uk_terms(bool), called from two thin
+             _select_uk_terms/_select_us_terms wrappers (the usual
+             QAction.triggered(bool) gotcha - see F1's postmortem - handled
+             by giving each its own named callback instead of a scope=scope
+             lambda).
+          2. Region 1/4's current cell was jumping to the top-left cell on
+             every terminology-language change. ROOT CAUSE: _populate_table
+             (the shared Region 1/4 rebuild helper) calls clearContents()/
+             setRowCount(), which resets QTableWidget's current cell to
+             (0, 0) - true for ANY refresh through this method, not just the
+             F4 toggle. Fixed at the source: _populate_table now captures
+             current row/column before rebuilding and restores them after
+             (clamped to the rebuilt table's bounds), so this is now a
+             general Region 1/4 position-persistence guarantee, not
+             something F4-specific. Made
+             test_restore_region_4_focus_after_menu_...'s own "sanity check:
+             the rebuild really did reset it" assertion obsolete (that
+             method's remaining job is now specifically returning WIDGET
+             FOCUS after a QMenu.exec(), not the cell position - both used
+             to be conflated in one bug).
+          3. D-15 opened and resolved live - see below: stave/staff excluded
+             from the toggle entirely (models/vocabulary.py's staff_word/
+             clef_name removed again), Region 2/4's clef-name wording is
+             unaffected by uk_terms.
 
 
 ###
@@ -825,13 +848,13 @@ D-6  UK vs US music vocabulary
      UK. Screen reader announcements: no separate channel needed (Phase D
      was already skipped) - NVDA reads whatever on-screen text the toggle
      produces, so on-screen and spoken wording are automatically the same
-     thing. Region 4 attribute names: the internal "measure"/"stave" keys
-     are NEVER renamed (storage/menu wiring depend on them staying stable) -
-     only the rendered display LABEL changes, via
-     models/vocabulary.attribute_label(). Scope ended up wider than the
-     spec's two literal examples - stave/staff included too, per the user's
-     own framing that this is purely a UX/presentation concern, not
-     something to special-case.
+     thing. Region 4 attribute names: the internal "measure" key is NEVER
+     renamed (storage/menu wiring depend on it staying stable) - only the
+     rendered display LABEL changes, via models/vocabulary.attribute_label().
+     Surfaces via Options > Terminology Language (a UK/US submenu, not a
+     single toggle - see F4's live-tested FIX notes). Scope: bar/measure and
+     the duration-name family (crotchet/quaver/etc) only - stave/staff was
+     tried and then deliberately excluded, see D-15.
 
 D-7  How tests avoid opening audio hardware
      DECIDED 2026-08-05: constructor injection. MainWindow(synth=None)
@@ -932,6 +955,23 @@ D-14 Metronome click sound synthesis - Ref 14, see E8/E11
      remaining options (procedurally generated raw PCM, or user-supplied
      WAV clips - see the original click-generation discussion this session)
      both require a second audio path. See E11 for the open task.
+
+D-15 Stave/staff excluded from F4's UK/US vocabulary toggle
+     DECIDED 2026-08-10, live-tested: F4 originally translated stave/staff
+     too (Region 2's clef names, Region 4's "stave" attribute), on the
+     user's own initial instruction to treat every UK/US term pair the same
+     way. After trying it live, the user reversed that: Region 2's clef
+     names ("Treble stave", "Bass stave" on Chessel Duet) are the app's own
+     generated labels (from detecting the MusicXML clef sign - MusicXML
+     itself has no English "stave"/"staff" text, it's <clef><sign>G</sign>),
+     not literally read from the file - but the user's underlying call is
+     independent of that clarification: keep it simple for now, don't
+     translate this family at all, regardless of the terminology-language
+     setting. models/vocabulary.py's staff_word()/clef_name() were removed;
+     attribute_label("stave", ...) always passes through unchanged, same as
+     any other never-translated attribute key. Revisit only if asked for
+     again - the removed functions are recoverable via git log on F4's
+     commit if so.
 
 
 ###

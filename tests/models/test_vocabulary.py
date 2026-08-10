@@ -1,16 +1,11 @@
 # tests/models/test_vocabulary.py
 """F4/D-6: UK/US music terminology word-choice helpers."""
-from models.vocabulary import attribute_label, bar_word, clef_name, duration_name, staff_word
+from models.vocabulary import attribute_label, bar_word, duration_name
 
 
 def test_bar_word():
     assert bar_word(uk_terms=False) == "measure"
     assert bar_word(uk_terms=True) == "bar"
-
-
-def test_staff_word():
-    assert staff_word(uk_terms=False) == "staff"
-    assert staff_word(uk_terms=True) == "stave"
 
 
 def test_duration_name_passes_through_us_when_not_uk_terms():
@@ -49,21 +44,13 @@ def test_duration_name_unmapped_base_passes_through():
     assert duration_name("longa", uk_terms=True) == "longa"
 
 
-def test_clef_name_passes_through_when_uk_terms():
-    assert clef_name("Treble stave", uk_terms=True) == "Treble stave"
-
-
-def test_clef_name_translates_trailing_stave_to_staff():
-    assert clef_name("Treble stave", uk_terms=False) == "Treble staff"
-    assert clef_name("Bass stave", uk_terms=False) == "Bass staff"
-    assert clef_name("Tab stave", uk_terms=False) == "Tab staff"
-    assert clef_name("Standard stave", uk_terms=False) == "Standard staff"
-
-
-def test_attribute_label_translates_measure_and_stave_keys():
+def test_attribute_label_translates_measure_key():
     assert attribute_label("measure", uk_terms=False) == "measure"
     assert attribute_label("measure", uk_terms=True) == "bar"
-    assert attribute_label("stave", uk_terms=False) == "staff"
+
+
+def test_attribute_label_stave_is_excluded_by_d15_and_never_translated():
+    assert attribute_label("stave", uk_terms=False) == "stave"
     assert attribute_label("stave", uk_terms=True) == "stave"
 
 

@@ -2,7 +2,7 @@
 from typing import Optional
 
 from PySide6.QtCore import QLocale, Qt
-from PySide6.QtGui import QAction, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -22,7 +22,7 @@ from audio.metronome import click_event_for_beat
 from audio.sequencer import Sequencer
 from audio.synth_engine import SynthEngine
 from models.music_data import MusicData
-from models.vocabulary import bar_word, staff_word
+from models.vocabulary import bar_word
 from widgets.about_dialog import AboutDialog
 from widgets.goto_measure_dialog import GotoMeasureDialog
 from widgets.region2_list_widget import Region2ListWidget
@@ -293,13 +293,29 @@ class MainWindow(QMainWindow):
         self.tempo_offset_action.triggered.connect(self._show_tempo_offset_dialog)
         options_menu.addAction(self.tempo_offset_action)
 
-        # F4/D-6: no dedicated shortcut - none is specified anywhere, and it
-        # avoids colliding with Ctrl+T/Ctrl+M below.
-        self.uk_terms_action = QAction("&UK Terms", self)
-        self.uk_terms_action.setCheckable(True)
-        self.uk_terms_action.setChecked(self._uk_terms)
-        self.uk_terms_action.triggered.connect(self.toggle_uk_terms)
-        options_menu.addAction(self.uk_terms_action)
+        # F4/D-6: a submenu of two mutually exclusive, checkable items
+        # (QActionGroup with setExclusive(True)) rather than one toggle -
+        # live-tested feedback: the user wants "at least one ticked" always
+        # visible, which a single checkable action can't show as clearly as
+        # two radio-style items can. No dedicated shortcut - none is
+        # specified anywhere, and it avoids colliding with Ctrl+T/Ctrl+M.
+        terminology_menu = options_menu.addMenu("&Terminology Language")
+        self.terminology_language_group = QActionGroup(self)
+        self.terminology_language_group.setExclusive(True)
+
+        self.uk_language_action = QAction("&UK", self)
+        self.uk_language_action.setCheckable(True)
+        self.uk_language_action.setChecked(self._uk_terms)
+        self.uk_language_action.triggered.connect(self._select_uk_terms)
+        self.terminology_language_group.addAction(self.uk_language_action)
+        terminology_menu.addAction(self.uk_language_action)
+
+        self.us_language_action = QAction("&US", self)
+        self.us_language_action.setCheckable(True)
+        self.us_language_action.setChecked(not self._uk_terms)
+        self.us_language_action.triggered.connect(self._select_us_terms)
+        self.terminology_language_group.addAction(self.us_language_action)
+        terminology_menu.addAction(self.us_language_action)
 
         # E8/Ref 14: checkable so its own state is announced by screen
         # readers on focus, in addition to the Ctrl+M shortcut and the
@@ -645,20 +661,30 @@ class MainWindow(QMainWindow):
         self.metronome_action.setChecked(self._music_data.metronome_enabled)
         self._update_status_bar()
 
-    def toggle_uk_terms(self):
-        """F4/D-6: Options > UK Terms. Unlike toggle_metronome, this must
-        still flip the preference and update the menu even with no score
-        loaded - it's a session preference (see self._uk_terms comment in
-        __init__), not a per-score one. Refreshes every region the
+    def _select_uk_terms(self, checked: bool = False):
+        self.set_uk_terms(True)
+
+    def _select_us_terms(self, checked: bool = False):
+        self.set_uk_terms(False)
+
+    def set_uk_terms(self, uk_terms: bool):
+        """Options > Terminology Language > UK/US. Unlike toggle_metronome,
+        this must still set the preference and update the menu even with no
+        score loaded - it's a session preference (see self._uk_terms comment
+        in __init__), not a per-score one. Refreshes every region the
         vocabulary touches: Region 1 (Tempo credit), Region 3/4 (via the
         same lightweight _refresh_region_3_labels F1's attribute toggle
-        already uses - no re-audition/selection loss), and the status bar."""
-        self._uk_terms = not self._uk_terms
-        self.uk_terms_action.setChecked(self._uk_terms)
+        already uses - no re-audition/selection loss), and the status bar.
+        _populate_table preserves each table's current row/column across the
+        rebuild (live-tested bug: Region 1/4's position was jumping to the
+        top-left cell on every terminology change)."""
+        self._uk_terms = uk_terms
+        self.uk_language_action.setChecked(uk_terms)
+        self.us_language_action.setChecked(not uk_terms)
         self.goto_measure_action.setText(self._goto_measure_action_text())
         if not self._music_data:
             return
-        self._music_data.uk_terms = self._uk_terms
+        self._music_data.uk_terms = uk_terms
         self._populate_table(self.region_1, self._music_data.get_region_1_data())
         self._refresh_region_3_labels()
         self._update_status_bar()
@@ -712,18 +738,19 @@ class MainWindow(QMainWindow):
         selected_notes = self._music_data.notes_for_indices(selected_indices)
         already_present = self._music_data.note_has_display_attribute(anchor_note, attribute_key)
 
-        stave_word = staff_word(self._music_data.uk_terms)
+        # D-15: stave/staff is deliberately excluded from the F4 toggle -
+        # "stave" here always means the literal word, regardless of dialect.
         if already_present:
             scopes = [
                 ("voice", "Remove for notes in current voice"),
-                ("stave", f"Remove for notes in current {stave_word}"),
+                ("stave", "Remove for notes in current stave"),
                 ("part", "Remove for notes in current part"),
                 ("score", "Remove for notes in the whole score"),
             ]
         else:
             scopes = [
                 ("voice", "Add to notes for this voice"),
-                ("stave", f"Add to notes in same {stave_word}"),
+                ("stave", "Add to notes in same stave"),
                 ("part", "Add to notes in the same part"),
                 ("score", "Add to notes in the whole score"),
             ]
@@ -912,6 +939,15 @@ class MainWindow(QMainWindow):
         self._update_playback_status_field()
 
     def _populate_table(self, table: QTableWidget, data_dict: dict):
+        """Live-tested bug (F4): clearContents()/setRowCount() reset the
+        table's current cell to (0, 0), so a Region 1/4 row the user was
+        reading jumped to the top on every terminology-language change (or
+        any other in-place refresh). Restores the previous row/column,
+        clamped to the rebuilt table's own bounds, instead of always
+        defaulting to the top-left cell."""
+        current_row = table.currentRow()
+        current_col = table.currentColumn()
+
         items = list(data_dict.items())
         table.clearContents()
         table.setRowCount(len(items))
@@ -919,6 +955,11 @@ class MainWindow(QMainWindow):
             table.setItem(row, 0, QTableWidgetItem(str(key)))
             table.setItem(row, 1, QTableWidgetItem(str(value)))
         table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+
+        if items:
+            restore_row = min(max(current_row, 0), len(items) - 1)
+            restore_col = current_col if current_col in (0, 1) else 0
+            table.setCurrentCell(restore_row, restore_col)
 
     def _update_ui_regions(self):
         if not self._music_data:

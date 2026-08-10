@@ -460,15 +460,14 @@ class MusicData:
     def get_score_structure(self) -> List[Dict[str, Any]]:
         """Parts/staves/voices shape Region2HierarchyModel.build_from_score()
         documents - drives Region 2 (Ref 7). Pure transform of parts_info,
-        no XML access."""
+        no XML access. D-15: stave names are NOT translated by F4's
+        uk_terms toggle - deliberate decision, see tasks.txt."""
         structure = []
         for p in self.parts_info:
             staves = [
                 {
                     "id": s_id,
-                    "name": vocabulary.clef_name(
-                        p.staves_clefs.get(s_id, "Standard stave"), self.uk_terms
-                    ),
+                    "name": p.staves_clefs.get(s_id, "Standard stave"),
                     "voices": p.staves_voices[s_id],
                 }
                 for s_id in sorted(p.staves_voices.keys())
@@ -794,11 +793,13 @@ class MusicData:
     def get_stave_name_for_part(self, part_id: str, staff: int) -> str:
         """Screen-reader-friendly stave name for Region 4, e.g. "Treble
         stave" or "C stave" - same wording Region 2 uses (Ref 7), so a note
-        looked up in Region 4 matches the stave it was toggled under."""
+        looked up in Region 4 matches the stave it was toggled under. D-15:
+        NOT translated by F4's uk_terms toggle - deliberate decision, see
+        tasks.txt."""
         for p in self.parts_info:
             if p.part_id == part_id:
-                return vocabulary.clef_name(p.staves_clefs.get(staff, "Standard stave"), self.uk_terms)
-        return vocabulary.clef_name("Standard stave", self.uk_terms)
+                return p.staves_clefs.get(staff, "Standard stave")
+        return "Standard stave"
 
     def get_playback_events_for_indices(
         self, selected_indices: List[int], index: Optional[int] = None
