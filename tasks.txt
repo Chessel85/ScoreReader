@@ -14,6 +14,11 @@ HOW TO USE THIS FILE
     when we get there.
   - This file is tracked in git (since 2026-08-05) so it is backed up.
     Commit it along with the code changes each task produces.
+  - Completed tasks' notes were spring-cleaned 2026-08-07 down to essential
+    outcomes and hard-won gotchas (root causes, non-obvious library
+    behaviour) - file-by-file mechanism, test names/counts, and anything
+    else recoverable via `git show`/`git log` on the task's own commit were
+    cut. Unstarted/partial tasks were left untouched.
 
 PHASE ORDER RATIONALE
   Phase A comes first because four defects in the timeline model gate large
@@ -70,229 +75,80 @@ PHASE A - FOUNDATIONS AND MULTI-PART CORRECTNESS         (10 tasks)
 ###
 [x] A1  Test harness: pytest + pytest-qt, tests/ tree, requirements files
         - NFR-03 AC-03.3
-        > DONE 2026-08-05. 18 tests, 0.6s, 69% coverage (music_data 81%).
-          tests/audio/ deferred - there is nothing to test there that does
-          not need hardware until the E-phase sequencer exists.
-          MainWindow now takes an optional synth argument (D-7).
-        > DEPENDENCIES
-          pytest, pytest-qt (Qt widget and signal testing), pytest-cov
-          (NFR-03 asks for high coverage, so measure it from day one).
-        > REQUIREMENTS FILES - split them
-          requirements.txt      PySide6, music21, pyfluidsynth  (runtime)
-          requirements-dev.txt  pytest, pytest-qt, pytest-cov   (test only)
-          Keeps the runtime list clean for the NFR-02 installer work later.
-          Do NOT list mido - nothing imports it since the FluidSynth switch.
-        > LAYOUT - mirrors the package tree, one test module per source module
-              tests/conftest.py
-              tests/fixtures/                     see A1 fixture decision D-6
-              tests/models/test_music_data.py
-              tests/parsers/test_musicxml_reader.py
-              tests/widgets/test_region2_manager.py
-              tests/audio/test_synth_engine.py
-        > SPEED - this one matters
-          MusicData(file_path=...) builds the timeline with ElementTree alone:
-          ~1 ms. MusicXMLReader.load() also runs music21: ~460 ms. That is a
-          460x difference. Timeline tests must construct MusicData directly;
-          only the reader tests should pay for music21.
-        > NO AUDIO IN TESTS
-          MainWindow.__init__ (main_window.py:32) constructs SynthEngine(),
-          which starts a WASAPI device. Tests must not open audio hardware -
-          slow, noisy, and fails on machines without the DLLs. See D-7.
-        > HEADLESS QT
-          Set QT_QPA_PLATFORM=offscreen for the test session in pytest.ini so
-          no window ever appears. pytest-qt supplies the qapp/qtbot fixtures.
-        > CONFTEST FIXTURES to provide
-          score_bourree / score_duet  paths to the two sample scores
-          timeline(path)              MusicData built without music21
-          null_synth                  SynthEngine stand-in recording calls
-        > RUN
-          .venv\Scripts\python.exe -m pytest
-          single: ... -m pytest tests/models/test_music_data.py::test_pickup
-          coverage: ... -m pytest --cov=models --cov=parsers --cov=widgets
-        > DONE WHEN
-          pytest runs green from a clean checkout, no window opens, no audio
-          device is touched, and the run takes under ~5 seconds.
+        > DONE 2026-08-05. Offscreen Qt, audio blocked via injectable synth
+          (D-7), requirements split runtime/dev (mido dropped - unused since
+          the FluidSynth switch). MusicData(file_path=...) tests bypass
+          music21 for speed (~1ms vs ~460ms via MusicXMLReader.load()) - see
+          CLAUDE.md for the full harness description.
 
 [x] A2  Characterisation tests for the current parser - NFR-03, locks Ref 18
-        > Cover: quarter note = ts_duration 1.0 in 4/4 and 2.0 in 6/8; eighth
-          note = 1.0 in 6/8; chord grouping into one EventSlice; string/fret
-          capture from notations/technical; slice ordering by (measure, offset).
-        > Write these BEFORE A3-A6 - all four rewrite _build_timeline_from_xml
-          and these tests are what prove nothing regressed.
-        > Record the currently-wrong pickup numbers as known-bad with an
-          xfail marker, then flip them to expected in A3.
-        > DONE 2026-08-05. tests/models/test_timeline_characterisation.py,
-          6 passing + 2 strict xfail (pickup-numbered-0 bug, see A3). New
-          fixtures: tests/fixtures/{six_eight,chord,string_fret,
-          slice_ordering}.musicxml, plus score_duet for the xfail pair since
-          the bug only reproduces on a real file. Full suite: 22 passed, 2
-          xfailed, still under 1s.
+        > DONE 2026-08-05. Locked in ts-relative duration units and chord/
+          string-fret/slice-ordering behaviour before A3-A6 rewrote the
+          timeline builder, so regressions would show up as test failures.
+          Recorded the known-bad pickup numbers as xfail, flipped in A3.
 
 [x] A3  FIX pickup numbering when the file already numbers the pickup 0
         - Ref 17, currently broken
-        > Bourree exports the pickup as number="1", so the code's
-          "subtract one from every measure" is right. Chessel Duet exports it
-          as number="0" implicit="yes", so subtracting again gives measure -1,
-          and real measure 1 becomes 0 and then wrongly gets the pickup's
-          end-of-bar beat positions (beats 4,5,6 instead of 1,2,3).
-        > Only re-index when the pickup is not already numbered 0.
-        > Test both conventions: pickup must be measure 0 and the first full
-          bar must be measure 1 in each.
-        > DONE 2026-08-06. models/music_data.py: added needs_reindex =
-          is_pickup and first_measure_number != 0, so re-indexing only fires
-          for the number="1" convention. Flipped the two A2 xfail tests in
-          test_timeline_characterisation.py to plain assertions - both now
-          pass on Chessel Duet. Full suite: 26 passed, 0 xfail, 0.6s.
+        > DONE 2026-08-06. Two MusicXML pickup conventions exist: number="1"
+          (needs re-indexing down by one) and number="0" implicit="yes"
+          (already correct - re-indexing it again produced measure -1 and
+          corrupted beat positions). Fix only re-indexes when
+          first_measure_number != 0.
 
 [x] A4  Add part_id to NoteData; stamp each note with its real <part> id and
         that part's name - prerequisite for Ref 7
-        > models/music_data.py:177 sets part_name from parts_info[0].name for
-          every note. On Chessel Duet every guitar note is labelled "Piano".
-        > Worse, (staff, voice) collides across parts: Piano staff 1 voice 1
-          and Guitar staff 1 voice 1 are indistinguishable today.
-        > Region2HierarchyModel.get_active_voice_tuples() returns
-          (part_id, staff, voice) - the ids must match.
-        > DONE 2026-08-06. NoteData and PartStructureInfo gained part_id.
-          _build_timeline_from_xml now reads part-list/score-part directly
-          (mirroring the note-list/forward/backup pass, since timeline tests
-          build MusicData without going through MusicXMLReader) and stamps
-          each note with its own part's id/name instead of parts_info[0].
-          New test: test_notes_are_stamped_with_their_real_part_id_and_name
-          on Chessel Duet (Piano P1 / Guitar P2). Full suite: 27 passed, 0.6s.
+        > DONE 2026-08-06. Every note was labelled with parts_info[0]'s name,
+          and (staff, voice) collided across parts with no part_id to
+          disambiguate. NoteData/PartStructureInfo gained part_id; the
+          timeline builder now stamps each note from its own <part>.
 
 [x] A5  Explicit rests become timeline events - Ref 16 AC2
-        > step_name "rest"; octave and midi_pitch become Optional[int] = None.
-        > Only <note><rest/> elements. Gaps from <forward> or backup offsets
-          do NOT become events.
-        > Region 3 displays "rest". Region 4 omits the octave and midi rows.
-          get_midi_notes_for_indices (music_data.py:282) must drop None
-          pitches so playback stays silent on a rest.
-        > DONE 2026-08-06. NoteData.octave/midi_pitch are now
-          Optional[int] = None (reordered to the end of the dataclass so
-          defaults stay valid). _build_timeline_from_xml no longer skips
-          <rest/> notes - it builds a "rest" NoteData with no pitch/fret/
-          string instead. get_region_4_data_for_indices and
-          get_midi_notes_for_indices both guard on None. Region 3 needed no
-          change - step_name "rest" already reads correctly.
-          New fixture tests/fixtures/rest.musicxml (C, rest, E, F) plus 5
-          new tests across test_timeline_characterisation.py and
-          test_music_data.py. Verified against the real Way To Go score too
-          (user added a genuine rest to it) - parses to one rest event with
-          octave/midi_pitch None. Gaps from forward/backup NOT becoming
-          events was already covered by A2's slice_ordering fixture (4 notes
-          written with a forward-skip yield exactly 4 slices, not 5).
-          Full suite: 32 passed, 1.1s.
+        > DONE 2026-08-06. NoteData.octave/midi_pitch are Optional[int]=None
+          for a "rest" step. get_midi_notes_for_indices/
+          get_region_4_data_for_indices guard on None so playback stays
+          silent and Region 4 omits octave/midi rows. <forward>/<backup>
+          gaps do NOT become events - only a literal <note><rest/>.
 
 [x] A6  Track divisions and time signature as they change through the score
         instead of first-match - Ref 18
-        > music_data.py:38 and :48 use .//attributes/... which finds only the
-          first occurrence in the whole file.
-        > Way To Go (files/) changes 4/4 -> 3/4 -> 4/4 mid-piece - use it to
-          prove ts_duration is computed per-measure, not from the first bar.
-        > DONE 2026-08-06. Replaced the single .//attributes/time and
-          .//attributes/divisions lookups with apply_attributes(), called
-          every time an <attributes> element is walked in document order -
-          once for the pickup-detection pass over the first measure, and
-          once per part inside the main measure loop (state resets per part,
-          since divisions is technically declared per-part in MusicXML).
-          beat_unit_quarter_len/full_bar_quarters are recomputed immediately
-          after each update, so ts_duration always reflects the measure that
-          note is actually in.
-          New fixture tests/fixtures/ts_change.musicxml: 4/4 (div=4) -> 6/8
-          (div=4) -> 4/4 (div=8), three complete bars, isolating the TS
-          change and the divisions change as two separate assertions. Also
-          spot-checked against the real Way To Go score (Flute/Viola,
-          4/4->3/4->4/4) - a measure-6 whole note correctly resolves to
-          ts_duration 4.0. Full suite: 34 passed, 0.6s.
+        > DONE 2026-08-06. .//attributes/time and .//attributes/divisions
+          only ever matched the FIRST occurrence in the file. Replaced with
+          apply_attributes(), re-applied every time an <attributes> element
+          is walked (state resets per part - divisions is declared per-part
+          in MusicXML), so ts_duration reflects the measure a note is
+          actually in. Verified on Way To Go (4/4->3/4->4/4 mid-piece).
 
 [x] A7  Measure index helpers over timeline_slices - prerequisite for Refs 3, 5, 6
-        > first_event_index_of_measure(n), measure_numbers(), last_event_index().
-        > DONE 2026-08-06. All three added to models/music_data.py.
-          measure_numbers() dedups timeline_slices measures in order (they
-          are already sorted by (measure, offset), so an adjacent-dedup via
-          dict.fromkeys is exact and O(n)). first_event_index_of_measure(n)
-          returns None for a measure with no events - callers use that for
-          Ref 6's "unknown bar plays an error sound and does not move"
-          instead of raising. last_event_index() returns -1 on an empty
-          timeline. No wiring into MainWindow yet - that lands with C2-C4.
-          New tests in tests/models/test_music_data.py using ts_change_score
-          (3 measures, 4 events each). Full suite: 39 passed, 0.68s.
+        > DONE 2026-08-06. first_event_index_of_measure(n) returns None for
+          an empty measure (used by C2/C4 for "unknown bar" handling instead
+          of raising); last_event_index() returns -1 on an empty timeline.
 
 [x] A8  FIX playback instrument per part/voice instead of always parts_info[0]
         - Ref 8, Ref 9 AC2, reported bug. Depends on A4.
-        > get_current_gmidi_program() (music_data.py:292) always returns the
-          first part's program, so Chessel Duet plays the guitar as piano.
-        > Needs a MIDI channel per part; SynthEngine.play_notes already takes
-          a channel argument. See D-5.
-        > DONE 2026-08-06. Decided D-5 as one channel per part, in part-list
-          order, skipping channel 10 (index 9, percussion), wrapping past 16.
-          Removed get_current_gmidi_program() - there is no single "current"
-          instrument once a slice can hold notes from more than one part.
-          models/music_data.py: added get_channel_for_part(part_id),
-          get_gmidi_program_for_part(part_id), and
-          get_playback_events_for_indices(selected_indices), which groups
-          selected notes by part_id and returns one
-          (channel, zero-indexed program, midi_notes) tuple per part - the
-          1-indexed-to-0-indexed conversion moved here from MainWindow.
-          audio/synth_engine.py: SynthEngine now tracks active notes as
-          (channel, note) pairs instead of a single channel + note list, and
-          gained play_chord(events, duration_ms) which starts every part's
-          group together so a cross-part chord sounds as one instead of each
-          group's stop_all_notes() cutting the previous one off; play_notes()
-          is now a thin wrapper around play_chord for single-channel callers.
-          tests/support/null_synth.py mirrors the same play_chord split so
-          test doubles stay honest about the real interface.
-          New fixture tests/fixtures/two_parts_chord.musicxml (Piano C4 +
-          Guitar E3 on the same beat) proves a cross-part chord produces two
-          separate (channel, program) groups. New slow test on score_duet in
-          test_musicxml_reader.py reproduces the exact reported bug end to
-          end and confirms the guitar note now carries program 24 (GM 25)
-          on its own channel, not the piano's. Full suite: 46 passed, 0.67s.
+        > DONE 2026-08-06. get_current_gmidi_program() always returned the
+          first part's program (Chessel Duet's guitar played as piano) -
+          removed; no single "current" instrument makes sense once a slice
+          can hold notes from more than one part. D-5: one MIDI channel per
+          part (part-list order, skip channel 10/percussion). SynthEngine
+          gained play_chord(events, duration_ms) so a cross-part chord's
+          channel groups start together instead of each group's
+          stop_all_notes() cutting the previous one off - play_notes() is
+          now a thin wrapper around it.
 
 [x] A9  FIX tempo display so it reflects the time signature - reported bug
-        > Chessel Duet is eighth=96 and displays "48 BPM" because music21's
-          getQuarterBPM() converts to quarter-note BPM. Strictly true but not
-          what a musician reads.
-        > Show the score's own beat-unit and per-minute, e.g. "96 eighth notes
-          per minute". Keep the quarter BPM internally for playback timing.
-        > Wording interacts with the UK/US vocabulary option - see D-6.
-        > DONE 2026-08-06. parsers/musicXML_reader.py: _extract_tempo now
-          returns (quarter_bpm, display_string) instead of just an int -
-          quarter_bpm still comes from MetronomeMark.getQuarterBPM() and
-          feeds MusicData.tempo_bpm unchanged (playback timing at
-          music_data.py:416 is untouched), but display_string is built from
-          the mark's own referent/number via new _beat_unit_name() /
-          _format_number() helpers, e.g. "96 eighth notes per minute" for
-          Chessel Duet instead of "48 BPM". No metronome mark (Bourree,
-          minimal fixtures) falls back to "120 quarter notes per minute"
-          rather than a bare "120 BPM". Updated
-          test_reader_extracts_key_time_and_tempo's assertion to match, and
-          added test_tempo_display_reflects_the_scores_own_beat_unit on
-          score_duet reproducing the exact reported bug end to end. Full
-          suite: 47 passed, 0.68s.
-        > UK/US wording (crotchet vs quarter note) deferred to F4/D-6 as
-          planned - this task only fixes the beat-unit mismatch.
+        > DONE 2026-08-06. music21's getQuarterBPM() always converts to
+          quarter-note BPM (Chessel Duet, eighth=96, displayed "48 BPM").
+          _extract_tempo now also returns a display_string built from the
+          mark's own beat unit ("96 eighth notes per minute"); quarter_bpm
+          is kept internally for playback timing, unaffected. UK/US wording
+          deferred to F4/D-6.
 
 [x] A10 Extract timeline building from MusicData into
         parsers/timeline_builder.py, one class per file - NFR-03 AC-03.1
-        > MusicData currently parses, models and formats for the view.
-        > DONE 2026-08-06. New parsers/timeline_builder.py: TimelineBuilder
-          class takes (file_path, parts_info) and its build() method holds
-          the entire ~225-line ElementTree walk moved verbatim out of
-          MusicData._build_timeline_from_xml (pickup detection, per-part
-          divisions/time-signature tracking, chord/rest handling, string/
-          fret capture, slice bucketing and sorting) - logic unchanged, only
-          relocated. models/music_data.py: __post_init__ now does
-          self.timeline_slices = TimelineBuilder(self.file_path,
-          self.parts_info).build(); the private method and its now-unused
-          ET/NoteData imports are gone, dropping music_data.py from ~417 to
-          ~191 lines. No circular import (timeline_builder.py only imports
-          from models.event_slice/note_data/parts_structure, not
-          models.music_data). CLAUDE.md's parsers/ and Timeline model
-          sections updated to describe the new file. Full suite still 47
-          passed, 0.70s - no test changed since tests build
-          MusicData(file_path=...) and never called the private method by
-          name.
+        > DONE 2026-08-06. Moved the ElementTree walk out of MusicData
+          verbatim (logic unchanged) into TimelineBuilder(file_path,
+          parts_info).build(), called from __post_init__. No circular
+          import - timeline_builder.py never imports models.music_data.
 
 
 ###
@@ -300,543 +156,174 @@ PHASE B - FINISH REGION 2 FILTERING AND UX REWRITE         (5 tasks)   Ref 7
 ###
 [x] B1  MusicData.get_score_structure() emitting the parts_data shape that
         Region2HierarchyModel.build_from_score() documents - Ref 7
-        > DONE 2026-08-06. Pure transform of parts_info (no XML access):
-          [{'id': p.part_id, 'name': p.name, 'staves': [{'id': s_id, 'name':
-          p.staves_clefs.get(s_id, "Standard stave"), 'voices':
-          p.staves_voices[s_id]} for s_id in sorted(...)]}]. Replaces
-          get_region_2_data(), deleted - that method built a flat dict
-          keyed by f"Staff {s_id}" with no part id in the key, so two parts
-          sharing a staff number silently overwrote each other's row. This
-          was the root cause of the reported "viola has no stave in Region
-          2" bug on the Way To Go score (see Known bugs in the Product
-          Definition Document) - confirmed by running the parser directly:
-          parts_info already carried the viola's own staff/voice correctly,
-          the bug was purely in the flat-dict rendering.
-          Region2HierarchyModel's node ids already include part id
-          (voice_P1_1_1 vs voice_P2_1_1, proven collision-free by
-          test_node_ids_stay_unique_across_parts), so wiring up the real
-          hierarchy fixes the bug as a side effect - verified live: Way To
-          Go's Region 2 now lists Flute > Treble stave > Voice 1 and Viola
-          > C stave > Voice 1 as distinct rows.
+        > DONE 2026-08-06. Replaced get_region_2_data(), which built a flat
+          dict keyed by f"Staff {s_id}" with no part id - two parts sharing
+          a staff number silently overwrote each other's row. This was the
+          root cause of the reported "viola has no stave in Region 2" bug on
+          Way To Go; Region2HierarchyModel's node ids already included part
+          id, so wiring up the real hierarchy fixed it as a side effect.
 
 [x] B2  MusicData.set_active_voice_filter(); filter Region 3, Region 4 and
         playback by the active (part_id, staff, voice) tuples - Ref 7 AC1/AC2
-        > DONE 2026-08-06. New active_voice_filter:
-          Optional[Set[Tuple[str, int, int]]] = None field - None means
-          unfiltered/show everything, not "show nothing" (required, since
-          most of the existing suite builds MusicData without ever calling
-          the setter and asserts against the full note list) - plus
-          set_active_voice_filter(). New private _visible_notes() filters
-          the current slice's notes by the active set; get_region_3_data,
-          get_region_4_data_for_indices, get_midi_notes_for_indices and
-          get_playback_events_for_indices all now read through it instead
-          of current.notes directly, so a Region 3 row index means the same
-          note in Region 3, Region 4 and playback even when some notes are
-          hidden - verified by grep that nothing else in the codebase reads
-          current.notes directly. Filtering only changes what's displayed/
-          played at a timeline position, not which positions Left/Right
-          visits (Ref 7 doesn't ask for auto-skipping filtered-empty
-          slices, and AC3 - "retains the current timeline position" -
-          argues against it).
+        > DONE 2026-08-06. active_voice_filter: None means unfiltered (not
+          "show nothing" - required since most of the existing suite builds
+          MusicData without ever calling the setter). New _visible_notes()
+          is the single filter point all four accessors read through, so a
+          Region 3 row index means the same note everywhere even when some
+          notes are hidden. Filtering changes what's shown/played at a
+          position, not which positions Left/Right visits.
 
 [x] B3  Remove the hasattr guards in main_window.py; confirm toggling works
         and timeline position is retained - Ref 7 AC3
-        > DONE 2026-08-06. Both hasattr(self._music_data, ...) guards in
-          _on_region_2_filter_changed and _update_ui_regions removed -
-          get_score_structure()/set_active_voice_filter() are unconditional
-          calls now. active_event_index is never touched by
-          set_active_voice_filter, so AC3 holds trivially - confirmed by
-          B4's test, which toggles Region 2 (not Region 3) and the cursor
-          stays put.
+        > DONE 2026-08-06. Guards removed - get_score_structure()/
+          set_active_voice_filter() are unconditional calls now.
 
 [x] B4  Test: toggling the TAB staff off removes the duplicate notes on the
         Bourree sample (first slice is E,G,E,G today) - Refs 7, 8
         > DONE 2026-08-06.
-          tests/test_main_window.py::test_toggling_the_tab_staff_off_removes_the_duplicate_notes
-          loads score_bourree, confirms the baseline bug (Region 3 shows
-          ['E','G','E','G']), selects the Tab stave row (node id
-          staff_P1_2) in region_2 and sends a real O keypress via
-          qtbot.keyClick, then confirms Region 3 drops to ['E','G'].
 
 [x] B5  Region 2 UX rewrite: replace the two-column table with a flat list
         navigated by Up/Down only, toggled by O - added beyond the original
         B1-B4 scope after the table view was found "clumsy" and the
         Product Definition Document's Key Strokes table was updated to O
         - Ref 7
-        > DONE 2026-08-06. New widgets/region2_list_widget.py:
-          Region2ListWidget(QListWidget) - same shape as Region 3's
-          TimelineListWidget rather than a QTableWidget. Each row's text
-          embeds name, hierarchy level and status in one line so NVDA reads
-          the whole row on one Down-arrow press instead of needing
-          column-by-column table navigation, e.g. "Classical Guitar - on",
-          "  Treble stave - on", "    Voice 1 - on". Up/Down need no
-          override (native QListWidget behaviour). O toggles the focused
-          row's node via the unchanged Region2HierarchyModel and rebuilds,
-          re-anchoring to the same node.
-          widgets/region_table_widget.py stripped back to a plain
-          property-list table for Regions 1/4 only - model_manager,
-          _current_visible_nodes, filter_changed, load_score_structure,
-          refresh_table and the Spacebar-toggle branch all removed (Region
-          1/4 never used any of them; confirmed by grep no test imports
-          RegionTableWidget directly).
-          Clef descriptions renamed at the source
-          (parsers/musicXML_reader.py) from "treble clef"/"bass clef"/
-          "guitar tab standard tuning" to "Treble stave"/"Bass stave"/
-          "Tab stave" (fallback f"{sign} stave" for anything else, e.g. the
-          viola's "C stave") - the word itself now carries the hierarchy
-          level, so no separate "Staff:" label is needed in the widget; the
-          three sample scores' clef signs (G, F, C, TAB) were checked
-          directly against the real files to confirm this covers them all.
-          Confirmed the persistence behaviour the user asked for - toggling
-          a parent off and back on restores each child's own prior on/off
-          state rather than resetting it - already worked
-          (Region2HierarchyModel.toggle_node only ever flips the node
-          itself); added
-          test_reenabling_a_parent_restores_each_childs_previous_state in
-          tests/widgets/test_region2_manager.py to lock it in.
-          Full suite: 50 passed, ~0.8s. Verified live against both real
-          sample scores via a headless script (Way To Go's viola rows, and
-          Bourree's O-toggle removing duplicate notes) in addition to the
-          automated tests.
+        > DONE 2026-08-06. New Region2ListWidget(QListWidget): each row's
+          text embeds name/level/status in one line so NVDA reads the whole
+          row on one Down-arrow instead of column-by-column table
+          navigation, e.g. "Classical Guitar - on", "  Treble stave - on".
+          RegionTableWidget stripped back to a plain property table for
+          Regions 1/4 only. Confirmed toggling a parent off/on restores each
+          child's own prior state (not a reset) - locked in with a test.
 
 
 ###
 PHASE C - NAVIGATION AND WINDOW CHROME                    (8 tasks)
 ###
 [x] C1  Confirm/lock in Note-region-scoped navigation - Ref 4, D-2 RESOLVED
-        > DONE 2026-08-06. No new MainWindow-level handling needed -
-          TimelineListWidget already intercepted Left/Right and only acts
-          when it has focus; C2/C3 extended the same widget for Ctrl+Left/
-          Right and Home/End rather than adding an application-level event
-          filter. Confirmed RegionTableWidget (Regions 1/4) and
-          Region2ListWidget (Region 2) never call the navigate_timeline_*
-          methods - their keyPressEvent only special-cases Tab/Backtab (and
-          O for Region 2), everything else falls through to native Qt list/
-          table behaviour. New regression test in tests/test_main_window.py:
-          test_timeline_navigation_keys_have_no_effect_outside_the_note_region
-          sends Right/Ctrl+Left/End/Home to Regions 1, 2 and 4 in turn and
-          asserts active_event_index never moves.
+        > DONE 2026-08-06. TimelineListWidget already intercepted Left/Right
+          scoped to its own focus; confirmed the other three region widgets
+          never call navigate_timeline_* and locked it in with a regression
+          test.
+
 [x] C2  Ctrl+Left / Ctrl+Right jump by measure - Ref 3
-        > DONE 2026-08-06. models/music_data.py: added
-          first_visible_event_index_of_measure() (like A7's
-          first_event_index_of_measure but skips slices with no note passing
-          the active Region 2 filter, same as _slice_has_visible_notes
-          already does for plain Left/Right - "sympathetic to active notes,
-          not just what is in the score" per the user's clarification) and
-          move_timeline_left_by_measure()/move_timeline_right_by_measure(),
-          returning bool like the existing move_timeline_left/right.
-          Ctrl+Left: jump to the current measure's first visible event if
-          not already there, else the previous measure's - the pickup bar
-          (measure 0) falls out of this for free since measure_numbers()
-          already lists it first (verified on Chessel Duet: Ctrl+Left from
-          measure 1 beat 1 lands on the pickup, a second Ctrl+Left plays the
-          boundary sound). Ctrl+Right always jumps to the next measure's
-          first visible event, skipping any measure left entirely invisible
-          by the voice filter. Wired in
-          widgets/timeline_list_widget.py (Ctrl modifier check on
-          Key_Left/Key_Right) and main_window.py's new
-          navigate_measure_left/right. Tests in
-          tests/models/test_music_data.py and tests/test_main_window.py.
+        > DONE 2026-08-06. Jumps are "sympathetic to active notes, not just
+          what is in the score" per the user's clarification - skips
+          measures left entirely invisible by the Region 2 voice filter.
+          Pickup bar (measure 0) falls out for free since measure_numbers()
+          already lists it first.
+
 [x] C3  Home / End jump to first and last event - Ref 5
-        > DONE 2026-08-06. MusicData.move_timeline_home()/move_timeline_end()
-          jump to the first/last event passing the active voice filter.
-          Unlike Left/Right/Ctrl+Left/Right they never fail outward, so
-          MainWindow's navigate_timeline_home/end never call the boundary
-          cue (Ref 5 AC3) - they always call _update_timeline_views(). Wired
-          in widgets/timeline_list_widget.py (Key_Home/Key_End) and
-          main_window.py. No screen-reader measure announcement yet - that's
-          D3.
+        > DONE 2026-08-06. Unlike Left/Right/Ctrl+Left/Right, Home/End never
+          fail outward - no boundary cue call. No screen-reader announcement
+          yet (D3).
+
 [x] C4  Type digits then Enter to jump to a bar; Escape clears; unknown bar
         plays an error sound and does not move - Ref 6
-        > State lives in widgets/timeline_list_widget.py (TimelineListWidget),
-          same file C1-C3 already extended - consistent with D-2 (timeline
-          nav is per-widget, scoped to the Note region, not global).
-        > self._pending_digits: str = "". Key_0..Key_9 (no modifiers) append.
-        > Enter: buffer non-empty -> new MainWindow.navigate_to_typed_measure()
-          parses int(buffer), clears it, calls new MusicData.jump_to_measure(n)
-          -> bool (reuses first_visible_event_index_of_measure from C2, so it
-          respects the Region 2 filter the same way Ctrl+Right does). True ->
-          _update_timeline_views(play_all=True) (plays first note/chord, AC3
-          minus the announcement - D2/D3 cover that generically now, see PDD
-          Ref 6 AC3 rewording). False -> _play_boundary_cue() (reuse as-is;
-          confirmed: same cue as moving beyond the extent of the score) and
-          position unchanged (AC4). Buffer empty -> Enter is a no-op; E6 (2-bar
-          audition on Enter) isn't built yet, so this key is reserved but inert.
-        > Escape: buffer non-empty -> clear silently, no cue, no position
-          change (AC5). Buffer empty -> no-op.
-        > Any other key already handled here (Left/Right/Ctrl+Left/Right/
-          Home/End/Up/Down) clears the pending buffer first - stale typed
-          digits silently waiting for a future Enter would be confusing.
-        > Feedback while typing: Phase D announcements don't exist yet, so
-          while digits are pending, the status bar's position field (C6)
-          shows "Go to bar: {digits}" in place of "Measure X beat Y",
-          reverting on Enter/Escape/any clearing key.
-        > DEPENDENCY: user is providing a new 'Long tune' sample score
-          (files/) for realistic multi-digit measure numbers. Until it lands,
-          tests/fixtures/many_measures.musicxml (~12 one-beat bars) covers
-          the multi-digit case at unit level; add a score_long_tune fixture
-          to tests/conftest.py once the real file exists.
-        > TESTS: tests/models/test_music_data.py (jump_to_measure - valid,
-          unknown measure, pickup bar numbered 0 on score_duet);
-          tests/test_main_window.py (digits+Enter jumps; unknown number+Enter
-          plays the boundary cue and doesn't move; Escape clears without
-          moving; an arrow key clears pending digits).
-        > DONE 2026-08-06. Built exactly as planned above:
-          MusicData.jump_to_measure() (models/music_data.py) bounds against
-          _sounding_bounds() the same way move_timeline_*_by_measure already
-          does, so a bar that's only trailing rest padding is not a valid
-          target either. TimelineListWidget tracks _pending_digits and clears
-          it on Enter/Escape/any other handled key. New fixture
-          tests/fixtures/many_measures.musicxml (12 one-beat bars) covers the
-          multi-digit case at unit level. 7 new tests (3
-          tests/models/test_music_data.py beyond the plan's list -
-          multi-digit, voice-filter-respecting, rest-padded-bar cases - plus
-          4 in tests/test_main_window.py). Full suite: 82 passed after this
-          task alone.
+        > DONE 2026-08-06. State (_pending_digits) lives in
+          TimelineListWidget per D-2 (per-widget, not global).
+          jump_to_measure() bounds against _sounding_bounds() so a bar
+          that's only trailing rest padding isn't a valid target either. Any
+          other handled key clears pending digits first, so stale typed
+          digits can't silently wait for a future Enter.
         > FOLLOW-UP 2026-08-06: the user's real 'Long tune' score landed
-          (files/long tune/, 130 measures on paper, 4/4, no pickup, one
-          part). Added the score_long_tune conftest fixture and
-          test_jump_to_measure_reaches_a_multi_digit_bar_number_on_a_real_long_score.
-          Its real notes end around measure 112 - measures 113-130 are
-          trailing empty bars padding the final system, the same rest-only-
-          tail pattern _sounding_bounds already excludes (C5) - so the test
-          targets measure 100, not the highest-numbered measure on the page.
-          Full suite: 100 passed.
+          (files/long tune/, 130 measures on paper, notes end ~112, rest is
+          trailing empty padding - same pattern C5 excludes). Added
+          score_long_tune fixture, tested jump to measure 100.
+
 [x] C5  Audible boundary notification ("doh" sound) - Ref 2 AC4, Ref 3 AC4
-        > DONE 2026-08-06. Decided D-9 as: synthesize through the existing
-          SynthEngine rather than a new asset - a short, quiet, low note
-          (E2, GM 44 Contrabass/double bass, 200ms - "roughly a quaver",
-          independent of the score's own tempo) on a dedicated channel
-          (15) so it can't be mistaken for a part's own instrument and
-          doesn't collide with D-5's per-part channel allocation on any
-          realistic score. main_window.py: MainWindow._play_boundary_cue()
-          plus BOUNDARY_CHANNEL/BOUNDARY_GM_PROGRAM/BOUNDARY_MIDI_PITCH/
-          BOUNDARY_DURATION_MS constants; called from
-          navigate_timeline_left/right and navigate_measure_left/right
-          whenever the corresponding MusicData move_* call returns False.
-          Configurable on/off and choice of sound explicitly deferred (not
-          asked for yet).
-        > FIX 2026-08-06 (live-tested bug, reported against Chessel Duet):
-          "active event" for boundary purposes was any timeline event,
-          including a trailing rest-only run at the end of the final bar -
-          Chessel Duet's last bar is a dotted crotchet on beat 1 followed by
-          rests in every voice on beats 4/5/6, purely padding the bar to a
-          complete measure. Right/Ctrl+Right from the dotted crotchet
-          stepped through those three rest slices before hitting the
-          boundary sound, and End landed on the last (empty) rest slot
-          instead of the dotted crotchet itself.
-          models/music_data.py: added _slice_has_visible_sounding_note()
-          (a visible note whose midi_pitch is not None, i.e. not a rest) and
-          _sounding_bounds() (the first/last index with one) as the real
-          navigable range. move_timeline_left/right, move_timeline_left/
-          right_by_measure and move_timeline_home/end all now bound against
-          this instead of the raw timeline/visible-notes range. An interior
-          rest (sandwiched between sounding notes, e.g. the rest_score
-          fixture's C/rest/E/F) is unaffected and remains individually
-          reachable - only leading/trailing rest-only padding is excluded.
-          New tests in tests/models/test_music_data.py:
-          test_move_timeline_right_stops_at_the_last_sounding_note_not_trailing_rests,
-          test_move_timeline_right_by_measure_stops_at_the_last_sounding_note,
-          test_move_timeline_end_lands_on_the_last_sounding_note_not_a_trailing_rest,
-          test_interior_rest_remains_individually_navigable.
-        > Also changed on request: boundary cue is now C#2 (was E2) at
-          100ms (was 200ms, "half the length") - BOUNDARY_MIDI_PITCH=37,
-          BOUNDARY_DURATION_MS=100 in main_window.py.
+        > DONE 2026-08-06. D-9: synthesized through the existing SynthEngine
+          rather than a new asset - a short, quiet low note on a dedicated
+          channel (15) so it can't collide with a part's own instrument.
+        > FIX 2026-08-06 (live-tested bug): "active event" for boundary
+          purposes included trailing rest-only padding at the end of the
+          final bar (Chessel Duet's last bar has rests in every voice on
+          beats 4/5/6 after the last real note) - Right/Ctrl+Right stepped
+          through the rests before hitting the boundary, and End landed on
+          an empty rest instead of the last real note. Fixed by introducing
+          _sounding_bounds() (first/last index with a visible note whose
+          midi_pitch is not None) as the real navigable range for
+          Left/Right/Home/End/measure-jump - an interior rest sandwiched
+          between sounding notes stays individually reachable; only
+          leading/trailing rest-only padding is excluded.
+        > Boundary cue tuned on request: C#2 at 100ms (was E2 at 200ms).
+
 [x] C6  Status bar: measure/beat/key/time-signature at the current cursor
         position, backed by new per-event key+time-signature tracking -
         Functional Spec, resolves the "Status bar" Discussion Point
-        > New per-event tracking, mirroring how A6 already tracks time
-          signature as it changes through the score.
-        > models/event_slice.py: add time_sig: Tuple[int, int] = (4, 4) and
-          key_fifths: int = 0 to EventSlice.
-        > parsers/timeline_builder.py: _apply_attributes and
-          _MeasureOffsetWalker already carry ts_num/ts_den state through the
-          walk - extend both to also read attrs_elem.find("key/fifths") and
-          carry fifths the same way. Stamp each built EventSlice with the
-          walker's live (ts_num, ts_den) and fifths at that point.
-        > FIFTHS_MAP currently lives in parsers/musicXML_reader.py - move it
-          to new models/key_signatures.py (plain module-level dict, not a
-          class) so both musicXML_reader.py (Region 1's opening-of-score key)
-          and music_data.py (the live-position key) import the same mapping
-          without a parsers->models reverse dependency. See D-11.
-        > models/music_data.py: new get_status_bar_fields() -> List[str],
-          exactly 3 strings in Tab order: "Measure {n} beat {b}" (reuse the
-          trailing-.0-stripping pattern already used for ts_duration in
-          get_region_4_data_for_indices, applied to beat_position), "Key:
-          {FIFTHS_MAP[fifths]}" (same "/" format as Region 1, e.g. "G major /
-          E minor" - confirmed, no new wording), "Time: {num}/{den}".
-        > WIDGET: new widgets/status_bar_widget.py - StatusBarWidget(QStatusBar)
-          holding 3 small custom focusable label widgets (QLabel subclass,
-          StrongFocus, visible focus indicator, setAccessibleName/text kept
-          in sync so NVDA announces it on focus). set_fields(list[str])
-          updates the three. Tab/Shift+Tab inside the status bar cycle ONLY
-          among its own 3 fields and wrap - deliberately breaks from every
-          other region widget's Tab-forwards-to-focusNextChild() pattern
-          (region2_list_widget.py), because C7 gives F6/Shift+F6 sole
-          ownership of leaving the status bar pane.
-        > MainWindow.setup_ui(): self.status_bar = StatusBarWidget();
-          self.setStatusBar(self.status_bar) - the real QMainWindow
-          setStatusBar() API is what makes NVDA+End ("report status bar")
-          work automatically, no custom accessibility plumbing needed beyond
-          that. New _update_status_bar() called from both
-          _update_timeline_views() and _update_ui_regions() (initial load).
-        > TESTS: tests/models/test_music_data.py (get_status_bar_fields
-          differs between an early- and late-score position on
-          score_way_to_go, which already changes both time and key signature
-          mid-piece - no new fixture needed); new
-          tests/widgets/test_status_bar_widget.py (pure widget state, mirrors
-          test_region2_manager.py's style - field count, Tab wraps,
-          set_fields updates text + accessible name); tests/test_main_window.py
-          (status bar updates on navigation).
-        > DONE 2026-08-06. Built as planned. One implementation change:
-          _StatusField's Tab/Backtab handling doesn't wait for real Qt focus
-          state - each field is constructed knowing its own index and asks
-          StatusBarWidget.focus_field((index +/- 1) % 3) directly, rather
-          than reading "which field currently has focus" first. Same
-          practical effect, but avoids depending on real focus tracking
-          being correct at the moment the key arrives, so the widget's
-          cycling tests don't need a shown window - they drive
-          _StatusField.event() through qtbot.keyClick and assert on which
-          index focus_field() was called with. Full suite: 90 passed after
-          this task alone.
+        > DONE 2026-08-06. Key signature (fifths) now tracked per-EventSlice
+          the same way A6 tracks time signature (D-11) - FIFTHS_MAP moved to
+          models/key_signatures.py so both Region 1 and the live status bar
+          share one mapping without a parsers->models reverse import.
+          StatusBarWidget uses QMainWindow.setStatusBar() (not a custom
+          widget) so NVDA+End ("report status bar") works natively. Its 3
+          fields cycle Tab/Shift+Tab among themselves only, independent of
+          the regions' own cycle (see C7).
+
 [x] C7  F6 / Shift+F6 toggle focus between the regions area (last-focused)
         and the status bar - Functional Spec
-        > MainWindow tracks self._last_focused_region (default self.region_1),
-          updated via a QApplication.focusChanged connection that only
-          records the widget when it's one of the four regions.
-        > QShortcut(QKeySequence(Qt.Key.Key_F6), self,
-          context=Qt.ShortcutContext.ApplicationShortcut) and a "Shift+F6"
-          counterpart - ApplicationShortcut context is required so it fires
-          regardless of which child list/table widget currently holds focus
-          (a WidgetShortcut-scoped one would be swallowed).
-        > Three panes, in order: menu bar -> last-focused region (or Region 1
-          if none yet) -> status bar's first field -> back to menu bar.
-          Shift+F6 reverses. Determine current pane from self.focusWidget()'s
-          ancestry (menuBar().isAncestorOf(...), one of the 4 regions,
-          status_bar.isAncestorOf(...)).
-        > menuBar().setFocus() moves focus into the menu bar without opening
-          a menu (same effect as pressing Alt) - needs a live check once
-          built. See D-10.
-        > TESTS: tests/test_main_window.py (F6 cycles menu bar -> region ->
-          status bar -> menu bar; F6 restores the last-focused region, not
-          always Region 1; Shift+F6 reverses).
-        > DONE 2026-08-06. Two corrections to the plan above, both found by
-          testing, not assumption:
-          1. menuBar().setFocus() alone does nothing - QMenuBar has no focus
-             policy by default (it normally only gains keyboard focus via
-             the platform's own Alt mechanism, not setFocus()). Fixed with
-             self.menuBar().setFocusPolicy(Qt.FocusPolicy.StrongFocus) in
-             setup_ui(), since here the menu bar is being deliberately used
-             as one of three custom panes, not relying on native Alt
-             behaviour.
-          2. Qt.ShortcutContext.ApplicationShortcut (the plan's original
-             choice) caused ambiguous-shortcut failures once more than one
-             MainWindow instance existed in the same QApplication - exactly
-             what happens across sequential tests in one pytest session, not
-             a real-app scenario, but real all the same. Switched to
-             WindowShortcut (Qt's default context), which still fires
-             regardless of which child widget within THIS window holds
-             focus - the actual requirement - without ApplicationShortcut's
-             app-wide reach.
-          _last_focused_region tracking depends on QApplication.focusChanged
-          having actually been processed - tests that manipulate focus
-          directly (not via a real keypress) need an explicit
-          QApplication.processEvents() call after each .setFocus(), added
-          as a small _focus() test helper.
-          F6/Shift+F6 pane-cycle logic (_cycle_pane_forward/backward) is
-          tested by calling it directly rather than via a simulated F6
-          keypress, plus one separate end-to-end test that does send a real
-          F6 keypress to confirm the QShortcut is actually wired up - real
-          QShortcut activation via a simulated keypress proved less
-          reliable offscreen depending on which widget already had focus
-          when the key arrived (the existing Ctrl+A shortcut has never had
-          a test at all, for the same reason). Full suite: 94 passed after
-          this task alone.
-        > CORRECTION 2026-08-06 (live-tested, reported after the user tried
-          it): the "three panes including the menu bar" design above was
-          the user's own original spec, but after actually using it they
-          reversed that - F6/Shift+F6 now toggle between just two panes,
-          the regions area and the status bar. Menu bar access is left to
-          the OS's native Alt mechanism, not F6, matching ordinary Windows
-          application behaviour. Simplified _cycle_pane_forward/backward
-          into one _toggle_pane() method (a two-state toggle has no
-          separate "reverse"; both shortcuts call it), removed the
-          "menu" branch from _current_pane(), and removed
-          self.menuBar().setFocusPolicy(StrongFocus) - nothing calls
-          menuBar().setFocus() any more, so it was dead weight. See the
-          reworded D-10.
-        > FIX 2026-08-06 (live-tested bug, reported by the user): Tab from
-          Region 4 was landing on the status bar instead of wrapping back
-          to Region 1. Root cause: QWidget.setTabOrder(a, b) splices a link
-          into ONE shared window-wide focus chain, not an isolated loop -
-          the status_bar = StatusBarWidget() call happened AFTER the four
-          setTabOrder() calls that build the region_1->2->3->4->1 loop, so
-          the status bar's three newly-focusable fields got auto-inserted
-          into that same chain wherever Qt naturally placed them, breaking
-          the region_4->region_1 link. Fixed by moving the status bar
-          construction before the setTabOrder() calls, so the loop is
-          re-asserted as the chain's final word. New regression test
-          test_tab_from_region_4_wraps_back_to_region_1_not_the_status_bar.
-          Full suite: 101 passed.
-        > FIX 2026-08-06 (second pass, live-tested bug reported by the
-          user): the diagnosis above was incomplete. Reordering the
-          setTabOrder() calls fixed region_4->region_1 but the user then
-          found Tab from Region 1 landed on the status bar instead of
-          Region 2 - and that pattern (fix the wrap edge, break a forward
-          edge, or vice versa) repeats no matter what order the four calls
-          run in. Root cause, confirmed by direct experiment against Qt's
-          real focus chain (see conversation notes): QWidget.setTabOrder(a,
-          b) works by relocating b's node in ONE shared window-wide ring;
-          relocating a node resets ITS OWN outgoing pointer as a side
-          effect. Closing a 4-widget loop needs all four widgets touched -
-          region_1 both as a source (call 1: region_1->region_2) and as a
-          target (call 4: region_4->region_1) - so whichever of those two
-          calls runs first has its edge silently discarded when the other
-          one relocates region_1 again. With 4 widgets each used once as a
-          source and once as a target, the dependency between the calls
-          (call N's edge only sticks if call N happens after whatever call
-          last used N's source widget as a target) is circular: no call
-          order satisfies it. This isn't a bug in this codebase's usage of
-          setTabOrder, it's a structural limitation of pairwise chain
-          splicing applied to a closed ring - not fixable by reordering,
-          only by not doing it that way.
-          Fix: stopped using QWidget.setTabOrder/focusNextChild/
-          focusPreviousChild for the regions area entirely. Removed the
-          four setTabOrder() calls from setup_ui(). Added
-          MainWindow.focus_next_region(current)/focus_previous_region(current),
-          which index into a fixed [region_1, region_2, region_3, region_4]
-          list and call .setFocus() directly on the neighbour - no chain,
-          no relocation, no circular dependency. RegionTableWidget,
-          Region2ListWidget and TimelineListWidget's Tab/Backtab handlers
-          now call window().focus_next_region(self)/focus_previous_region(self)
-          instead of window().focusNextChild()/focusPreviousChild(). The
-          status bar's own Tab/Backtab handling (_StatusField.event(), C6)
-          was never part of this problem - it already bypassed the global
-          chain by calling StatusBarWidget.focus_field() directly, which is
-          exactly the pattern now applied to the regions area too.
-          Replaced test_tab_from_region_4_wraps_back_to_region_1_not_the_status_bar
-          with test_tab_cycles_through_all_four_regions_and_wraps (checks
-          the full 1->2->3->4->1 loop, not just the one edge that happened
-          to be under test before) and a new
-          test_shift_tab_cycles_through_all_four_regions_in_reverse. Full
-          suite: 102 passed, re-run several times with no flakiness.
+        > DONE 2026-08-06, revised twice after live testing - see D-10/D-12
+          for the settled design. Gotchas found by testing, not assumption:
+          1. QMenuBar has no focus policy by default - menuBar().setFocus()
+             alone does nothing (moot once the pane count below dropped to
+             two, but worth remembering for any future menu-bar focus work).
+          2. Qt.ShortcutContext.ApplicationShortcut caused ambiguous-shortcut
+             failures once more than one MainWindow existed in the same
+             QApplication (true across sequential pytest tests, not just a
+             hypothetical) - switched to WindowShortcut, which still fires
+             regardless of which child widget within THIS window has focus.
+          3. CORRECTION (live-tested, user reversed their own original
+             3-pane spec after trying it): F6/Shift+F6 now toggle between
+             just TWO panes (regions, status bar) - menu bar access stays on
+             the OS's native Alt mechanism. See D-10.
+        > FIX 2026-08-06 (live-tested, two rounds): Tab from Region 4 was
+          landing on the status bar instead of wrapping to Region 1, and
+          fixing that broke a different edge (Region 1 -> status bar instead
+          of Region 2). ROOT CAUSE, confirmed by direct experiment:
+          QWidget.setTabOrder(a, b) splices into ONE shared window-wide
+          focus ring; relocating any node resets its own outgoing pointer as
+          a side effect. Closing a 4-widget loop needs all four touched, and
+          the dependency between the calls is circular - no call order
+          satisfies it. This is a structural limitation of pairwise chain
+          splicing applied to a closed ring, not a bug in how this code used
+          setTabOrder - not fixable by reordering. Fixed by abandoning
+          setTabOrder/focusNextChild/focusPreviousChild for the regions area
+          entirely: MainWindow.focus_next_region/focus_previous_region index
+          into a fixed 4-widget list and call .setFocus() directly (D-12) -
+          same pattern the status bar's own Tab cycling already used.
+          GOTCHA WORTH REMEMBERING: don't use setTabOrder to close a
+          focus-cycle loop of 3+ widgets in this codebase.
+
 [x] C8  Menu bar: add Navigation menu (First/Last measure, Goto Measure
         dialog) and Help menu (About); Edit/View/Options deferred to their
         owning phases - Functional Spec
-        > Navigation menu: "Move to First Measure" -> navigate_timeline_home()
-          then self.region_3.setFocus(); "Move to Last Measure" -> same with
-          navigate_timeline_end(); "Go to Measure..." -> new
-          widgets/goto_measure_dialog.py (small modal QDialog: label +
-          digits-only QLineEdit + OK/Cancel), reusing
-          MusicData.jump_to_measure() from C4 on accept, playing the boundary
-          cue on an invalid number, moving focus to Region 3 on success.
-        > Help menu: "About Recall Score..." -> new widgets/about_dialog.py
-          (AboutDialog(QDialog), not a bare QMessageBox.about() call - the
-          user wants room to add links and formatted text later, e.g. a
-          QLabel with setOpenExternalLinks(True)/rich text and an OK button).
-          Static description for now; no version number exists anywhere in
-          the repo yet, so none is invented here.
-        > Edit/View/Options intentionally NOT added yet. Edit -> lands with
-          K1 (Ctrl+Shift+E mode toggle); Options -> lands with F2 (Note
-          Display dialog). View has no owning task in the catalogue at all -
-          open point, not silently decided (see PDD Open Design Decisions).
-        > TESTS: tests/test_main_window.py (Navigation menu's First/Last
-          actions move focus + position; Goto Measure dialog accepts a valid
-          number and rejects an invalid one with the boundary cue; About
-          action opens without crashing).
-        > DONE 2026-08-06. Built as planned; one fix along the way -
-          _show_goto_measure_dialog() originally compared against
-          GotoMeasureDialog.DialogCode.Accepted, which broke as soon as a
-          test monkeypatched main_window.GotoMeasureDialog to inject a
-          pre-built dialog (the patched name then pointed at a plain
-          function, which has no DialogCode). Switched the comparison to
-          QDialog.DialogCode.Accepted (inherited, unaffected by patching the
-          subclass name) - GotoMeasureDialog/AboutDialog are still
-          constructed by name so tests can monkeypatch main_window's
-          reference to them and inject a pre-configured dialog instead of
-          driving a real exec() event loop. Full suite: 99 passed after this
-          task alone.
-        > FOLLOW-UP 2026-08-06 (live-tested refinements, reported by the
-          user): four small changes after trying C8/C4 for real.
-          1. Go to Measure... now opens on Ctrl+G too (kept as a menu item
-             as well). GotoMeasureDialog gained a current_measure parameter;
-             _show_goto_measure_dialog() reads
-             MusicData.get_current_slice().measure and passes it through, so
-             the field opens pre-filled with the current bar and selected
-             for easy overtyping instead of blank.
-          2. Clarified this dialog is "go to measure", not "go to measure
-             and beat" - the label now reads "Measure number (whole numbers
-             only, no beat position)". The actual rejection of "4.3"-style
-             input was already there (QIntValidator has never accepted a
-             decimal point) - this was a wording gap, not a validation gap.
-          3. "Move to First Measure"/"Move to Last Measure" renamed to
-             "Move to First Note"/"Move to Last Note" - matches what they've
-             always actually done (navigate_timeline_home/end jump to the
-             first/last SOUNDING note via _sounding_bounds(), skipping
-             leading/trailing rest-only padding, not "measure 1" literally).
-             Both gained real keyboard shortcuts, Home and End respectively
-             (previously only a same-menu mnemonic, no actual shortcut) -
-             confirmed by direct testing that these coexist fine with Region
-             3's own Home/End handling (TimelineListWidget's keyPressEvent
-             intercepts the key directly before Qt's shortcut system would
-             fire the QAction, so the region keeps its existing behaviour;
-             the menu shortcut fires when focus is elsewhere, e.g. Region 1).
-          4. QAction/QMenu objects created in setup_menu() were local
-             variables, not attributes - PySide's Python wrapper for one
-             (navigation_menu) got garbage-collected despite the underlying
-             C++ QMenu still being alive and parented, producing "libshiboken:
-             Internal C++ object already deleted" the first time a test
-             tried to inspect it after the fact. Fixed generally, not just
-             worked around: every QAction in setup_menu() (first_measure_
-             action, last_measure_action, goto_measure_action, about_action)
-             is now self.first_measure_action etc., matching how
-             f6_shortcut/select_all_shortcut were already stored.
-          Also: introduced version.py (__version__ = "0.1.1") and put it in
-          the About dialog - see D-13. Full suite: 107 passed.
-        > FOLLOW-UP 2026-08-07 (live-tested refinements, reported by the
-          user): five more small changes.
-          1. GotoMeasureDialog.measure_edit label simplified from "Measure
-             number (whole numbers only, no beat position):" to just
-             "Measure number:" - too verbose for daily use now the decimal
-             rejection itself is well established.
-          2. GotoMeasureDialog focus fix: setFocus() was called in __init__,
-             before the dialog's native window existed, so Qt accepted the
-             focus internally but no accessibility focus-changed event ever
-             reached NVDA - it kept announcing whatever had focus before
-             Ctrl+G, only catching up once Tab was pressed. Deferred to
-             showEvent via QTimer.singleShot(0, ...), so the native window
-             (and its accessible object) exist before the focus change fires.
-          3. Reverted item 3 of the 2026-08-06 FOLLOW-UP above: "Move to
-             First/Last Note"
-             firing from any region (via the WindowShortcut-context QAction)
-             turned out to be exactly the confusing, non-standard-Windows
-             behaviour the RESOLVED "global navigation keystrokes" Discussion
-             Point (PDD) had already ruled out - discovered by the user
-             actually using it, not by re-reading the earlier decision.
-             first_measure_action/last_measure_action are now disabled
-             (greyed out) unless Region 3 already has focus, tracked via the
-             existing focusChanged hookup (_update_navigation_actions_enabled,
-             called from _on_focus_changed). This also brings Ctrl+G's menu
-             siblings into compliance with Ref 4 AC1, which they never
-             actually satisfied before now.
-          4. New Navigation > Move to Notes (N), always enabled: sets focus
-             to Region 3 without moving the timeline. This is the direct
-             answer to the "too much Tabbing back" concern the original
-             Discussion Point flagged as a reason to revisit - solved by a
-             dedicated jump-to-Note-region command instead of making
-             navigation itself global again.
-          5. AboutDialog text split into three separate QLabel widgets (name/
-             version/description), each given Qt.FocusPolicy.StrongFocus, so
-             NVDA users can Tab through the About text piece by piece instead
-             of hearing one large label read all at once - same pattern as
-             StatusBarWidget's _StatusField.
-          PDD updated to match: Key Strokes table row for Ctrl+G trimmed back
-          to a bare keystroke->action mapping (the prefill detail lives here,
-          not there); Home/End rows reworded now the menu items no longer
-          act from elsewhere; new N row added. Discussion Points' "global
-          navigation keystrokes" entry annotated REVISITED 2026-08-07 with
-          the outcome above. version.py bumped to 0.1.3. Full suite: 117
-          passed.
+        > DONE 2026-08-06. GotoMeasureDialog/AboutDialog are constructed by
+          name (not inlined) so tests can monkeypatch main_window's
+          reference and inject a pre-built dialog instead of driving a real
+          blocking exec() loop. GOTCHA: comparing against
+          GotoMeasureDialog.DialogCode.Accepted broke once a test
+          monkeypatched the name to a plain function (no DialogCode) -
+          compare against the inherited QDialog.DialogCode.Accepted instead.
+          GOTCHA: QAction/QMenu objects built as local variables in
+          setup_menu() get silently garbage-collected (PySide's Python
+          wrapper dies even though the underlying C++ QMenu is still alive
+          and parented, producing "libshiboken: Internal C++ object already
+          deleted") - every QAction must be kept as a self.* attribute.
+        > FOLLOW-UP 2026-08-06 (live-tested refinements): Ctrl+G opens Goto
+          Measure pre-filled with the current bar. "Move to First/Last
+          Measure" renamed "...Note" to match actual behaviour
+          (navigate_timeline_home/end skip trailing rest padding, not
+          literal measure 1). Introduced version.py (D-13).
+        > FOLLOW-UP 2026-08-07 (live-tested refinements): GotoMeasureDialog's
+          setFocus() in __init__ fired before the native window existed, so
+          NVDA never caught the focus change until Tab was pressed -
+          deferred to showEvent via QTimer.singleShot(0, ...). Reverted
+          "Move to First/Last Note" firing from any region - live use showed
+          this was exactly the confusing global-navigation behaviour the
+          Discussion Point had already ruled out (D-2); both actions are now
+          disabled unless Region 3 has focus, and a dedicated always-enabled
+          "Move to Notes" (N) answers the "too much Tabbing back" concern
+          instead. AboutDialog text split into 3 focusable QLabels so NVDA
+          can Tab through it piece by piece. version.py -> 0.1.3.
 
 
 ###
@@ -892,614 +379,179 @@ assumed:
       tempo tracking built after all - see E1's second FIX note below.
 
 [x] E1  Separate playback tempo from score tempo; enforce 30-300 bpm - Ref 12 AC1/AC2
-        > models/music_data.py: new class constants MIN_TEMPO_BPM=30,
-          MAX_TEMPO_BPM=300 (same pattern as PERCUSSION_CHANNEL/
-          MAX_MIDI_CHANNELS). New field playback_tempo_offset: float = 0.0 -
-          tempo_bpm itself is never written to by this task (AC1: "playback
-          tempo changes do not change tempo definitions within the piece" -
-          Region 1's displayed tempo stays exactly what A9 already built).
-        > effective_tempo_bpm() -> float: tempo_bpm + playback_tempo_offset,
-          already guaranteed in-range by the clamp below so no reclamping
-          needed at read time.
-        > set_playback_tempo_offset(offset: float): clamps offset to
-          [MIN_TEMPO_BPM - tempo_bpm, MAX_TEMPO_BPM - tempo_bpm] before
-          storing - this is the one guard point; because tempo_bpm is a
-          single fixed value (see the multi-tempo scope decision above), one
-          clamp at write time is sufficient, no per-read reclamping.
-        > reset_playback_tempo(): sets the offset back to 0.0 (Ref 12 AC4 -
-          D key wires to this in E2).
-        > get_current_duration_ms() (line ~467) switches from self.tempo_bpm
-          to self.effective_tempo_bpm() - the one existing call site where
-          tempo becomes real playback timing today. This is also what makes
-          Shift+Space chord audition (E7) automatically respect the offset
-          with no separate work in E7.
-        > TESTS: tests/models/test_music_data.py - offset clamps at both
-          hard boundaries (e.g. asking for +500 on a 120bpm score clamps to
-          +180, not 620); reset returns effective_tempo_bpm to tempo_bpm;
-          get_current_duration_ms reflects an active offset; tempo_bpm field
-          itself never changes regardless of offset.
-        > DONE 2026-08-07. Built exactly as planned, no deviations.
-        > FIX 2026-08-07 (live-tested bug, reported by the user against
-          Chessel Duet, eighth=96): the plan above clamped and computed
-          everything in tempo_bpm's own units (quarter-note BPM, e.g. 48)
-          without accounting for A9's separate score-display units (e.g. 96
-          eighth-notes-per-minute) - so raising the offset by "10" via F
-          silently meant 10 quarter-BPM (20 in the score's own displayed
-          units), and the hard 30-300 boundary applied to the quarter-BPM
-          number instead of what the user actually reads/types. New
-          MusicData fields tempo_beat_unit_quarter_length/tempo_beat_unit_name
-          (populated by parsers/musicXML_reader.py's _extract_tempo, which
-          already computed this ratio for A9's display string but never
-          exposed it numerically). playback_tempo_offset now lives in the
-          score's own display units, not quarter-note terms;
-          effective_tempo_bpm() (quarter-note BPM, unchanged contract, used
-          by get_duration_ms_for_index/Sequencer) converts the offset back
-          via the ratio; new score_tempo_display_bpm()/
-          effective_tempo_display_bpm() are what E2/E3 now read/write. For
-          every fixture without a real metronome mark (ratio defaults to
-          1.0/"quarter") this is numerically a no-op - only scores with a
-          non-quarter beat unit were ever affected. New regression tests:
-          test_score_tempo_display_bpm_converts_out_of_the_internal_quarter_bpm,
-          test_playback_tempo_offset_is_in_display_units_not_quarter_units,
-          test_playback_tempo_offset_clamp_bounds_use_display_units
-          (tests/models/test_music_data.py), plus
-          test_status_bar_tempo_matches_region_1_not_the_internal_quarter_bpm
-          on the real score_duet fixture
-          (tests/parsers/test_musicxml_reader.py).
-        > FIX 2026-08-07 (second round, live-tested against a user-generated
-          score with real mid-score tempo changes - see the Multi-tempo
-          scope REVISITED note above): TimelineBuilder now walks every
-          <direction><sound tempo=.../>+<metronome> marking in the file, not
-          just the first (MusicXMLReader._extract_tempo's job, unchanged) -
-          new models/tempo_change.py (TempoChange: quarters_from_start,
-          tempo_bpm, beat_unit_quarter_length, beat_unit_name,
-          display_number) and models/duration_units.py (beat-unit-name <->
-          quarter-length ratio, shared with MusicXMLReader._beat_unit_name
-          which now delegates to it instead of keeping its own copy of the
-          DURATION_TYPE_NAMES/DOTS_PREFIX dicts). MusicXML's <sound
-          tempo="X"> is always quarter-notes-per-minute regardless of the
-          marking's own beat unit, so no conversion is needed there - only
-          the beat-unit label needs translating, from <beat-unit>/
-          <beat-unit-dot> elements.
-          MusicData.tempo_changes (populated from TimelineBuilder.build() as
-          a side effect, so the fast ElementTree-only path timeline tests
-          use gets it too, no music21 needed) is a sorted list callers query
-          via the new _tempo_change_at(index). score_tempo_display_bpm(),
-          effective_tempo_display_bpm() and effective_tempo_bpm() all gained
-          an optional `index` parameter (default: the cursor, same
-          convention _visible_notes() already uses) so each reads whichever
-          tempo is actually in effect at that position; new
-          tempo_beat_unit_name_at(index) for the matching label.
-          set_playback_tempo_offset() clamps against the CURRENT position's
-          tempo, not the score's opening one - matches the original E1/E2
-          design intent ("F/S add to whatever the current tempo is, since it
-          can change throughout a score"), which was already the documented
-          plan but had no per-position tempo to actually read until now.
-          get_duration_ms_for_index() and Sequencer._delay_ms_to() both pass
-          the relevant index explicitly rather than relying on the cursor
-          default - _delay_ms_to in particular uses the CURRENT step's own
-          tempo (not the next step's) since a marking takes effect starting
-          at its own position, not before it. New fixture
-          tests/fixtures/tempo_change.musicxml (quarter=100 M1 ->
-          quarter=200 M2) backs new tests in
-          tests/models/test_timeline_characterisation.py,
-          tests/audio/test_sequencer.py (delay actually changes exactly at
-          the boundary, using the old tempo for the approach and the new
-          one from the marked point onward).
+        > DONE 2026-08-07. playback_tempo_offset clamped once at write time
+          to [MIN-tempo_bpm, MAX-tempo_bpm] (single fixed tempo_bpm, so one
+          clamp suffices - see the multi-tempo scope decision above).
+          tempo_bpm itself (Region 1's display) is never written to.
+        > FIX 2026-08-07 (live-tested, Chessel Duet eighth=96): offset and
+          the 30-300 clamp were computed in tempo_bpm's own quarter-note-BPM
+          units, not the score's own display units (A9) - raising by "10"
+          via F silently meant 10 quarter-BPM (20 in the units the user
+          actually reads/types). playback_tempo_offset now lives in display
+          units; effective_tempo_bpm() (quarter-note BPM, used internally by
+          playback) converts back via the beat-unit ratio A9 already
+          computed but never exposed numerically. GOTCHA WORTH REMEMBERING:
+          any new tempo-facing field must be explicit about which unit
+          system it's in (internal quarter-BPM vs the score's own display
+          unit) - this bug recurred twice more (E2, E3) from the same
+          conflation before it was fully stamped out.
+        > FIX 2026-08-07 (second round, real mid-score tempo changes):
+          TimelineBuilder now walks every <sound tempo>+<metronome> marking
+          in the file, not just the first - MusicData.tempo_changes, queried
+          via _tempo_change_at(index) so tempo-reading methods respect
+          whichever marking is in effect at the cursor, not just the
+          score's opening tempo. <sound tempo="X"> is always quarter-notes-
+          per-minute regardless of the marking's own beat unit - only the
+          beat-unit label needs translating.
 
 [x] E2  Tempo up/down in 10 bpm steps and a reset control - Ref 12 AC3/AC4
-        > New MainWindow methods tempo_faster()/tempo_slower()/tempo_reset(),
-          each calling the matching MusicData method then _update_status_bar()
-          only - no timeline movement, no re-audition (these change how fast
-          things play, not what's currently selected).
-        > Three new global QShortcut objects on MainWindow (Key_F, Key_S,
-          Key_D; WindowShortcut context per the scope decision above), stored
-          as self.tempo_faster_shortcut etc. (C8's lesson: QAction/QShortcut
-          objects must be kept as attributes, not locals, or PySide's Python
-          wrapper gets garbage-collected out from under the live C++ object).
-        > Live-check for key collisions before committing: F/S/D must not
-          already be claimed by an existing shortcut or menu mnemonic
-          (Alt+letter mnemonics use a different modifier so should be clear,
-          but confirm by running the app, not by inspection alone).
-        > widgets/status_bar_widget.py: StatusBarWidget grows from 3 fields to
-          4 - _StatusField Tab/Backtab index math (C6) and any hardcoded field
-          count in tests both need updating for the new wrap-around.
-        > models/music_data.py: get_status_bar_fields() appends a 4th string -
-          "Playback tempo: {effective} bpm" when the offset is non-zero, else
-          "Playback tempo: {tempo_bpm} bpm (score default)" so it's obvious
-          when no offset is applied.
-        > PDD Key Strokes table gains F/S/D rows once built and verified live.
-        > TESTS: tests/test_main_window.py (F/S/D update MusicData's offset
-          and the status bar's 4th field, D resets to score default);
-          tests/widgets/test_status_bar_widget.py (4-field Tab wrap).
-        > DONE 2026-08-07. Built exactly as planned. PDD Key Strokes table
-          updated with the F/S/D rows. "Verified live" only covers the
-          automated suite (including a real QShortcut activation test via a
-          shown, offscreen window, same technique C7/C8 used for F6/Ctrl+G) -
-          this has not yet been exercised by the user in the real app.
-        > FIX 2026-08-07 (live-tested bug, reported by the user): the status
-          field showed effective_tempo_bpm() (raw quarter-note BPM, e.g. 48)
-          instead of the score's own display units (96) - see E1's FIX note,
-          same root cause. _tempo_status_field() now reads
-          effective_tempo_display_bpm() and includes the beat unit name in
-          the text, e.g. "Playback tempo: 96 eighth notes per minute", not
-          a bare "48 bpm".
-        > FOLLOW-UP 2026-08-07 (requested by the user): a 5th status bar
-          field, "Playback: Stopped/Playing/Paused" (Ref 10) - not part of
-          the original E2 plan, added after live testing showed no way to
-          check playback state without watching/listening for it directly.
-          StatusBarWidget.FIELD_COUNT is now 5; new set_field(index, text)
-          for updating just this one field without disturbing the other
-          four (needed because phrase audition, E6, and pause/resume must
-          NOT touch the position fields the way a full status bar refresh
-          would - the user specifically praised position fields staying put
-          during audition). MainWindow._playback_status_text()/
-          _update_playback_status_field(), wired into toggle_play_stop,
-          toggle_pause_resume, _stop_sequencer, audition_phrase, and a new
-          Sequencer.finished connection (_on_sequencer_finished) so the
-          field also catches a run ending naturally, not just an explicit
-          stop.
+        > DONE 2026-08-07. F/S/D (tempo faster/slower/reset) are GLOBAL
+          shortcuts (WindowShortcut), not Note-region-scoped, since tempo is
+          a playback-wide setting with no key collision like arrow-key
+          navigation has (see the Phase E scope note above). Status bar's
+          4th field shows "Playback tempo: X bpm (score default)" when the
+          offset is zero, so it's obvious no offset is applied.
+        > FIX 2026-08-07: same units bug as E1 - status field showed raw
+          quarter-note BPM instead of the score's display units.
+        > FOLLOW-UP 2026-08-07: 5th status bar field, "Playback:
+          Stopped/Playing/Paused" (Ref 10), added after live testing showed
+          no way to check playback state without listening. Phrase audition
+          (E6) and pause/resume must NOT trigger a full status bar refresh
+          (would disturb the position fields the user specifically praised
+          staying put) - new set_field(index, text) updates just one field.
 
 [x] E3  Tempo dialog accepting decimal values - Ref 12 AC5
-        > New widgets/tempo_offset_dialog.py: TempoOffsetDialog(QDialog),
-          same shape as GotoMeasureDialog (C8) - label + QDoubleValidator-
-          backed QLineEdit + OK/Cancel. This is a TEMPO OFFSET dialog, not an
-          absolute-tempo dialog, per the user's own reasoning: the score's
-          tempo is the default and F/S/D/this dialog all adjust an offset
-          from it, since a score's own tempo can vary by position (future
-          multi-tempo work) and an absolute-value dialog would fight that.
-          Pre-filled with the current offset, decimal point allowed (unlike
-          GotoMeasureDialog's QIntValidator).
-        > Menu placement: Options menu (its first entry - Options doesn't
-          exist yet, C8 deferred it to F2's Note Display dialog; this task
-          creates it a version earlier). Revisit placement if F2 lands first
-          and prefers a different structure.
-        > On accept: parse the decimal, call
-          MusicData.set_playback_tempo_offset() (E1) - a value outside the
-          hard boundaries is CLAMPED and accepted, not rejected (matches AC2
-          "boundaries are enforced" rather than a validation error).
-        > Focus returns to whatever had it before the dialog opened (capture
-          QApplication.focusWidget() on open) - unlike GotoMeasureDialog,
-          which deliberately moves focus to Region 3 on success, there's no
-          equivalent "obvious next place" for a tempo change.
-        > TESTS: tests/test_main_window.py (dialog accepts a decimal value,
-          rejects non-numeric input via the validator, clamps rather than
-          rejects an out-of-range value).
-        > DONE 2026-08-07. Built exactly as planned. Options menu created
-          with just this one entry, as planned.
-        > FIX 2026-08-07 (live-tested bug, reported by the user): "when the
-          offset was already 130, the dialogue prepopulated to 82" - same
-          root cause as E1/E2's tempo-unit fix, the dialog was reading/
-          writing playback_tempo_offset before it meant "score display
-          units". The dialog itself needed no logic change once E1's fix
-          landed (it already just reads/writes the offset verbatim) - only
-          its label, which now names the actual unit
-          (TempoOffsetDialog(beat_unit_name=...)) so entering "10" and
-          seeing "10" reflected elsewhere is never ambiguous again.
-        > FOLLOW-UP 2026-08-07 (requested by the user): opens on Ctrl+T too,
-          same scope as Ctrl+G (C8) - fires from the main application area
-          and the status bar, anywhere a shortcut normally works.
+        > DONE 2026-08-07. This is a TEMPO OFFSET dialog, not an absolute-
+          tempo one, per the user's reasoning: the score's own tempo can
+          vary by position (multi-tempo, E1's second FIX), and an absolute-
+          value dialog would fight that. An out-of-range value is CLAMPED on
+          accept, not rejected (matches AC2's "boundaries are enforced").
+        > FIX 2026-08-07: same tempo-units bug as E1/E2 (dialog prepopulated
+          "82" for an offset the user had set to "130") - no logic change
+          needed once E1's fix landed, only the label, which now names the
+          actual unit so entered/displayed numbers can't be ambiguous again.
+        > FOLLOW-UP: opens on Ctrl+T too, same scope as Ctrl+G.
 
 [x] E4  Sequencer: schedule events over time from a start index, with
         stop/pause/resume. Foundation for E5-E9.
-        > PREREQUISITE: timeline_slices only carries ts-relative
-          beat_position (resets every measure, Ref 18) - not enough to
-          compute real elapsed time between two events for scheduling. New
-          EventSlice.quarters_from_start: float, stamped by
-          parsers/timeline_builder.py as it walks (running total of quarters
-          per measure using each measure's own ts_num/beat_unit, independent
-          of the ts-relative display units) - same per-slice-state pattern
-          already used for time_sig/key_fifths (C6/D-11), so this is additive
-          to the existing walk, not a rewrite of it.
-        > New audio/sequencer.py (one class per file, per the established
-          layout) - Sequencer(music_data, synth). Uses a single QTimer,
-          rescheduled one step at a time (not N pre-scheduled timers), so
-          pause/stop/an F/S tempo change mid-playback just cancels and
-          reschedules the next step instead of unwinding a queue built with
-          stale timing.
-        > API: play_from(start_index, end_index=None, update_cursor=True),
-          pause(), resume(), stop(). Internal state: _current_index,
-          _is_playing, _is_paused, _original_start_index (Ref 10 AC5, "stop
-          reverts to the original position"). The update_cursor flag exists
-          for E6 (phrase audition should not permanently move
-          active_event_index once it finishes).
-        > Each step: play the slice's currently-visible notes via
-          MusicData.get_playback_events_for_indices() (so Region 2 filtering,
-          Ref 7, still applies during playback, not just during manual
-          navigation), then compute delay_ms to the NEXT visible slice from
-          the quarters_from_start delta and
-          MusicData.effective_tempo_bpm() (E1) - re-read live on every step,
-          not cached at play_from time, so an F/S press during playback
-          changes pace immediately.
-        > Stopping mid-note calls synth.stop_all_notes() before tearing down
-          the pending QTimer.
-        > No dependency on metronome (E8/E9 deferred this session).
-        > TESTS: new tests/audio/test_sequencer.py using null_synth - confirm
-          play_from schedules the right sequence of play_chord calls with the
-          right relative delays on a small fixture score (needs a way to
-          advance the QTimer deterministically under pytest-qt, e.g.
-          qtbot.wait or a fake clock - decide the mechanism when writing the
-          test, matching how other Qt-timer-driven code in this repo is
-          tested); pause freezes _current_index; stop reverts it to
-          _original_start_index; resume continues from the paused index, not
-          the original start.
-        > DONE 2026-08-07. Built mostly as planned, one addition beyond the
-          plan: new tests/support/fake_timer.py (mirrors NullSynth/D-7) -
-          Sequencer takes an injectable `timer` constructor argument
-          (defaults to a real QTimer), so tests/audio/test_sequencer.py
-          drives every scheduling decision deterministically via
-          FakeTimer.fire() instead of a real wall-clock wait. One design
-          refinement made while implementing resume(): the plan didn't
-          specify whether resume continues a note already in flight or
-          restarts it - went with the spec's own literal wording ("the
-          position to restart playback") and had resume() re-sound the
-          paused step before continuing forward, not attempt to pick up
-          mid-note. get_playback_events_for_indices() gained an optional
-          `index` parameter (defaults to the cursor, so all pre-existing
-          Region-3-selection call sites are unaffected) and
-          MusicData._visible_notes() likewise, both needed so the Sequencer
-          can read an arbitrary slice without disturbing
-          active_event_index/Region 3's selection - the E6 update_cursor
-          requirement, landing here since it's a MusicData-layer concern.
-          New MusicData helpers: get_playback_events_at_index(),
-          get_duration_ms_for_index(), next_visible_event_index() (rests
-          included, unlike _sounding_bounds() - real playback should take up
-          a rest's time, not skip over it the way navigation does).
-        > FIX 2026-08-07 (live-tested bug, reported by the user as "the
-          pause feature is not working"): pause() left the currently-
-          sounding note ringing out on its own natural duration rather than
-          silencing it - for a short note that duration elapses in well
-          under a second regardless, so there was no audible confirmation
-          that pause had done anything, and the following Space press (see
-          E5's FIX note) then looked like it "did nothing" too since the
-          note had usually already gone silent on its own by then. pause()
-          now also calls synth.stop_all_notes() immediately. Test renamed
-          test_pause_freezes_the_index_and_silences_the_sounding_note,
-          assertion inverted to require the extra stop.
+        > DONE 2026-08-07. New EventSlice.quarters_from_start (a running
+          total independent of the ts-relative display units) makes real
+          elapsed-time scheduling possible. Single QTimer, rescheduled one
+          step at a time (not N pre-scheduled timers) so a mid-playback F/S
+          tempo change just cancels and reschedules the next step rather
+          than unwinding a queue built with stale timing - tempo is re-read
+          live on every step. Sequencer takes an injectable `timer`
+          constructor argument so tests drive scheduling deterministically
+          via a FakeTimer instead of a real wall-clock wait.
+          get_playback_events_for_indices()/_visible_notes() gained an
+          optional `index` parameter so the Sequencer can read an arbitrary
+          slice without disturbing active_event_index/Region 3's selection
+          (the update_cursor flag - phrase audition, E6, needs this).
+        > FIX 2026-08-07 (live-tested, "pause is not working"): pause() left
+          the sounding note ringing out on its own natural duration instead
+          of silencing it - for a short note that's under a second either
+          way, so there was no audible confirmation pause had done anything.
+          pause() now also calls synth.stop_all_notes() immediately.
 
 [x] E5  Play / pause / stop keystrokes; pause refreshes the regions to the
         new position; stop reverts to the original start - Ref 10
-        > Space (already in the PDD Key Strokes table): not playing ->
-          Sequencer.play_from(active_event_index); playing -> stop() (the
-          table already documents Space as "play/stop", not "play/pause" -
-          Ctrl+Space is the separate pause key).
-        > Ctrl+Space (already in the table): pause()/resume() toggle.
-        > Wire Sequencer step callbacks back into MainWindow: each step sets
-          MusicData.active_event_index and calls
-          _update_timeline_views(play_all=False) - audio is already sounding
-          via the sequencer's own call, so play_all=False avoids double-
-          triggering. This is what satisfies AC4 ("pausing refreshes the
-          regions") for free, since the regions already track the live index
-          throughout playback rather than only updating on pause.
-        > On stop: active_event_index reset to
-          Sequencer._original_start_index, then
-          _update_timeline_views(play_all=False) to reflect the reverted
-          position (AC5).
-        > Reaching the end of the piece behaves like a natural stop but
-          WITHOUT reverting position (AC2 doesn't ask for a revert there,
-          only AC5's explicit stop does).
-        > Global shortcuts (scope decision above) - Space/Ctrl+Space are
-          playback transport, not timeline navigation, so D-2's Note-region
-          scoping doesn't apply to them any more than it does to Ctrl+M.
-        > TESTS: tests/test_main_window.py with null_synth - Space starts
-          sequencing through a small fixture and active_event_index advances
-          step by step; a second Space stops and reverts the index;
-          Ctrl+Space pauses (index freezes, regions still reflect the last
-          position) then resumes from there, not from the original start.
-        > DONE 2026-08-07. Built as planned. One real QTimer integration
-          test included (test_sequencer_steps_advance_the_cursor_and_regions_over_real_time),
-          sped up via a very high tempo_bpm so it finishes in well under a
-          second rather than needing a fake clock at the MainWindow layer -
-          the Sequencer's own scheduling math is already covered
-          deterministically by E4's FakeTimer-driven suite, so this one just
-          proves the real QTimer wiring works end to end.
-        > FIX 2026-08-07 (requested by the user): pressing Space to start
-          playback while already on the last active note now plays the
-          boundary ("doh") cue instead of starting the Sequencer - there's
-          nothing ahead of the cursor to play forward, the same "can't move
-          further" signal Left/Right/Ctrl+Left/Right already give (C5).
-          Checked via MusicData.next_visible_event_index() (E4) returning
-          None from the current position.
-        > FIX 2026-08-07 (second live-tested round, reported by the user):
-          Space while paused was treated the same as Space while playing
-          (stop and revert to the original start), so resuming after
-          Ctrl+Space required pressing Space twice - once to "stop" the
-          pause, once more to actually restart. toggle_play_stop() now
-          checks is_paused first and calls Sequencer.resume() there instead
-          of _stop_sequencer(). Ctrl+Space (toggle_pause_resume) narrowed to
-          pause-only - it used to also resume on a second press, which
-          collided with Space's new job. Tests updated:
-          test_space_resumes_from_the_paused_position_not_stops (replaces a
-          test that had locked in the buggy "Space=stop" behaviour as
-          correct), test_ctrl_space_pauses_and_space_resumes.
+        > DONE 2026-08-07. Space/Ctrl+Space are global (playback transport,
+          not timeline navigation, so D-2's Note-region scoping doesn't
+          apply - same as Ctrl+M). Each Sequencer step sets
+          active_event_index and refreshes the regions, which satisfies
+          AC4's "pausing refreshes the regions" for free.
+        > FIX 2026-08-07: Space on the last active note now plays the
+          boundary cue instead of starting playback with nothing ahead to
+          play.
+        > FIX 2026-08-07 (second round): Space while paused was treated the
+          same as Space while playing (stop + revert to original start), so
+          resuming after Ctrl+Space needed two Space presses. toggle_play_stop()
+          now checks is_paused first and resumes instead. Ctrl+Space
+          narrowed to pause-only (it used to also resume on a second press,
+          colliding with Space's new job).
 
 [x] E6  Two-bar phrase audition on Enter; re-trigger while playing stops it - Ref 11
-        > Enter is already dual-purpose: C4 built the "pending typed digits"
-          branch (jump to that bar); this task fills in the "buffer empty"
-          branch C4 explicitly left "reserved but inert".
-        > MainWindow.audition_phrase(): start index =
-          first_visible_event_index_of_measure(current.measure) (reused from
-          C2); end bound = the last visible event of the NEXT measure, or the
-          piece's own last sounding event if the current measure is already
-          the last one (bounded by _sounding_bounds(), same guard C5 already
-          applies elsewhere so phrase audition can't run off the end into
-          trailing rest padding).
-        > Sequencer.play_from(start_index, end_index=phrase_end,
-          update_cursor=False) - E4's update_cursor flag means
-          active_event_index is untouched once the phrase finishes, matching
-          AC1/AC2 (this is a listen-to-context action, not a navigation one).
-        > Re-pressing Enter while a phrase is already auditioning stops it
-          (AC3) rather than restarting - same toggle shape as Space (E5), but
-          tracked separately (a distinct "phrase is auditioning" flag on the
-          Sequencer, or on MainWindow) since phrase audition and full
-          from-cursor playback are two different Sequencer.play_from() calls
-          that shouldn't be confused with each other if one is somehow
-          triggered while the other is active (starting either stops
-          whichever is running).
-        > TESTS: tests/test_main_window.py - Enter with an empty digit buffer
-          starts phrase playback from beat 1 of the current measure through
-          the end of the next; a second Enter mid-playback stops it;
-          active_event_index is unchanged after a phrase finishes on its own.
-        > DONE 2026-08-07. Built mostly as planned, two refinements made
-          while implementing:
-          1. "Starting either stops whichever is running" (the plan's own
-             words) turned out to mean Enter should stop ANY active
-             Sequencer run, not just another phrase - pressing Enter while
-             Space-driven full playback (E5) is going now stops that too,
-             symmetric with how Space already stops an in-progress phrase.
-             Factored into a shared MainWindow._stop_sequencer() used by
-             both toggle_play_stop() (E5) and audition_phrase(), rather than
-             a separate "is a phrase auditioning" flag as the plan
-             originally sketched - the Sequencer's own existing
-             update_cursor flag already distinguishes the two cases (only a
-             cursor-tracking run syncs active_event_index back after
-             stopping), so a second flag would have been redundant state.
-          2. New MusicData.last_sounding_event_index() (a public wrapper
-             around the existing private _sounding_bounds(), C5) rather than
-             reaching into the private method directly from main_window.py -
-             kept the module boundary the codebase has consistently held
-             everywhere else (grepped: MainWindow never otherwise calls a
-             MusicData `_`-prefixed method).
-          End-of-piece and last-measure edge cases (no "next measure" to
-          bound by) verified via
-          test_phrase_audition_from_the_last_measure_plays_to_the_end_of_the_piece.
+        > DONE 2026-08-07. Fills in the "buffer empty" Enter branch C4 left
+          inert. update_cursor=False (E4) means active_event_index is
+          untouched once the phrase finishes - this is a listen-to-context
+          action, not navigation. Enter stops ANY active Sequencer run, not
+          just another phrase (symmetric with Space stopping a phrase) - the
+          existing update_cursor flag already distinguishes a
+          cursor-tracking run from a phrase one, so no separate "is a phrase
+          auditioning" flag was needed.
 
 [x] E7  Chord audition on Shift+Space, holding until released or re-pressed - Ref 13
-        > Per the user's clarification: no keystroke-held tracking needed -
-          AC2's "notes hold for their marked length" is already satisfied by
-          each note's own duration via get_current_duration_ms() (E1's
-          effective tempo flows through this automatically, no separate work
-          needed here), and "or pressed again" is satisfied by a plain
-          re-trigger, not by watching for a key-release event.
-        > Most of this already exists: _play_selected_region_3_notes() /
-          synth.play_chord() (main_window.py) already plays the currently
-          selected Region 3 notes at the right duration - today it only fires
-          automatically from navigation (_update_timeline_views(play_all=True)).
-          What's missing is an explicit on-demand trigger independent of
-          moving.
-        > New global Shift+Space QShortcut calling
-          _play_selected_region_3_notes() directly. Re-pressing it while the
-          same chord is already sounding just calls play_chord again -
-          SynthEngine.play_chord already stops previously-active notes before
-          starting new ones (A8), so a re-press naturally retriggers rather
-          than layering notes on top of each other.
-        > TESTS: tests/test_main_window.py - Shift+Space plays the current
-          chord via null_synth with no navigation involved; pressing it twice
-          in a row produces two separate play_chord calls (retrigger
-          behaviour, not held-key state).
-        > DONE 2026-08-07. Built exactly as planned - genuinely needed no
-          Sequencer involvement at all, just one new global QShortcut.
-          Full suite after E1-E7 together: 158 passed, 1.6s. E8/E9
-          (metronome) remain deferred to a future session as planned; E10
-          (latency harness) is still open too.
+        > DONE 2026-08-07. Per the user's clarification, no keystroke-held
+          tracking needed - each note's own duration already satisfies "held
+          for its marked length", and "or pressed again" is satisfied by a
+          plain re-trigger (SynthEngine.play_chord already stops previously-
+          active notes before starting new ones, A8). Needed no Sequencer
+          involvement at all - one new global QShortcut.
 
 BUG FIX 2026-08-07 (reported hangover from E4/E5, live-tested): Sequencer
 reaching the last note flipped is_playing False and emitted finished()
-immediately on the same call stack that started the note sounding, not
-after it had actually rung out for duration_ms. is_playing being False
-while the note was still audibly sounding meant Space, pressed right after,
-took toggle_play_stop()'s "start a new run" branch instead of "stop" - and
-since the cursor was already on the last note, that played the boundary
-cue instead of doing anything sensible ("no man's land"). audio/sequencer.py:
-_sound_current_step() now schedules a genuine ring-out wait (the same timer/
-_advance path, with _pending_next_index left None as the signal that this
-wait is the finish, not a further step) instead of finishing immediately;
-is_playing stays True for the whole wait. Same fix applies to phrase
-audition (E6) reaching its end_index - same code path. Tests updated in
-tests/audio/test_sequencer.py (renamed
-test_playback_waits_for_the_last_note_to_ring_out_before_finishing,
-test_end_index_bounds_playback_for_phrase_audition) and one real-QTimer
-test in tests/test_main_window.py
-(test_phrase_audition_from_the_last_measure_plays_to_the_end_of_the_piece,
-now waits via qtbot.waitUntil instead of asserting finished synchronously).
+immediately - before the note had actually rung out - so a Space pressed
+right after took the "start a new run" branch instead of "stop", and since
+the cursor was already on the last note that played the boundary cue instead
+("no man's land"). Fixed by scheduling a genuine ring-out wait
+(_pending_next_index left None as the signal this wait is the finish, not a
+further step) before flipping is_playing False - applies to both full
+playback and phrase audition (E6), same code path.
 
 [x] E8  Metronome: click every beat, accented click on beat 1, tick when
         stepping onto a beat position - Ref 14 AC1-AC3
-        > DONE 2026-08-07. Click generation: confirmed with the user before
-          building - reuses the existing in-process FluidSynth SynthEngine
-          (no new audio backend/dependency) via GM program 82 "Lead 2
-          (sawtooth)", an actual sawtooth wave, at the nearest equal-
-          tempered MIDI notes to the requested 1200Hz/800Hz (D6=86 accent,
-          G5=79 regular), 40ms, on a dedicated channel (14, alongside
-          BOUNDARY_CHANNEL=15/D-9) - keeps the whole click path inside the
-          audio pipeline already characterised for Ref 9 latency, instead
-          of a second concurrent audio stream of uncertain latency. New
-          audio/metronome.py (plain module, constants + one pure function
-          click_event_for_beat(beat_position), matching the
-          key_signatures.py/duration_units.py "not a class" pattern) - used
-          by both audio/sequencer.py (playback) and main_window.py
-          (navigation) so the two contexts click identically off one rule.
-          audio/synth_engine.py: SynthEngine.play_click() is a fully
-          independent path from the melodic note pipeline - its own
-          _active_click/_click_off_timer, does NOT call stop_all_notes()
-          (so it doesn't cut off a note sounding at the same beat) and
-          isn't touched by a later play_chord() call (so it rings its own
-          fixed 40ms regardless of the next note's duration); folded into
-          stop_all_notes() too so pause/stop still silence it. NullSynth
-          mirrors play_click(), recording to a new .clicks list.
-          models/music_data.py: metronome_enabled field (off by default,
-          resets per score load same as playback_tempo_offset),
-          set_metronome_enabled()/toggle_metronome(). Shortcut: confirmed
-          with the user this should be Ctrl+M, matching what the Product
-          Definition Document's Key Strokes table already documented (the
-          user's own first suggestion, Ctrl+Shift+M, was dropped in favour
-          of the existing spec - no wording change needed there). Wired as
-          the Options menu's new checkable "Toggle Metronome" QAction
-          (Ctrl+M as its shortcut, same pattern as Ctrl+G/Ctrl+T's menu
-          actions - no separate bare QShortcut) rather than F/S/D/Space's
-          bare-QShortcut pattern, since it needed a menu presence too;
-          checked state kept in sync with metronome_enabled (a checkable
-          QAction's own state is announced by screen readers on focus, a
-          small accessibility win for free). Status bar grew a 6th field,
-          "Metronome: On/Off" - same discoverability precedent as E2's
-          playback-status field. widgets/status_bar_widget.py:
-          FIELD_COUNT 5->6.
-          Navigation-triggered clicks (AC3): main_window.py's
-          _play_selected_region_3_notes() now fires a click after (not
-          instead of) playing whatever notes are visible, whenever
-          metronome_enabled and the landed slice's beat_position is a whole
-          beat - fires even when there are no notes at all (a metronome-
-          only beat marker, E9's job to make those reachable).
-          Playback clicks (AC1/AC2): audio/sequencer.py's
-          _sound_current_step() does the same after its play_chord() call -
-          needed no separate scheduling logic, since a silent beat is only
-          ever visited as a step at all because next_visible_event_index
-          now treats it as navigable when the metronome is on (E9).
-          New tests: tests/audio/test_metronome.py (click_event_for_beat
-          pure-function cases), tests/audio/test_sequencer.py (click layers
-          on top of a real note; no click when disabled),
-          tests/test_main_window.py (toggle updates MusicData/menu/status
-          bar; Ctrl+M real keypress; resets to Off on a new score load;
-          navigation click on/off). Full suite: 178 passed after E8 alone.
-        > FIX 2026-08-07 (live-tested, reported by the user after running
-          the app for real): the sawtooth-lead click "was awful". Switched
-          to a GM PERCUSSION voice instead - Claves (GM percussion key map
-          note 75) - which only maps correctly on MIDI channel 10
-          (0-indexed 9), so METRONOME_CHANNEL moved from the arbitrary 14
-          to 9 (the same channel MusicData.PERCUSSION_CHANNEL reserves for
-          a score's own percussion part, D-5 - not a collision, since
-          multiple percussion note numbers legitimately sound at once on
-          channel 10, same as a real drum kit's voices). Since GM
-          percussion notes select a fixed drum sound rather than a tunable
-          pitch, beat 1's accent (AC2) is now distinguished by velocity
-          (127 vs 100) instead of a different note number -
-          click_event_for_beat()'s return shape grew a velocity element;
-          SynthEngine.play_click()/NullSynth.play_click() both gained a
-          velocity parameter. audio/metronome.py:
-          METRONOME_ACCENT_PITCH/METRONOME_CLICK_PITCH replaced with
-          METRONOME_CLAVES_PITCH (75) + METRONOME_ACCENT_VELOCITY (127) /
-          METRONOME_CLICK_VELOCITY (100). Tests updated across
-          tests/audio/test_metronome.py, tests/audio/test_sequencer.py,
-          tests/test_main_window.py to assert on velocity instead of pitch
-          for the accent. latency_harness.py updated to match the new
-          play_click() signature. Full suite: 190 passed.
+        > DONE 2026-08-07. Reuses the existing in-process FluidSynth engine
+          (confirmed with the user) rather than a second audio backend, to
+          stay inside the pipeline already characterised for Ref 9 latency.
+          play_click() is fully independent of the melodic note pipeline -
+          doesn't call stop_all_notes() (so it doesn't cut off a note
+          sounding at the same beat) and isn't touched by a later
+          play_chord() (so it rings its own fixed duration regardless of the
+          next note's length).
+        > FIX 2026-08-07 (live-tested, "was awful"): swapped the synthesized
+          sawtooth lead for GM percussion Claves. GOTCHA: GM percussion only
+          maps correctly on MIDI channel 10 (0-indexed 9), so
+          METRONOME_CHANNEL moved there from an arbitrary 14 - not a
+          collision with a score's own percussion part, since multiple
+          percussion notes legitimately sound at once on channel 10 same as
+          a real drum kit. Percussion notes have no tunable pitch, so beat
+          1's accent is now velocity (127 vs 100), not a different note
+          number. See D-14 - still not a satisfying sound (E11 open).
+
 [x] E9  With metronome on, beat positions become navigable events even where
         no note sounds - Ref 14 AC4, depends on A4
-        > DONE 2026-08-07. parsers/timeline_builder.py: build() now also
-          computes self.beat_markers (a side effect, mirroring
-          tempo_changes) - one synthetic, empty-notes EventSlice per whole
-          beat (1..ts_num) in every measure that has no real event there.
-          New _beat_marker_slices() plus a shared _start_beat() static
-          helper (Ref 17/A3's "pickup notes positioned at the end of the
-          notional bar" formula, previously inlined only at the real-note
-          construction site, now used by both so the two definitions can't
-          drift) - the pickup measure (m_num==0) only gets markers from its
-          own start_beat onward, since beats before that don't correspond
-          to any real time before the piece starts.
-          _measure_start_quarters() extended to also return each measure's
-          own (ts_num, ts_den, fifths) in the same walk, rather than a
-          second one, since the marker pass needs the per-measure beat
-          range/key state.
-          IMPORTANT DESIGN CORRECTION mid-task: the plan's first cut merged
-          beat_markers directly into the returned timeline_slices
+        > DONE 2026-08-07. IMPORTANT CORRECTION mid-task: the first cut
+          merged synthetic beat markers directly into timeline_slices
           unconditionally at parse time ("cheap, harmless when metronome is
-          off"). That claim was wrong - it broke 9 existing tests outright,
-          because CLAUDE.md's own documented Timeline model ("one entry per
-          distinct (measure, offset) with at least one sounding note") is
-          relied on by direct-indexing tests throughout the suite (e.g.
-          test_playback_events_group_simultaneous_notes_by_part asserting
-          len(timeline_slices)==1 for a two-part chord), and markers would
-          silently pad even a session that never touches the metronome.
-          Fixed properly, not patched around: beat_markers stays a SEPARATE
-          list, never touching the canonical timeline_slices while
-          metronome_enabled is False (the default) - the invariant holds
-          exactly as before this feature existed. models/music_data.py:
-          __post_init__ keeps a stable self._real_timeline_slices reference;
-          set_metronome_enabled() rebuilds self.timeline_slices as the
-          sorted merge of real slices + beat_markers only when turning ON,
-          and restores the untouched real list when turning back OFF -
-          relocating active_event_index to the same real position across
-          the rebuild (last slice at or before the current one's
-          quarters_from_start - exact match when one exists, nearest
-          preceding real event when it doesn't, e.g. toggling off while
-          sitting on a marker that has no counterpart in the real-only
-          list at all).
-          New _slice_is_navigable(index) = _slice_has_visible_notes(index)
-          or (metronome_enabled and that slice's beat_position is a whole
-          number) - swapped in for _slice_has_visible_notes at every
-          navigation/stepping call site: move_timeline_left/right,
-          _first_visible_index_by_measure (Ctrl+Left/Right, jump-to-
-          measure), and next_visible_event_index (Sequencer stepping - this
-          is what makes E8's playback click loop visit silent beats with no
-          extra scheduling logic). _slice_has_visible_sounding_note/
-          _sounding_bounds deliberately UNCHANGED - the outer Left/Right/
-          Home/End boundary of the piece stays anchored to real sounding
-          notes only, so metronome mode can't resurrect trailing rest-only
-          padding as navigable (a run of trailing markers sits outside
-          _sounding_bounds() and is correctly never reached by navigation -
-          though the Sequencer's own playback walk, which doesn't consult
-          _sounding_bounds, WILL click through trailing padding during a
-          full Space-driven play-through, which is consistent with AC1
-          having no such exclusion).
-          get_region_3_data() returns ["Click"] instead of ["None"] when
-          landing on a metronome-visible beat marker.
-          New fixture tests/fixtures/sparse_beat.musicxml (3 bars: complete
-          C-D-E-F, then a lone G with a <forward> gap, then a lone A - the
-          gap sits strictly between two sounding notes, not trailing after
-          the piece's last one). New tests in
-          tests/models/test_music_data.py (metronome off/on navigability,
-          toggle-preserves-cursor both directions, markers generated inside
-          a still-ringing note too per AC1's literal "every beat" wording -
-          six_eight_score's C/D quarter notes each only have a real event
-          at their own onset beat, so beats 2/4 still get markers) and
-          tests/audio/test_sequencer.py (Sequencer visits and clicks a
-          silent beat marker, no play_chord call there). Pickup edge case
-          verified against the real score_duet fixture (Chessel Duet, 6/8
-          pickup filled entirely by real notes at beats 4/5/6 - asserts no
-          markers appear at beats 1/2/3, which would mean the wrong
-          start_beat was used). Full suite: 190 passed, ~2.7s.
+          off") - broke 9 existing tests, because CLAUDE.md's documented
+          Timeline model ("one entry per distinct (measure, offset) WITH AT
+          LEAST ONE SOUNDING NOTE") is relied on by direct-indexing tests
+          throughout the suite. Fixed properly: beat_markers is kept as a
+          SEPARATE list; set_metronome_enabled() only merges it into
+          timeline_slices when turning ON and restores the untouched real
+          list when turning OFF, relocating active_event_index to the
+          nearest equivalent real position across the rebuild.
+          _slice_has_visible_sounding_note/_sounding_bounds deliberately
+          UNCHANGED - the outer Left/Right/Home/End boundary of the piece
+          stays anchored to real sounding notes only, so metronome mode
+          can't resurrect trailing rest-only padding as navigable (though
+          the Sequencer's own playback walk WILL click through trailing
+          padding during a full play-through - consistent with AC1 having
+          no such exclusion). GOTCHA WORTH REMEMBERING: never merge
+          synthetic/derived slices into timeline_slices unconditionally -
+          plenty of code assumes that list is exactly the real, sounding
+          timeline.
+
 [x] E10 Latency harness; verify audition stays within 25 ms - Ref 9 AC3, NFR-04
-        > DONE 2026-08-07. git show 520f743:test_midi_latency.py recovered
-          and inspected - it used mido to send a MIDI message to an
-          external port and time Python-side dispatch; mido is gone since
-          the FluidSynth switch, so this needed rewriting against
-          SynthEngine, not a literal restore.
-          New latency_harness.py at the repo root (not tests/) - a manual
-          script, not a pytest test: pytest.ini scopes discovery to
-          testpaths = tests, and tests/conftest.py's autouse
-          _forbid_real_audio fixture deliberately blocks constructing a
-          real SynthEngine in every test (D-7), fundamentally at odds with
-          what a hardware-backed latency benchmark needs. Run by hand via
-          .venv\Scripts\python.exe latency_harness.py.
-          Measures two things against real hardware: (1) per-note dispatch
-          latency (Ref 9 AC3) - same measurement philosophy as the
-          original, Python-side time from calling play_notes()/play_click()
-          to the underlying fluidsynth call returning, against the 25ms
-          budget; (2) Sequencer scheduling jitter (NFR-04 AC-04.2, new -
-          the first time this class of measurement exists in the repo,
-          since E4-E7's own FakeTimer-driven tests only prove scheduling
-          correctness, not real-world timing accuracy under Qt's actual
-          event loop) - runs a real Sequencer/QTimer/QEventLoop over
-          minimal_4_4.musicxml at a fast tempo and compares each step's
-          requested delay against actual wall-clock time between steps.
-          No pass/fail assertions - prints a human-readable report, since
-          there's no hardware-backed CI to assert against.
-          Verified live (this is itself the verification - a script meant
-          to be run and read, not asserted on): play_notes mean 0.023ms /
-          max 0.341ms, play_click mean 0.012ms / max 0.018ms, both far
-          under the 25ms budget; Sequencer jitter -3.4ms to +0.6ms over 3
-          steps at 240bpm, consistent with normal Qt/Windows timer
-          granularity.
+        > DONE 2026-08-07. New latency_harness.py at the repo root, not
+          tests/ - it needs a real SynthEngine, which tests/conftest.py's
+          autouse fixture deliberately blocks (D-7); run by hand via
+          `.venv\Scripts\python.exe latency_harness.py`, no pass/fail
+          assertions, just a printed report (no hardware-backed CI to assert
+          against). Measures per-note dispatch latency and Sequencer
+          scheduling jitter. Verified live: play_notes mean 0.023ms/max
+          0.341ms, play_click mean 0.012ms/max 0.018ms (both far under the
+          25ms budget); Sequencer jitter -3.4ms to +0.6ms at 240bpm.
 
 [ ] E11 Metronome click sound quality - functional debt, not a missing
         feature (Ref 14 AC1-AC3 are all functionally met by E8) - see D-14.
@@ -1523,259 +575,96 @@ PHASE F - NOTE DISPLAY CONFIGURATION                      (3 tasks)
 ###
 [x] F1  Formatting layer building the Region 3 label from a configurable
         attribute list, e.g. "C, string 5, fret 1" - Ref 15
-        > DONE 2026-08-07. Built together with F2's scope-control half (the
-          ordering-control dialog is the only piece of F2 still open - see
-          below) after a design review with the user turned up two gaps
-          against the literal PDD text, both resolved directly with the
-          user rather than assumed: Ref 15 AC4 names a 4th "score" scope
-          beyond voice/stave/part (kept, even though Ref 27 AC2 and the
-          user's own walkthrough only mention three); and a stave/part/
-          score-scope action fired from a multi-note Region 3 selection
-          (a chord) unions the scope across every selected note, not just
-          the one note the menu was opened on.
-          models/music_data.py: new voice_display_attributes: Dict[(part_id,
-          staff, voice), Set[str]] field, defaulting (when a voice has no
-          entry) to DEFAULT_DISPLAY_ATTRIBUTES = frozenset({"step"}) -
-          today's plain-name behaviour. "step" is toggleable like every
-          other attribute; removing it too is valid and renders a blank but
-          still navigable, still audible Region 3 row. Refactored the
-          attribute-name/value logic that used to be inlined in
-          get_region_4_data_for_indices into _note_attribute_pairs (one
-          note's un-prefixed key->value map) and _region_4_rows (adds the
-          chord "note N " prefix), so Region 3's optional extra attributes
-          and Region 4's own rows can never disagree on a name or value -
-          get_region_4_data_for_indices's own output is unchanged (full
-          suite passed before and after the refactor with no test changes
-          needed). New get_region_4_row_targets/notes_for_indices let
-          MainWindow map "the Region 4 row the context menu was opened on"
-          back to an attribute key + NoteData. get_region_3_data ->
-          _format_note_for_region_3: walks the fixed DISPLAY_ATTRIBUTE_ORDER
-          (attribute-ordering customization is F2's still-open half),
-          comma-joins whichever configured keys the note actually has a
-          value for - the "actually has a value for" check is what prevents
-          a dangling/double comma when e.g. octave is requested on a rest.
-          _voice_tuples_for_scope/note_has_display_attribute/
-          set_display_attribute implement the scope fan-out (using
-          parts_info.staves_voices, the same source Region 2's hierarchy
-          already builds from) and the add/remove mutation.
-          widgets/region4_table_widget.py (new): Region4TableWidget adds
-          CustomContextMenu policy - Qt raises customContextMenuRequested
-          for both right-click and the Menu/Application key once that
-          policy is set, so no separate keyboard handling was needed.
-          main_window.py: region_4 now built with table_cls=
-          Region4TableWidget (Region 1 unchanged, plain RegionTableWidget).
-          _region_4_attribute_menu_actions(row) is pure logic (no QMenu/
-          exec()) returning (label, callback) pairs - Add-* labels or
-          Remove-* labels depending on note_has_display_attribute on the
-          row's own note - kept separate from the thin
-          show_region_4_attribute_menu Qt shell specifically so it is
-          testable without driving a real blocking QMenu.exec() loop, same
-          reasoning already used for GotoMeasureDialog/AboutDialog
-          injection (C8). New _refresh_region_3_labels re-renders Region
-          3's row text in place after a toggle - deliberately NOT
-          _update_timeline_views, which calls selectAll() (would discard a
-          specific multi-selection) and re-auditions (an attribute toggle
-          moves nothing and changes no pitch).
-          17 new tests: tests/models/test_music_data.py (comma-joining,
-          missing-value omission proven on the rest.musicxml fixture, blank-
-          when-all-off, all 4 scopes, the multi-select-unions-scope
-          behaviour, get_region_4_data_for_indices proven unaffected by the
-          Region 3 configuration); tests/widgets/test_region4_table_widget.py
-          (context-menu policy and row-forwarding, against a fake window
-          stand-in); tests/test_main_window.py (end-to-end: Add/Remove
-          label-set switching, Region 3 text updates, selection preserved,
-          no re-audition, and stave/score-scope fan-out proven on Chessel
-          Duet's Piano part, whose staff 2 genuinely carries two voices, 5
-          and 6 - a single-voice-per-stave fixture couldn't have
-          distinguished stave scope from voice scope). Full suite: 211
-          passed (was 194).
-        > FIX 2026-08-07 (live-tested bug, reported by the user): the
-          context menu was unreachable by keyboard, which fully explains
-          both symptoms reported ("popup says python window" instead of
-          announcing a menu item, and the attribute never actually being
-          added) - with no menu ever open, Enter/arrows just acted on
-          whatever was focused before, and NVDA kept announcing the
-          MainWindow itself. Root cause, confirmed empirically (not
-          assumed): Qt's CustomContextMenu policy does NOT synthesize
-          customContextMenuRequested from the Menu/Application key or
-          Shift+F10 for a QTableWidget on its own - only a real right-click
-          reliably raises it. The plan's "no separate keyboard handling
-          needed" note was wrong.
-          widgets/region4_table_widget.py: Region4TableWidget.keyPressEvent
-          now handles Key_Menu and Shift+F10 explicitly, calling the same
-          _show_attribute_menu path a real right-click uses. Also hardened
-          _show_attribute_menu's row/position resolution while in there: the
-          row now comes from rowAt(pos) for a real click (falling back to
-          currentRow() only for the keyboard path, where there is no click
-          position) rather than always trusting currentRow() - a right-click
-          on a row other than the keyboard-focused one now acts on the row
-          actually clicked - and the popup's anchor point is always the
-          clicked/current row's own visualItemRect, not the raw event pos,
-          since a keyboard-synthesized pos is not reliable enough to place a
-          popup from.
-          4 new tests in tests/widgets/test_region4_table_widget.py (Menu
-          key opens the menu, Shift+F10 too, no-op with no current row, Tab
-          still forwards to focus_next_region - the last one calls
-          keyPressEvent directly rather than via a simulated Tab keypress,
-          the same QTest fragility already worked around for F6 pane-cycling
-          in C7, since Qt's own tab-focus handling intercepts a real Key_Tab
-          before it reaches keyPressEvent on a widget that is not genuinely
-          focused/shown). Full suite: 215 passed.
-        > FIX 2026-08-07 (live-tested bug, reported by the user via a real
-          traceback - "Unknown display-attribute scope: False"): the actual
-          reason no attribute was ever added, in every scope, every time.
-          QAction.triggered always calls a connected slot with one
-          positional bool ("checked"). _region_4_attribute_menu_actions'
-          per-scope callback was `lambda scope=scope: ...` - Qt/PySide calls
-          a connected Python callable with one positional argument whenever
-          it accepts one, so that bool landed in scope's own default-arg
-          slot instead of "voice"/"stave"/"part"/"score", and
-          set_display_attribute raised every time before anything could be
-          written to voice_display_attributes. Invisible to this session's
-          own tests, which all called the returned callback with zero
-          arguments (actions[0][1]()) - never exercising the argument a real
-          QAction actually passes.
-          main_window.py: the lambda now takes `checked=False, scope=scope`
-          - checked soaks up QAction's bool, scope keeps its own default
-          from the loop. New regression test
-          test_region_4_attribute_menu_callback_survives_qactions_checked_argument
-          calls the callback the same way QAction.triggered(bool) does
-          (actions[0][1](False)) specifically so this can't regress
-          silently again. Full suite: 216 passed.
-        > FIX 2026-08-07 (live-tested, reported by the user after the two
-          fixes above): two more findings, one fixed, one still open.
-          1. FIXED - accessibility: pressing the Application key produced no
-             immediate NVDA announcement; only after arrowing down once did
-             NVDA read anything ("Python window. Add to notes in this
-             voice."). Root cause: show_region_4_attribute_menu called
-             menu.exec(global_pos) with no second argument - Qt's own
-             signature is QMenu.exec(pos, at: QAction | None = None), and
-             with `at` defaulting to None the popup opens with nothing
-             pre-highlighted, so there is nothing to announce until the user
-             manually arrows once. Fixed by passing the first action:
-             menu.exec(global_pos, menu.actions()[0]).
-             Split show_region_4_attribute_menu into
-             _build_region_4_attribute_menu (constructs the QMenu/QActions,
-             no exec() call) + the thin exec()-calling wrapper, because
-             QMenu.exec turned out to NOT be reliably monkeypatchable in
-             this PySide6 build - a test that tried `monkeypatch.setattr(
-             QMenu, "exec", fake_exec)` didn't raise, it just silently fell
-             through to the real blocking call and hung the whole suite
-             (confirmed twice). New test
-             test_region_4_attribute_menu_first_action_is_add_to_this_voice
-             asserts against the built-but-not-exec'd menu instead.
-          2. STILL OPEN - functional: after selecting an item and pressing
-             Enter, returning to the Note region still shows only the plain
-             note name, not the added attribute. Investigated hard and could
-             NOT reproduce: built a fresh repro this session (real
-             MainWindow, real score, real QMenu, calling .trigger() on a
-             real QAction - the same mechanism a real Enter keypress uses
-             internally) and Region 3 updated correctly. The algorithm
-             itself (scope fan-out, voice_display_attributes,
-             _format_note_for_region_3) is not in question - 217 tests plus
-             this fresh repro all agree. Added a temporary [DEBUG] print in
-             _apply_display_attribute_change (attribute/scope/note-count/add
-             before the change, get_region_3_data() after) so the next real
-             attempt is conclusive - remove once this is confirmed fixed or
-             root-caused. Leading theory: the user's first report of this
-             (the ValueError traceback, item 2026-08-07 FIX above) may have
-             been tested against a process still running the pre-fix code;
-             asked the user to fully quit every running instance, relaunch
-             fresh, and report exactly what the new [DEBUG] line prints.
-          Full suite: 217 passed.
-        > FIX 2026-08-07 (live-tested, reported after the above): the "not
-          added" report was indeed the stale-process theory - user confirms
-          attributes now add/mix correctly across all four scopes, so the
-          temporary [DEBUG] prints in _apply_display_attribute_change were
-          removed (their job was done). Also answered a design question:
-          the user observed attributes seeming to render in "voice, stave,
-          part, score" order and asked if that's real. It isn't - Region
-          3's rendering order is ALWAYS DISPLAY_ATTRIBUTE_ORDER (step,
-          octave, midi, measure, beat position, duration, part, stave,
-          voice, string, fret), fixed regardless of which scope an
-          attribute was added through; any correlation observed was
-          coincidental to which attributes happened to be tested via which
-          scope. Real ordering control is F2 (still open, deferred).
-          Two more menu-interaction bugs, one fixed with high confidence,
-          one attempted best-effort (can't be verified without real NVDA):
-          1. FIXED, high confidence - selecting a menu action rebuilds
-             Region 4's rows (the triggered callback runs
-             _apply_display_attribute_change -> _refresh_region_3_labels ->
-             _on_region_3_selection_changed -> _populate_table) WHILE the
-             menu's own exec() is still running (QAction.triggered fires
-             before exec() returns), and that rebuild resets the table's
-             current cell. This is exactly why Escape (which triggers no
-             callback, no rebuild) already correctly returned to the same
-             row while Enter did not: NVDA kept reporting the stale menu
-             item on NVDA+Up, and the next Down landed on row 0 ("step")
-             instead of back on the attribute the menu was opened on.
-             main_window.py: new _restore_region_4_focus_after_menu(row),
-             called after menu.exec() returns - re-sets Region 4's current
-             cell to `row` and calls setFocus() for a fresh, real focus
-             event. Split out from show_region_4_attribute_menu (like
-             _build_region_4_attribute_menu before it) so it's testable
-             without the real, blocking exec() call - new test
-             test_restore_region_4_focus_after_menu_returns_to_the_same_row
-             drives the same rebuild directly and empirically confirms the
-             rebuild really does reset currentRow away from the opened row
-             before asserting the fix restores it.
-          2. BEST-EFFORT, unverified - the Application key still announced
-             nothing until an explicit arrow press, even after the earlier
-             fix (exec(pos, at=first_action)) - pre-highlighting the first
-             action apparently doesn't fire a real accessibility focus
-             notification, only genuine keyboard navigation does. Queued a
-             synthetic Key_Down QKeyEvent at the menu via
-             QApplication.sendEvent, scheduled with QTimer.singleShot(0,
-             ...) right before exec() so it fires once the popup's own
-             nested loop starts processing - this goes through the same
-             real navigation code path a manual arrow press does, aiming
-             to produce a genuine announcement without the user pressing
-             anything. Explicitly flagged to the user as unverified (no
-             NVDA available to test with from here); if it doesn't help,
-             remove rather than layer on more synthetic-event guesses.
-          Full suite: 218 passed.
-        > FIX 2026-08-07 (live-tested, reported after the above): confirms
-          the focus-restoration fix works - "focus is now correctly
-          returned to the previously active row" - but two follow-ups.
-          1. FIXED - minor: opening the menu from Region 4's value column
-             (column 1) returned focus to the key column (0) instead.
-             _restore_region_4_focus_after_menu (and _show_attribute_menu,
-             which sets the current cell before opening the menu) both had
-             the column hard-coded to 0. Both now thread the actual column
-             through: Region4TableWidget._show_attribute_menu reads
-             self.currentColumn() instead of assuming 0, and
-             show_region_4_attribute_menu/_restore_region_4_focus_after_menu
-             both gained a `column` parameter alongside `row`. New tests
-             test_context_menu_preserves_the_current_column
-             (tests/widgets/test_region4_table_widget.py) and the column
-             half of test_restore_region_4_focus_after_menu_returns_to_
-             the_same_row_and_column (tests/test_main_window.py).
-          2. REVERTED - the previous session's best-effort attempt at
-             announcing the first menu item automatically (exec(pos,
-             at=first_action) plus a synthetic Key_Down via
-             QApplication.sendEvent/QTimer.singleShot) did not work:
-             live-tested, the Application key now announces "Python
-             window" and then NVDA+Up ("say all") reports "blank" instead
-             of the item's text - something is genuinely highlighted
-             (confirmed: the user's own next Down lands on the SECOND
-             item, not the first), but whatever changed doesn't carry a
-             real accessible name for NVDA to read. Consistent with the
-             theory that Qt's own accessibility bridge only hands the
-             UIA/MSAA "focus" down to the specific menu-item sub-object on
-             a genuine keyboard-navigation event, not a programmatic
-             setActiveAction/exec(at=)/sendEvent-synthesized one - the
-             synthetic Key_Down goes through Qt's own event dispatch, not
-             a real OS input event, so it apparently doesn't reach
-             whatever the accessibility layer is actually watching either.
-             No further attempt made without a way to verify against real
-             NVDA (the user offered reverting as the explicit fallback,
-             calling plain exec() - one manual arrow press needed - "more
-             normal" anyway). show_region_4_attribute_menu is back to a
-             plain menu.exec(global_pos) with no `at` argument; the
-             QTimer/QKeyEvent imports and the _announce_first_action
-             helper were removed. Documented in the method's own docstring
-             as a "don't re-attempt without a way to verify" warning.
-          Full suite: 219 passed.
+        > DONE 2026-08-07. Two gaps against the literal PDD text, resolved
+          with the user rather than assumed: Ref 15 AC4 names a 4th "score"
+          scope beyond voice/stave/part (kept even though Ref 27 AC2 only
+          mentions three); a stave/part/score-scope action fired from a
+          multi-note (chord) selection unions the scope across every
+          selected note, not just the one the menu was opened on.
+          voice_display_attributes: Dict[(part_id, staff, voice), Set[str]],
+          defaulting to {"step"} (today's plain-name behaviour) - "step" is
+          itself toggleable off, rendering a blank but still navigable row.
+          Region4TableWidget uses Qt's CustomContextMenu policy, assumed (at
+          the time) to raise customContextMenuRequested for both
+          right-click and the Menu/Application key - see the first FIX
+          below, that assumption was wrong.
+        > FIX 2026-08-07 (live-tested - menu unreachable by keyboard):
+          ROOT CAUSE, confirmed empirically: Qt does NOT synthesize
+          customContextMenuRequested from Menu/Shift+F10 for a QTableWidget
+          - only a real right-click reliably raises it. GOTCHA WORTH
+          REMEMBERING for any future CustomContextMenu-policy widget in this
+          app. Region4TableWidget.keyPressEvent now handles
+          Key_Menu/Shift+F10 explicitly, calling the same
+          _show_attribute_menu path a right-click uses. Also: row/position
+          resolution now uses rowAt(pos) for a real click and only falls
+          back to currentRow() for the keyboard path, since a right-click on
+          a different row than the keyboard-focused one should act on the
+          row actually clicked.
+        > FIX 2026-08-07 (live-tested - "Unknown display-attribute scope:
+          False" traceback): the REAL reason no attribute was ever added, in
+          every scope. ROOT CAUSE: QAction.triggered always calls its
+          connected slot with one positional bool ("checked"). The per-scope
+          menu callback was `lambda scope=scope: ...` - Qt/PySide calls a
+          connected Python callable with one positional arg whenever it
+          accepts one, so that bool landed in scope's own default-arg slot
+          instead of "voice"/"stave"/etc. Invisible to this session's own
+          tests, which all called the callback with zero arguments - never
+          exercising the argument a real QAction actually passes. Fix:
+          lambda now takes `checked=False, scope=scope` - checked soaks up
+          the bool, scope keeps its loop default. GOTCHA WORTH REMEMBERING:
+          any QAction.triggered-connected lambda in this codebase needs a
+          leading throwaway positional/keyword arg, or it silently
+          misassigns whatever real argument comes first - and a test that
+          calls such a callback with zero arguments cannot catch this class
+          of bug.
+        > FIX 2026-08-07 (two more findings):
+          1. FIXED - no NVDA announcement on Application-key press, only
+             after arrowing once. menu.exec(global_pos) was called with no
+             `at` argument, so nothing was pre-highlighted. GOTCHA: QMenu.exec
+             is NOT reliably monkeypatchable in this PySide6 build - a test
+             that tried `monkeypatch.setattr(QMenu, "exec", fake_exec)`
+             silently fell through to the real blocking call and hung the
+             suite (confirmed twice). Worked around by splitting menu
+             construction from the exec() call so tests can assert against
+             the built-but-not-exec'd menu instead.
+          2. A "attribute not actually added" report could not be
+             reproduced this round - turned out to be a stale running
+             process, confirmed in the next FIX entry.
+        > FIX 2026-08-07: confirmed the "not added" report was the user
+          testing a stale process (old code still running), not a real bug.
+          Also confirmed Region 3's attribute rendering order is ALWAYS the
+          fixed DISPLAY_ATTRIBUTE_ORDER regardless of which scope an
+          attribute was added through (real ordering control is F2, still
+          open). Two more menu-interaction bugs:
+          1. FIXED, high confidence - ROOT CAUSE: selecting a menu action
+             rebuilds Region 4's rows WHILE the menu's own exec() is still
+             running (QAction.triggered fires before exec() returns), which
+             reset the table's current cell - so Enter (which triggers a
+             rebuild) lost the row, while Escape (no rebuild) correctly kept
+             it. Fixed with _restore_region_4_focus_after_menu(row, column),
+             called after exec() returns.
+          2. BEST-EFFORT, reverted next round (see below) - tried
+             pre-highlighting the first menu item via exec(pos, at=) plus a
+             synthetic Key_Down QKeyEvent, to get an immediate NVDA
+             announcement without a manual arrow press.
+        > FIX 2026-08-07 (confirms the focus-restoration fix works):
+          1. FIXED - opening the menu from Region 4's VALUE column returned
+             focus to the KEY column - the column was hard-coded to 0 in two
+             places; both now thread the actual currentColumn() through.
+          2. REVERTED - the prior round's synthetic-announcement attempt
+             (exec(pos, at=first_action) + synthetic Key_Down via
+             QApplication.sendEvent) did NOT work: live-tested, the
+             Application key announced "Python window" and NVDA+Up reported
+             "blank" instead of the item text - something was genuinely
+             highlighted (the user's next Down landed on the SECOND item)
+             but carried no real accessible name. GOTCHA WORTH REMEMBERING:
+             Qt's accessibility bridge only hands UIA/MSAA focus down to a
+             menu-item sub-object on a GENUINE keyboard-navigation event,
+             not a programmatic setActiveAction/exec(at=)/sendEvent one -
+             don't re-attempt this without a way to verify against real
+             NVDA. Reverted to a plain menu.exec(global_pos) (one manual
+             arrow press needed - "more normal" anyway, per the user).
+
 [ ] F2  Options dialog to control note-display attribute ORDERING - Ref 15
         AC4. Scope control (global/part/staff/voice - now voice/stave/part/
         score) shipped with F1 above via Region 4's context menu instead of
