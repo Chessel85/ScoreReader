@@ -62,6 +62,91 @@ def test_string_and_fret_captured_from_notations_technical(timeline, string_fret
     assert second_note.fret == 3
 
 
+def _note_by_pitch(md, step_name, octave):
+    return next(
+        n for s in md.timeline_slices for n in s.notes
+        if n.step_name == step_name and n.octave == octave
+    )
+
+
+def test_direction_dynamics_attach_to_the_chord_that_follows(timeline, dynamics_articulation_fingering_score):
+    """F3/Ref 16 AC3: a <direction><dynamics><f/></dynamics></direction>
+    sibling is matched to the note landing at the same offset/staff, and
+    both notes of a chord sharing that offset inherit it."""
+    md = timeline(dynamics_articulation_fingering_score)
+
+    c5 = _note_by_pitch(md, "C", 5)
+    e5 = _note_by_pitch(md, "E", 5)
+    assert c5.dynamic == "forte"
+    assert e5.dynamic == "forte"
+
+
+def test_dynamics_do_not_leak_onto_unrelated_notes(timeline, dynamics_articulation_fingering_score):
+    """Only the note(s) at the direction's own offset/staff get the mark -
+    a bass-staff note landing at the same offset in a different staff must
+    not inherit the treble-staff direction."""
+    md = timeline(dynamics_articulation_fingering_score)
+
+    c3 = _note_by_pitch(md, "C", 3)
+    assert c3.dynamic is None
+
+
+def test_articulation_captured_from_notations_articulations(timeline, dynamics_articulation_fingering_score):
+    md = timeline(dynamics_articulation_fingering_score)
+
+    d5 = _note_by_pitch(md, "D", 5)
+    assert d5.articulation == "staccato"
+
+
+def test_ornament_captured_from_notations_ornaments(timeline, dynamics_articulation_fingering_score):
+    md = timeline(dynamics_articulation_fingering_score)
+
+    f5 = _note_by_pitch(md, "F", 5)
+    assert f5.articulation == "trill"
+
+
+def test_piano_fingering_captured_on_both_staves(timeline, dynamics_articulation_fingering_score):
+    """notations/technical/fingering has no hand flag in MusicXML - both
+    the treble-staff and bass-staff note just carry their own raw digit."""
+    md = timeline(dynamics_articulation_fingering_score)
+
+    g5 = _note_by_pitch(md, "G", 5)
+    c3 = _note_by_pitch(md, "C", 3)
+    assert g5.fingering == "1"
+    assert c3.fingering == "5"
+
+
+def test_guitar_note_captures_both_left_hand_fingering_and_right_hand_pluck(
+    timeline, dynamics_articulation_fingering_score
+):
+    md = timeline(dynamics_articulation_fingering_score)
+
+    e4 = _note_by_pitch(md, "E", 4)
+    assert e4.fingering == "2"
+    assert e4.pluck == "i"
+
+
+def test_note_with_no_extra_attributes_leaves_all_four_fields_none(timeline, dynamics_articulation_fingering_score):
+    md = timeline(dynamics_articulation_fingering_score)
+
+    g4 = _note_by_pitch(md, "G", 4)
+    assert g4.dynamic is None
+    assert g4.articulation is None
+    assert g4.fingering is None
+    assert g4.pluck is None
+
+
+def test_multiple_fingering_and_pluck_marks_on_one_note_are_all_captured(timeline, multi_value_technical_score):
+    """A rasgueado-style note can carry more than one <fingering>/<pluck> in
+    the same notations/technical block - all of them must survive, not just
+    the first (regression: live MuseScore export hit this)."""
+    md = timeline(multi_value_technical_score)
+
+    note = md.timeline_slices[0].notes[0]
+    assert note.fingering == "1, 2"
+    assert note.pluck == "i, m, a"
+
+
 def test_slices_are_ordered_by_measure_then_offset(timeline, slice_ordering_score):
     """Notes written out of offset order via forward/backup must still sort.
 

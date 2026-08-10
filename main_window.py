@@ -871,6 +871,20 @@ class MainWindow(QMainWindow):
         self.region_3.selectAll()
         self.region_3.blockSignals(False)
 
+        # selectAll() marks every row selected but deliberately leaves the
+        # view's own "current" (focused) item untouched - clear() reset it
+        # to none, so without this NVDA has no definite item to announce
+        # after a Left/Right timeline move or a Region 2 filter change that
+        # narrows a slice down to one note. Left OUTSIDE the blockSignals
+        # window above so the selection model's real currentChanged signal
+        # fires and the accessibility bridge actually posts the
+        # notification - the same path Up/Down already gets for free from
+        # Qt's own key handling. setCurrentRow(row) (the plain one-arg form)
+        # uses QItemSelectionModel::NoUpdate, so it does not disturb the
+        # selectAll() selection just made.
+        if self.region_3.count() > 0:
+            self.region_3.setCurrentRow(0)
+
         self._on_region_3_selection_changed()
         self._update_status_bar()
 

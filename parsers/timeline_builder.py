@@ -7,6 +7,7 @@ from models.event_slice import EventSlice
 from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
 from models.tempo_change import TempoChange
+from models.vocabulary import articulation_name, dynamic_name
 
 
 def _duration_divs(elem) -> int:
@@ -175,6 +176,14 @@ class TimelineBuilder:
                 m_num = raw_m_num - 1 if needs_reindex else raw_m_num
 
                 walker = _MeasureOffsetWalker(divisions, time_sig_num, time_sig_den, fifths)
+                # F3/Ref 16 AC3: a MuseScore-style dynamics mark is a
+                # <direction> sibling of <note>, not a child of it - keyed by
+                # (staff_or_None, offset_divs) so the note landing at that
+                # same offset (including every note of a chord, which all
+                # share the base note's offset) picks it up below. Reset per
+                # measure since a direction's target note is always in the
+                # same measure it appears in.
+                pending_dynamics: Dict[Tuple[Optional[int], int], str] = {}
 
                 for elem in m:
                     result = walker.step(elem)
@@ -182,6 +191,15 @@ class TimelineBuilder:
                     if elem.tag == "attributes":
                         beat_unit_quarter_len = 4.0 / walker.ts_den
                         full_bar_quarters = walker.ts_num * beat_unit_quarter_len
+
+                    if elem.tag == "direction":
+                        dyn_el = elem.find("direction-type/dynamics")
+                        if dyn_el is not None and len(dyn_el) > 0:
+                            mark_el = dyn_el[0]
+                            mark = mark_el.text.strip() if (mark_el.tag == "other-dynamics" and mark_el.text) else mark_el.tag
+                            dir_staff_el = elem.find("staff")
+                            dir_staff = int(dir_staff_el.text.strip()) if (dir_staff_el is not None and dir_staff_el.text) else None
+                            pending_dynamics[(dir_staff, walker.offset_divs)] = dynamic_name(mark)
 
                     if result is None:
                         continue
@@ -199,6 +217,10 @@ class TimelineBuilder:
                         midi_pitch = None
                         fret = None
                         string_num = None
+                        dynamic = None
+                        articulation = None
+                        fingering = None
+                        pluck = None
                     else:
                         pitch_el = elem.find("pitch")
                         if pitch_el is None:
@@ -217,6 +239,8 @@ class TimelineBuilder:
 
                         fret = None
                         string_num = None
+                        fingering = None
+                        pluck = None
                         tech_el = elem.find("notations/technical")
                         if tech_el is not None:
                             f_el = tech_el.find("fret")
@@ -225,6 +249,44 @@ class TimelineBuilder:
                                 fret = int(f_el.text.strip())
                             if s_el is not None and s_el.text:
                                 string_num = int(s_el.text.strip())
+                            # MusicXML allows more than one <fingering>/
+                            # <pluck> per note (e.g. a rasgueado marked with
+                            # all of p/i/m/a on one note) - .find() would
+                            # silently drop everything after the first, so
+                            # every match is joined instead.
+                            fing_texts = [e.text.strip() for e in tech_el.findall("fingering") if e.text]
+                            pluck_texts = [e.text.strip() for e in tech_el.findall("pluck") if e.text]
+                            fingering = ", ".join(fing_texts) or None
+                            pluck = ", ".join(pluck_texts) or None
+
+                        # F3/Ref 16 AC3: staccato/accent/tenuto... and
+                        # trill/turn/mordent... share the same spoken-word
+                        # treatment, so both notations children are merged
+                        # into one comma-joined field rather than kept apart.
+                        artic_tags = [
+                            child.tag
+                            for parent_tag in ("articulations", "ornaments")
+                            for child in elem.findall(f"notations/{parent_tag}/*")
+                        ]
+                        articulation = ", ".join(articulation_name(t) for t in artic_tags) or None
+
+                        # A direct notations/dynamics is the rarer form some
+                        # exporters use in place of a <direction> sibling;
+                        # when present it's more specific than an
+                        # offset-matched direction, so it wins.
+                        note_dyn_el = elem.find("notations/dynamics")
+                        if note_dyn_el is not None and len(note_dyn_el) > 0:
+                            note_mark_el = note_dyn_el[0]
+                            note_mark = (
+                                note_mark_el.text.strip()
+                                if (note_mark_el.tag == "other-dynamics" and note_mark_el.text)
+                                else note_mark_el.tag
+                            )
+                            dynamic = dynamic_name(note_mark)
+                        else:
+                            dynamic = pending_dynamics.get((staff, note_offset_divs))
+                            if dynamic is None:
+                                dynamic = pending_dynamics.get((None, note_offset_divs))
 
                     offset_q = note_offset_divs / walker.divisions
                     quarter_len = dur_divs / walker.divisions
@@ -252,6 +314,10 @@ class TimelineBuilder:
                         voice=voice,
                         fret=fret,
                         string=string_num,
+                        dynamic=dynamic,
+                        articulation=articulation,
+                        fingering=fingering,
+                        pluck=pluck,
                     )
 
                     key = (m_num, round(offset_q, 4))

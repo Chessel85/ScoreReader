@@ -1,6 +1,12 @@
 # tests/models/test_vocabulary.py
 """F4/D-6: UK/US music terminology word-choice helpers."""
-from models.vocabulary import attribute_label, bar_word, duration_name
+from models.vocabulary import (
+    articulation_name,
+    attribute_label,
+    bar_word,
+    dynamic_name,
+    duration_name,
+)
 
 
 def test_bar_word():
@@ -58,3 +64,38 @@ def test_attribute_label_passes_through_unmapped_keys():
     for key in ("step", "octave", "midi", "beat position", "duration", "part", "voice", "string", "fret"):
         assert attribute_label(key, uk_terms=False) == key
         assert attribute_label(key, uk_terms=True) == key
+
+
+def test_dynamic_name_translates_common_marks():
+    cases = {
+        "f": "forte",
+        "ff": "fortissimo",
+        "p": "piano",
+        "pp": "pianissimo",
+        "mf": "mezzo-forte",
+        "mp": "mezzo-piano",
+        "sfz": "sforzando",
+        "fp": "fortepiano",
+    }
+    for mark, spoken in cases.items():
+        assert dynamic_name(mark) == spoken
+
+
+def test_dynamic_name_unmapped_mark_falls_back_to_raw_text():
+    """Covers <other-dynamics> custom text, whose value can't be tabulated."""
+    assert dynamic_name("poco piano") == "poco piano"
+
+
+def test_articulation_name_translates_common_tags():
+    cases = {
+        "staccato": "staccato",
+        "strong-accent": "marcato",
+        "trill-mark": "trill",
+        "mordent": "mordent",
+    }
+    for tag, spoken in cases.items():
+        assert articulation_name(tag) == spoken
+
+
+def test_articulation_name_unmapped_tag_replaces_hyphens_with_spaces():
+    assert articulation_name("some-unmapped-tag") == "some unmapped tag"

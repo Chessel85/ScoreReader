@@ -512,6 +512,7 @@ class MusicData:
     DISPLAY_ATTRIBUTE_ORDER = [
         "step", "octave", "midi", "measure", "beat position", "duration",
         "part", "stave", "voice", "string", "fret",
+        "dynamic", "articulation", "fingering", "pluck",
     ]
     # A voice with no entry in voice_display_attributes uses this - today's
     # plain-note-name behaviour, not an empty display.
@@ -550,6 +551,14 @@ class MusicData:
             pairs["string"] = str(note.string)
         if note.fret is not None:
             pairs["fret"] = str(note.fret)
+        if note.dynamic is not None:
+            pairs["dynamic"] = note.dynamic
+        if note.articulation is not None:
+            pairs["articulation"] = note.articulation
+        if note.fingering is not None:
+            pairs["fingering"] = note.fingering
+        if note.pluck is not None:
+            pairs["pluck"] = note.pluck
         return pairs
 
     def _region_4_rows(self, selected_notes: List[NoteData]) -> List[Tuple[str, str, NoteData, str]]:

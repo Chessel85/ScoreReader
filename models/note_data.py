@@ -18,3 +18,7 @@ class NoteData:
     midi_pitch: Optional[int] = None
     fret: Optional[int] = None
     string: Optional[int] = None
+    dynamic: Optional[str] = None
+    articulation: Optional[str] = None
+    fingering: Optional[str] = None
+    pluck: Optional[str] = None

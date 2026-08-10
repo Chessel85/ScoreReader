@@ -90,6 +90,23 @@ def string_fret_score() -> str:
 
 
 @pytest.fixture
+def dynamics_articulation_fingering_score() -> str:
+    """Piano (2 staves) + Guitar (1 staff), one complete 4/4 bar each: a
+    forte direction before a two-note chord, staccato and trill on separate
+    notes, piano fingering on both staves, and a guitar note carrying both
+    left-hand fingering and right-hand pluck (F3/Ref 16 AC3)."""
+    return _require(FIXTURES_DIR / "dynamics_articulation_fingering.musicxml")
+
+
+@pytest.fixture
+def multi_value_technical_score() -> str:
+    """One guitar note carrying two <fingering> and three <pluck> marks in
+    one notations/technical block (F3/Ref 16 AC3 regression - a naive
+    .find() would silently drop everything after the first match)."""
+    return _require(FIXTURES_DIR / "multi_value_technical.musicxml")
+
+
+@pytest.fixture
 def two_parts_chord_score() -> str:
     """Two parts, one complete 4/4 bar each: Piano C4 and Guitar E3 land on
     the same beat, so they bucket into a single EventSlice (A8, Ref 8)."""

@@ -45,6 +45,82 @@ def duration_name(us_display_name: str, uk_terms: bool) -> str:
     return us_display_name
 
 
+# F3/Ref 16 AC3: MusicXML <dynamics> child tag -> spoken word. Marks not in
+# this table (including <other-dynamics>, whose own text is arbitrary) fall
+# back to their raw text in dynamic_name() below rather than raising.
+DYNAMIC_NAMES = {
+    "ppppp": "pianississississimo",
+    "pppp": "pianississimo",
+    "ppp": "pianissississimo",
+    "pp": "pianissimo",
+    "p": "piano",
+    "mp": "mezzo-piano",
+    "mf": "mezzo-forte",
+    "f": "forte",
+    "ff": "fortissimo",
+    "fff": "fortississimo",
+    "ffff": "fortissississimo",
+    "fffff": "fortississississimo",
+    "sf": "sforzando",
+    "sfp": "sforzando piano",
+    "sfpp": "sforzando pianissimo",
+    "sfz": "sforzando",
+    "sfzp": "sforzando piano",
+    "sffz": "sforzato",
+    "fz": "forzando",
+    "fp": "fortepiano",
+    "rf": "rinforzando",
+    "rfz": "rinforzando",
+    "pf": "poco forte",
+    "n": "niente",
+}
+
+# F3/Ref 16 AC3: notations/articulations and notations/ornaments child tags
+# -> spoken word. Unmapped tags fall back to hyphens-as-spaces in
+# articulation_name() below, so an uncommon MuseScore export still renders
+# as reasonable text instead of the raw XML tag.
+ARTICULATION_NAMES = {
+    "staccato": "staccato",
+    "staccatissimo": "staccatissimo",
+    "accent": "accent",
+    "strong-accent": "marcato",
+    "tenuto": "tenuto",
+    "detached-legato": "detached legato",
+    "spiccato": "spiccato",
+    "scoop": "scoop",
+    "plop": "plop",
+    "doit": "doit",
+    "falloff": "falloff",
+    "stress": "stress",
+    "unstress": "unstress",
+    "trill-mark": "trill",
+    "turn": "turn",
+    "inverted-turn": "inverted turn",
+    "delayed-turn": "delayed turn",
+    "mordent": "mordent",
+    "inverted-mordent": "inverted mordent",
+    "tremolo": "tremolo",
+    "schleifer": "schleifer",
+    "shake": "shake",
+    "wavy-line": "trill",
+}
+
+
+def dynamic_name(mark: str) -> str:
+    """Spoken form of a MusicXML dynamics mark (e.g. "f" -> "forte") for
+    F3/Ref 16 AC3. Falls back to the raw mark text for anything not in
+    DYNAMIC_NAMES (e.g. <other-dynamics> custom text)."""
+    return DYNAMIC_NAMES.get(mark, mark)
+
+
+def articulation_name(tag: str) -> str:
+    """Spoken form of a notations/articulations or notations/ornaments child
+    tag (e.g. "strong-accent" -> "marcato") for F3/Ref 16 AC3. Falls back to
+    the tag with hyphens replaced by spaces for anything not in
+    ARTICULATION_NAMES."""
+    return ARTICULATION_NAMES.get(tag, tag.replace("-", " "))
+
+
 def attribute_label(attribute_key: str, uk_terms: bool) -> str:
     """Region 3/4's optional-attribute display label for `attribute_key`
     (Ref 15 AC4) - only "measure" differs by dialect (D-15 excludes

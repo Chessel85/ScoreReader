@@ -571,7 +571,7 @@ playback and phrase audition (E6), same code path.
 
 
 ###
-PHASE F - NOTE DISPLAY CONFIGURATION                      (3 tasks)
+PHASE F - NOTE DISPLAY CONFIGURATION                      (4 tasks)
 ###
 [x] F1  Formatting layer building the Region 3 label from a configurable
         attribute list, e.g. "C, string 5, fret 1" - Ref 15
@@ -669,8 +669,62 @@ PHASE F - NOTE DISPLAY CONFIGURATION                      (3 tasks)
         AC4. Scope control (global/part/staff/voice - now voice/stave/part/
         score) shipped with F1 above via Region 4's context menu instead of
         a separate Options dialog; only the ordering half remains open.
-[ ] F3  Capture further attributes from the source file: dynamics, staccato,
+[x] F3  Capture further attributes from the source file: dynamics, staccato,
         fingering - Ref 16 AC3
+        > DONE 2026-08-10, live-tested against a real MuseScore export
+          ("Fingers and articulations"). NoteData gained dynamic/
+          articulation/fingering/pluck (Optional[str]) - TimelineBuilder
+          parses notations/articulations + notations/ornaments (merged into
+          one comma-joined "articulation" field), notations/technical/
+          fingering, and notations/technical/pluck (guitar RH p/i/m/a).
+          Dynamics are trickier: MuseScore emits a <direction> sibling of
+          <note>, not a child of it, so a per-measure pending_dynamics dict
+          keyed by (staff, offset_divs) matches the mark to whichever
+          note(s) land at that same offset - chord notes share the base
+          note's offset so they inherit it for free, no special-casing
+          needed. notations/dynamics directly on a note (rarer) overrides
+          the direction-based match when present. New models/vocabulary.py
+          dynamic_name()/articulation_name() give spoken forms (f->forte,
+          strong-accent->marcato, trill-mark->trill...), falling back to raw
+          text for anything unmapped.
+          No Region 3/4 UI work was needed at all - F1's existing
+          voice_display_attributes/DISPLAY_ATTRIBUTE_ORDER/
+          _note_attribute_pairs machinery (Ref 15 AC4) already shows a key
+          only when it's both toggled on for that voice AND present on the
+          note, so the four new keys just slot into DISPLAY_ATTRIBUTE_ORDER
+          and _note_attribute_pairs and the context menu/scope toggles work
+          unmodified.
+          Piano LH/RH hand is deliberately NOT inferred from staff/clef -
+          MusicXML's <fingering> carries no hand flag, so both hands render
+          under one generic "fingering" key and the existing "stave"
+          attribute supplies hand context when toggled on alongside it
+          (user-confirmed choice over guessing from clef).
+        > FIX (live-tested against the real file, two findings):
+          1. notations/technical can carry MORE THAN ONE <fingering>/
+             <pluck> on a single note (MuseScore's rasgueado marking: one
+             note, three <pluck> children p/i/m/a together). The original
+             code used ElementTree .find(), which only returns the first
+             match - silently dropped the rest. Switched to .findall() +
+             ", "-join for both fields. Regression fixture
+             tests/fixtures/multi_value_technical.musicxml added.
+          2. NVDA didn't announce a slice's note automatically when Left/
+             Right navigation landed on exactly ONE note - only Up/Down
+             worked. ROOT CAUSE: _update_timeline_views' rebuild calls
+             region_3.clear() (resets the view's "current" item to none)
+             then selectAll() (marks rows selected but deliberately leaves
+             "current" untouched) - so after a rebuild there was never a
+             definite current/focused item for the accessibility bridge to
+             point at. With several notes selected, NVDA still gets a
+             selection-changed announcement; with exactly one, nothing told
+             it which item that was. Fixed by adding
+             region_3.setCurrentRow(0) after blockSignals(False) (so the
+             selection model's real currentChanged signal fires) - the
+             1-arg form uses QItemSelectionModel::NoUpdate so it doesn't
+             disturb the selectAll() selection. This is a general Region 3
+             fix, not F3-specific (any rebuild landing on a single-note
+             slice had the same gap). Regression test
+             test_navigating_onto_a_single_note_slice_sets_a_current_row
+             added, verified to fail without the fix via git stash.
 [x] F4  UK / US music vocabulary toggle: bar vs measure, crotchet vs quarter
         note, quaver vs eighth note - Discussion Points, see D-6
         > DONE 2026-08-10. Purely presentational per the user - internal

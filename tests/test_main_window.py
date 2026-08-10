@@ -76,6 +76,22 @@ def test_navigating_right_auditions_the_new_slice(window, qtbot, null_synth, min
     assert null_synth.last_played["midi_notes"] == [62]
 
 
+def test_navigating_onto_a_single_note_slice_sets_a_current_row(window, qtbot, minimal_score):
+    """Live-tested bug: selectAll() marks every row selected but leaves the
+    view's own "current" item untouched, so a slice with exactly one note
+    had nothing for NVDA to announce after a Left/Right move - only
+    pressing Up/Down (which Qt's own key handling moves explicitly) worked.
+    minimal_score's slices are all single notes, so any Right move exercises
+    this."""
+    load_and_wait(window, qtbot, minimal_score)
+    assert window.region_3.currentRow() == 0
+
+    window.navigate_timeline_right()
+
+    assert window.region_3.currentRow() == 0
+    assert window.region_3.currentItem() is not None
+
+
 def test_playback_stops_previous_notes_before_starting_new_ones(
     window, qtbot, null_synth, minimal_score
 ):

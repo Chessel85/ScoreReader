@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- F3/Ref 16 AC3 regression: MuseScore can put more than one <pluck> (and,
+     less commonly, more than one <fingering>) inside a single note's
+     notations/technical - e.g. a rasgueado marked with p/i/m/a all on one
+     note (seen live in "Fingers and articulations".musicxml, measure 2 of
+     the guitar part). A naive tech_el.find("pluck") only sees the first
+     child and silently drops the rest. -->
+<score-partwise version="4.0">
+  <part-list>
+    <score-part id="P1">
+      <part-name>Test Guitar</part-name>
+      <midi-instrument id="P1-I1">
+        <midi-channel>1</midi-channel>
+        <midi-program>25</midi-program>
+      </midi-instrument>
+    </score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <key>
+          <fifths>0</fifths>
+        </key>
+        <time>
+          <beats>4</beats>
+          <beat-type>4</beat-type>
+        </time>
+        <clef number="1">
+          <sign>G</sign>
+          <line>2</line>
+        </clef>
+      </attributes>
+      <note>
+        <pitch>
+          <step>A</step>
+          <octave>4</octave>
+        </pitch>
+        <duration>4</duration>
+        <voice>1</voice>
+        <type>whole</type>
+        <staff>1</staff>
+        <notations>
+          <technical>
+            <fingering>1</fingering>
+            <fingering>2</fingering>
+            <pluck>i</pluck>
+            <pluck>m</pluck>
+            <pluck>a</pluck>
+          </technical>
+        </notations>
+      </note>
+    </measure>
+  </part>
+</score-partwise>
