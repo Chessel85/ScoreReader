@@ -7,6 +7,7 @@ ElementTree-only path works and is wired up correctly.
 from models.music_data import MusicData
 from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
+from models.vocabulary import attribute_label
 
 
 def test_minimal_score_yields_one_slice_per_note(timeline, minimal_score):
@@ -489,6 +490,106 @@ def test_status_bar_fields_before_a_score_is_loaded():
     ]
 
 
+# --- F4/D-6: UK/US terminology toggle ------------------------------------
+
+def test_uk_terms_defaults_to_false():
+    """Required for backward compatibility - every test in this file that
+    doesn't pass uk_terms expects today's (US-leaning) hardcoded text."""
+    assert MusicData().uk_terms is False
+
+
+def test_status_bar_measure_word_follows_uk_terms(timeline, minimal_score):
+    md = timeline(minimal_score, uk_terms=True)
+
+    assert md.get_status_bar_fields()[0].startswith("Bar 1 beat ")
+
+
+def test_status_bar_placeholder_measure_word_follows_uk_terms():
+    md = MusicData(uk_terms=True)
+
+    assert md.get_status_bar_fields()[0] == "Bar - beat -"
+
+
+def test_tempo_status_field_duration_name_follows_uk_terms():
+    md = MusicData(tempo_bpm=48, tempo_beat_unit_quarter_length=0.5, tempo_beat_unit_name="eighth", uk_terms=True)
+
+    assert "quaver notes per minute" in md.get_status_bar_fields()[3]
+
+
+def test_tempo_beat_unit_name_at_translates_per_uk_terms():
+    md = MusicData(tempo_bpm=48, tempo_beat_unit_quarter_length=0.5, tempo_beat_unit_name="eighth")
+
+    assert md.tempo_beat_unit_name_at() == "eighth"
+    md.uk_terms = True
+    assert md.tempo_beat_unit_name_at() == "quaver"
+
+
+def test_get_region_1_data_tempo_credit_follows_uk_terms():
+    """The "Tempo" credit is baked once at parse time in US units
+    (MusicXMLReader) - get_region_1_data must override it live rather than
+    returning self.credits verbatim, or toggling wouldn't affect Region 1
+    without reloading the file."""
+    md = MusicData(
+        credits={"Title": "Test", "Tempo": "96 eighth notes per minute"},
+        tempo_bpm=48,
+        tempo_beat_unit_quarter_length=0.5,
+        tempo_beat_unit_name="eighth",
+    )
+
+    assert md.get_region_1_data()["Tempo"] == "96 eighth notes per minute"
+    md.uk_terms = True
+    assert md.get_region_1_data()["Tempo"] == "96 quaver notes per minute"
+    assert md.get_region_1_data()["Title"] == "Test", "other credits pass through untouched"
+
+
+def test_get_score_structure_stave_name_follows_uk_terms():
+    md = MusicData(
+        parts_info=[
+            PartStructureInfo(
+                part_id="P1", name="Guitar", staves_clefs={1: "Treble stave"}, staves_voices={1: [1]}
+            )
+        ]
+    )
+
+    assert md.get_score_structure()[0]["staves"][0]["name"] == "Treble staff"
+    md.uk_terms = True
+    assert md.get_score_structure()[0]["staves"][0]["name"] == "Treble stave"
+
+
+def test_get_stave_name_for_part_follows_uk_terms():
+    md = MusicData(
+        parts_info=[
+            PartStructureInfo(
+                part_id="P1", name="Guitar", staves_clefs={1: "Treble stave"}, staves_voices={1: [1]}
+            )
+        ]
+    )
+
+    assert md.get_stave_name_for_part("P1", 1) == "Treble staff"
+    md.uk_terms = True
+    assert md.get_stave_name_for_part("P1", 1) == "Treble stave"
+
+
+def test_region_3_and_region_4_attribute_labels_follow_uk_terms(timeline, minimal_score):
+    md = timeline(minimal_score, uk_terms=True)
+    md.set_display_attribute("measure", "voice", md.notes_for_indices([0]), add=True)
+
+    assert md.get_region_3_data() == ["C, bar 1"]
+    assert md.get_region_4_data_for_indices([0])["bar"] == "1"
+
+
+def test_region_4_attribute_key_lookups_are_unaffected_by_uk_terms(timeline, minimal_score):
+    """The internal "measure"/"stave" keys used for storage and menu wiring
+    must never change - only rendered label TEXT does."""
+    md = timeline(minimal_score, uk_terms=True)
+    notes = md.notes_for_indices([0])
+    md.set_display_attribute("measure", "voice", notes, add=True)
+
+    assert md.note_has_display_attribute(notes[0], "measure") is True
+    targets = md.get_region_4_row_targets([0])
+    assert any(attribute_key == "measure" for attribute_key, _ in targets)
+
+
 def test_get_channel_for_part_assigns_one_channel_per_part_in_order():
     md = MusicData(parts_info=[
         PartStructureInfo(part_id="P1", name="Piano", gmidi_program=1),
@@ -757,12 +858,16 @@ def test_notes_for_indices_returns_the_real_note_objects(timeline, chord_score):
 
 
 def test_get_region_4_row_targets_matches_data_keys_for_a_single_note(timeline, minimal_score):
+    """Row order must match, and each row's raw attribute_key must be the
+    one whose F4/D-6 display label (attribute_label) produced the data
+    dict's key - not literal string equality, since "stave"'s label diverges
+    from its key by default (uk_terms=False renders it as "staff")."""
     md = timeline(minimal_score)
 
     data_keys = list(md.get_region_4_data_for_indices([0]).keys())
     targets = md.get_region_4_row_targets([0])
 
-    assert [attribute_key for attribute_key, _ in targets] == data_keys
+    assert [attribute_label(attribute_key, md.uk_terms) for attribute_key, _ in targets] == data_keys
     assert all(note.step_name == "C" for _, note in targets)
 
 

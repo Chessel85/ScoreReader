@@ -4,11 +4,11 @@
 If any test here opens a window or an audio device, the harness is broken.
 """
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QLocale, Qt
 from PySide6.QtGui import QKeySequence, QValidator
 from PySide6.QtWidgets import QApplication, QDialog, QLabel
 
-from main_window import MainWindow
+from main_window import MainWindow, detect_default_uk_terms
 from widgets.about_dialog import AboutDialog
 from widgets.goto_measure_dialog import GotoMeasureDialog
 from widgets.tempo_offset_dialog import TempoOffsetDialog
@@ -16,7 +16,9 @@ from widgets.tempo_offset_dialog import TempoOffsetDialog
 
 @pytest.fixture
 def window(qtbot, null_synth):
-    w = MainWindow(synth=null_synth)
+    # uk_terms=False: deterministic regardless of the machine's own OS
+    # locale (F4/D-6) - every existing assertion here expects US wording.
+    w = MainWindow(synth=null_synth, uk_terms=False)
     qtbot.addWidget(w)
     return w
 
@@ -348,7 +350,11 @@ def test_status_bar_shows_pending_digits_while_typing_a_bar_number(
     load_and_wait(window, qtbot, many_measures_score)
 
     qtbot.keyClicks(window.region_3, "12")
-    assert window.status_bar._fields[0].text() == "Go to bar: 12"
+    # F4/D-6: this used to hardcode "bar" regardless of dialect (a
+    # pre-existing inconsistency with "Measure" everywhere else) - now
+    # dialect-aware, so under this fixture's uk_terms=False it says
+    # "measure" like the rest of the status bar.
+    assert window.status_bar._fields[0].text() == "Go to measure: 12"
 
     qtbot.keyClick(window.region_3, Qt.Key.Key_Return)
     assert window.status_bar._fields[0].text() == "Measure 12 beat 1"
@@ -427,7 +433,9 @@ def test_goto_measure_dialog_accepts_a_valid_measure_number(
     dialog = GotoMeasureDialog(window)
     dialog.measure_edit.setText("2")
     monkeypatch.setattr(dialog, "exec", lambda: GotoMeasureDialog.DialogCode.Accepted)
-    monkeypatch.setattr("main_window.GotoMeasureDialog", lambda parent, current_measure=None: dialog)
+    monkeypatch.setattr(
+        "main_window.GotoMeasureDialog", lambda parent, current_measure=None, word="Measure": dialog
+    )
 
     window._show_goto_measure_dialog()
 
@@ -444,7 +452,9 @@ def test_goto_measure_dialog_rejects_an_unknown_measure_with_the_boundary_cue(
     dialog = GotoMeasureDialog(window)
     dialog.measure_edit.setText("99")
     monkeypatch.setattr(dialog, "exec", lambda: GotoMeasureDialog.DialogCode.Accepted)
-    monkeypatch.setattr("main_window.GotoMeasureDialog", lambda parent, current_measure=None: dialog)
+    monkeypatch.setattr(
+        "main_window.GotoMeasureDialog", lambda parent, current_measure=None, word="Measure": dialog
+    )
 
     window._show_goto_measure_dialog()
 
@@ -461,7 +471,9 @@ def test_goto_measure_dialog_cancelled_does_not_move(
     dialog = GotoMeasureDialog(window)
     dialog.measure_edit.setText("2")
     monkeypatch.setattr(dialog, "exec", lambda: GotoMeasureDialog.DialogCode.Rejected)
-    monkeypatch.setattr("main_window.GotoMeasureDialog", lambda parent, current_measure=None: dialog)
+    monkeypatch.setattr(
+        "main_window.GotoMeasureDialog", lambda parent, current_measure=None, word="Measure": dialog
+    )
 
     window._show_goto_measure_dialog()
 
@@ -500,7 +512,7 @@ def test_ctrl_g_shortcut_opens_the_goto_measure_dialog(window, qtbot, null_synth
     opened = []
     monkeypatch.setattr(
         "main_window.GotoMeasureDialog",
-        lambda parent, current_measure=None: type(
+        lambda parent, current_measure=None, word="Measure": type(
             "FakeDialog", (), {"exec": lambda self: opened.append(True) or QDialog.DialogCode.Rejected}
         )(),
     )
@@ -1082,6 +1094,65 @@ def test_metronome_resets_to_off_on_a_new_score_load(window, qtbot, minimal_scor
     assert window.metronome_action.isChecked() is False
 
 
+# --- F4/D-6: UK/US terminology toggle -------------------------------------
+
+def test_detect_default_uk_terms_true_for_a_non_us_locale():
+    assert detect_default_uk_terms(QLocale(QLocale.Language.English, QLocale.Country.UnitedKingdom)) is True
+    assert detect_default_uk_terms(QLocale(QLocale.Language.German, QLocale.Country.Germany)) is True
+
+
+def test_detect_default_uk_terms_false_only_for_a_us_locale():
+    assert detect_default_uk_terms(QLocale(QLocale.Language.English, QLocale.Country.UnitedStates)) is False
+
+
+def test_toggle_uk_terms_updates_music_data_menu_and_status_bar(window, qtbot, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+    assert window.uk_terms_action.isChecked() is False
+    assert window.status_bar._fields[0].text().startswith("Measure ")
+
+    window.toggle_uk_terms()
+
+    assert window._music_data.uk_terms is True
+    assert window.uk_terms_action.isChecked() is True
+    assert window.status_bar._fields[0].text().startswith("Bar ")
+    assert window.goto_measure_action.text() == "&Go to Bar..."
+
+    window.toggle_uk_terms()
+
+    assert window._music_data.uk_terms is False
+    assert window.uk_terms_action.isChecked() is False
+    assert window.status_bar._fields[0].text().startswith("Measure ")
+    assert window.goto_measure_action.text() == "&Go to Measure..."
+
+
+def test_toggle_uk_terms_works_with_no_score_loaded(qtbot, null_synth):
+    """A session preference, not a per-score one - must still flip and
+    update the menu even before any file is opened (unlike
+    toggle_metronome, which is a no-op with no score)."""
+    w = MainWindow(synth=null_synth, uk_terms=False)
+    qtbot.addWidget(w)
+    assert w.uk_terms_action.isChecked() is False
+
+    w.toggle_uk_terms()
+
+    assert w._uk_terms is True
+    assert w.uk_terms_action.isChecked() is True
+
+
+def test_uk_terms_preference_survives_loading_a_new_score(window, qtbot, minimal_score):
+    """MusicData is wholly replaced on every file load - the preference
+    must be reapplied, or it would silently reset to MusicData's own
+    bare-construction default (US) on every open."""
+    load_and_wait(window, qtbot, minimal_score)
+    window.toggle_uk_terms()
+    assert window._music_data.uk_terms is True
+
+    load_and_wait(window, qtbot, minimal_score)
+
+    assert window._music_data.uk_terms is True
+    assert window.uk_terms_action.isChecked() is True
+
+
 def test_navigating_onto_a_beat_plays_a_click_alongside_the_note(
     window, qtbot, null_synth, minimal_score
 ):
@@ -1123,9 +1194,12 @@ def test_region_4_attribute_menu_add_updates_region_3_without_reauditioning(
     assert _region_3_labels(window) == ["C"]
 
     actions = window._region_4_attribute_menu_actions(1)
+    # F4/D-6: "stave" renders as "staff" under this fixture's uk_terms=False
+    # (US default) - stave/staff's stored/default form is UK, so US mode
+    # translates it, unlike bar/measure which is the other way round.
     assert [label for label, _ in actions] == [
         "Add to notes for this voice",
-        "Add to notes in same stave",
+        "Add to notes in same staff",
         "Add to notes in the same part",
         "Add to notes in the whole score",
     ]
@@ -1214,7 +1288,7 @@ def test_region_4_attribute_menu_switches_to_remove_once_present(
     actions = window._region_4_attribute_menu_actions(1)
     assert [label for label, _ in actions] == [
         "Remove for notes in current voice",
-        "Remove for notes in current stave",
+        "Remove for notes in current staff",
         "Remove for notes in current part",
         "Remove for notes in the whole score",
     ]
@@ -1239,7 +1313,7 @@ def test_region_4_attribute_menu_stave_scope_fans_out_to_every_voice_on_that_sta
     assert [i.row() for i in window.region_3.selectedIndexes()] == [1]
 
     actions = window._region_4_attribute_menu_actions(1)  # row 1 = octave
-    stave_add = next(cb for label, cb in actions if label == "Add to notes in same stave")
+    stave_add = next(cb for label, cb in actions if label == "Add to notes in same staff")
     stave_add()
 
     labels = _region_3_labels(window)

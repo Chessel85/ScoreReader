@@ -1,5 +1,7 @@
 # main_window.py
-from PySide6.QtCore import Qt
+from typing import Optional
+
+from PySide6.QtCore import QLocale, Qt
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -20,6 +22,7 @@ from audio.metronome import click_event_for_beat
 from audio.sequencer import Sequencer
 from audio.synth_engine import SynthEngine
 from models.music_data import MusicData
+from models.vocabulary import bar_word, staff_word
 from widgets.about_dialog import AboutDialog
 from widgets.goto_measure_dialog import GotoMeasureDialog
 from widgets.region2_list_widget import Region2ListWidget
@@ -29,6 +32,21 @@ from widgets.status_bar_widget import StatusBarWidget
 from widgets.tempo_offset_dialog import TempoOffsetDialog
 from widgets.timeline_list_widget import TimelineListWidget
 from workers.score_load_worker import ScoreLoadThread
+
+
+def detect_default_uk_terms(system_locale: Optional[QLocale] = None) -> bool:
+    """F4/D-6: UK terms are the safe default; only a positively-detected US
+    system locale switches the startup default to US. Any other locale (UK,
+    non-English, or one Qt can't resolve) stays UK - "indeterminate" means
+    UK, not a guess. Lives here (not models/vocabulary.py) because it needs
+    QLocale - models/ stays Qt-free. system_locale is injectable so a test
+    gets a deterministic result regardless of the machine running it - same
+    DI pattern as SynthEngine (D-7) and Sequencer's timer (E4)."""
+    loc = system_locale if system_locale is not None else QLocale.system()
+    # PySide6 6.11 exposes the non-deprecated .territory() method, but it
+    # still returns the QLocale.Country enum (not a separate Territory enum
+    # class, unlike some Qt6 versions/bindings) - verified via introspection.
+    return loc.territory() != QLocale.Country.UnitedStates
 
 
 class MainWindow(QMainWindow):
@@ -45,13 +63,19 @@ class MainWindow(QMainWindow):
     BOUNDARY_MIDI_PITCH = 37  # C#2 - low
     BOUNDARY_DURATION_MS = 100  # roughly a semiquaver; independent of score tempo
 
-    def __init__(self, synth=None):
+    def __init__(self, synth=None, uk_terms: bool | None = None):
         """Create the main window.
 
         synth: any object exposing the SynthEngine interface
         (play_chord / play_notes / stop_all_notes / set_program / close). Defaults to a
         real SynthEngine. Tests pass a stand-in so no audio device is
         opened, and so they can assert what would have sounded.
+
+        uk_terms: F4/D-6 startup dialect. Defaults to None, which resolves
+        via detect_default_uk_terms() (OS-locale detection) - same
+        constructor-injection pattern as synth above (D-7), so tests get a
+        deterministic value regardless of the machine running them instead
+        of depending on its real OS locale.
         """
         super().__init__()
         self.setWindowTitle("Score View & Editor")
@@ -63,6 +87,14 @@ class MainWindow(QMainWindow):
         # E4/E5: one Sequencer per loaded score (it holds a reference to
         # that score's MusicData) - (re)created in _on_score_loaded.
         self.sequencer: Sequencer | None = None
+
+        # F4/D-6: a SESSION preference, not a per-score one like
+        # metronome_enabled - MusicData is wholly replaced on every file
+        # load (_on_score_loaded), so this lives here and is explicitly
+        # reapplied onto each freshly-loaded MusicData rather than living
+        # only on MusicData itself. Set before setup_menu() since menu text
+        # (goto_measure_action) depends on it at construction time.
+        self._uk_terms: bool = uk_terms if uk_terms is not None else detect_default_uk_terms()
 
         self.setup_ui()
         self.setup_menu()
@@ -230,7 +262,7 @@ class MainWindow(QMainWindow):
         self.last_measure_action.setShortcut(QKeySequence(Qt.Key.Key_End))
         self.last_measure_action.triggered.connect(self._navigation_menu_last_measure)
 
-        self.goto_measure_action = QAction("&Go to Measure...", self)
+        self.goto_measure_action = QAction(self._goto_measure_action_text(), self)
         self.goto_measure_action.setShortcut(QKeySequence("Ctrl+G"))
         self.goto_measure_action.triggered.connect(self._show_goto_measure_dialog)
 
@@ -260,6 +292,14 @@ class MainWindow(QMainWindow):
         self.tempo_offset_action.setShortcut(QKeySequence("Ctrl+T"))
         self.tempo_offset_action.triggered.connect(self._show_tempo_offset_dialog)
         options_menu.addAction(self.tempo_offset_action)
+
+        # F4/D-6: no dedicated shortcut - none is specified anywhere, and it
+        # avoids colliding with Ctrl+T/Ctrl+M below.
+        self.uk_terms_action = QAction("&UK Terms", self)
+        self.uk_terms_action.setCheckable(True)
+        self.uk_terms_action.setChecked(self._uk_terms)
+        self.uk_terms_action.triggered.connect(self.toggle_uk_terms)
+        options_menu.addAction(self.uk_terms_action)
 
         # E8/Ref 14: checkable so its own state is announced by screen
         # readers on focus, in addition to the Ctrl+M shortcut and the
@@ -305,13 +345,18 @@ class MainWindow(QMainWindow):
     def _navigation_menu_move_to_notes(self):
         self.region_3.setFocus()
 
+    def _goto_measure_action_text(self) -> str:
+        return f"&Go to {bar_word(self._uk_terms).capitalize()}..."
+
     def _show_goto_measure_dialog(self):
         current_measure = None
         if self._music_data:
             current_slice = self._music_data.get_current_slice()
             if current_slice:
                 current_measure = current_slice.measure
-        dialog = GotoMeasureDialog(self, current_measure=current_measure)
+        dialog = GotoMeasureDialog(
+            self, current_measure=current_measure, word=bar_word(self._uk_terms).capitalize()
+        )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             measure_number = dialog.measure_number()
             if measure_number is not None:
@@ -377,6 +422,11 @@ class MainWindow(QMainWindow):
         if self.sequencer is not None:
             self.sequencer.stop()
         self._music_data = music_data
+        # F4/D-6: MusicData is wholly replaced on every load, but the
+        # vocabulary preference is a session one, not a per-score one -
+        # reapply it here or the dialect would silently reset to
+        # MusicData's own bare-construction default (US) on every open.
+        self._music_data.uk_terms = self._uk_terms
         self.sequencer = Sequencer(music_data, self.synth, parent=self)
         self.sequencer.step_played.connect(self._on_sequencer_step)
         self.sequencer.finished.connect(self._on_sequencer_finished)
@@ -428,7 +478,7 @@ class MainWindow(QMainWindow):
             return
         if digits:
             fields = self._music_data.get_status_bar_fields()
-            fields[0] = f"Go to bar: {digits}"
+            fields[0] = f"Go to {bar_word(self._uk_terms)}: {digits}"
             self.status_bar.set_fields(fields)
         else:
             self._update_status_bar()
@@ -595,6 +645,24 @@ class MainWindow(QMainWindow):
         self.metronome_action.setChecked(self._music_data.metronome_enabled)
         self._update_status_bar()
 
+    def toggle_uk_terms(self):
+        """F4/D-6: Options > UK Terms. Unlike toggle_metronome, this must
+        still flip the preference and update the menu even with no score
+        loaded - it's a session preference (see self._uk_terms comment in
+        __init__), not a per-score one. Refreshes every region the
+        vocabulary touches: Region 1 (Tempo credit), Region 3/4 (via the
+        same lightweight _refresh_region_3_labels F1's attribute toggle
+        already uses - no re-audition/selection loss), and the status bar."""
+        self._uk_terms = not self._uk_terms
+        self.uk_terms_action.setChecked(self._uk_terms)
+        self.goto_measure_action.setText(self._goto_measure_action_text())
+        if not self._music_data:
+            return
+        self._music_data.uk_terms = self._uk_terms
+        self._populate_table(self.region_1, self._music_data.get_region_1_data())
+        self._refresh_region_3_labels()
+        self._update_status_bar()
+
     def _play_boundary_cue(self):
         """Ref 2 AC4 / Ref 3 AC4: plays instead of moving, when a navigation
         key would move past a boundary of the active timeline (C5)."""
@@ -644,17 +712,18 @@ class MainWindow(QMainWindow):
         selected_notes = self._music_data.notes_for_indices(selected_indices)
         already_present = self._music_data.note_has_display_attribute(anchor_note, attribute_key)
 
+        stave_word = staff_word(self._music_data.uk_terms)
         if already_present:
             scopes = [
                 ("voice", "Remove for notes in current voice"),
-                ("stave", "Remove for notes in current stave"),
+                ("stave", f"Remove for notes in current {stave_word}"),
                 ("part", "Remove for notes in current part"),
                 ("score", "Remove for notes in the whole score"),
             ]
         else:
             scopes = [
                 ("voice", "Add to notes for this voice"),
-                ("stave", "Add to notes in same stave"),
+                ("stave", f"Add to notes in same {stave_word}"),
                 ("part", "Add to notes in the same part"),
                 ("score", "Add to notes in the whole score"),
             ]

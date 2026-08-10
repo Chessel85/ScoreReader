@@ -2,6 +2,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from models import vocabulary
 from models.event_slice import EventSlice
 from models.key_signatures import FIFTHS_MAP
 from models.note_data import NoteData
@@ -79,6 +80,16 @@ class MusicData:
     # beat position with no note counts as a navigable event at all
     # (_slice_is_navigable, Ref 14 AC4).
     metronome_enabled: bool = False
+
+    # F4/D-6: UK vs US music terminology (bar/measure, duration names,
+    # stave/staff). Off (US-leaning defaults) is required here, not
+    # arbitrary - it preserves every existing test's current English-text
+    # assertions unchanged. main_window.py decides the real app-level
+    # startup default (OS-locale-detected, UK unless confidently US) and
+    # applies it explicitly, including re-applying it after each file load
+    # since MusicData is wholly replaced then and this is a session
+    # preference, not a per-score one like metronome_enabled above.
+    uk_terms: bool = False
 
     def __post_init__(self):
         if self.file_path:
@@ -431,7 +442,20 @@ class MusicData:
         return True
 
     def get_region_1_data(self) -> Dict[str, str]:
-        return self.credits
+        """self.credits' "Tempo" entry was baked once at parse time in US
+        units (MusicXMLReader._extract_tempo) - override it here with a
+        freshly-built string so a live vocabulary toggle (F4) is reflected
+        without needing to reload the file. Rebuilt from tempo_bpm/
+        tempo_beat_unit_quarter_length directly (not tempo_beat_unit_name_at,
+        which is cursor-position-aware) since Region 1 always shows the
+        score's OPENING tempo (A9), never the live/cursor one."""
+        data = dict(self.credits)
+        if "Tempo" in data:
+            number = self.tempo_bpm / self.tempo_beat_unit_quarter_length
+            number_str = str(int(number)) if float(number).is_integer() else str(round(number, 2))
+            unit = vocabulary.duration_name(self.tempo_beat_unit_name, self.uk_terms)
+            data["Tempo"] = f"{number_str} {unit} notes per minute"
+        return data
 
     def get_score_structure(self) -> List[Dict[str, Any]]:
         """Parts/staves/voices shape Region2HierarchyModel.build_from_score()
@@ -442,7 +466,9 @@ class MusicData:
             staves = [
                 {
                     "id": s_id,
-                    "name": p.staves_clefs.get(s_id, "Standard stave"),
+                    "name": vocabulary.clef_name(
+                        p.staves_clefs.get(s_id, "Standard stave"), self.uk_terms
+                    ),
                     "voices": p.staves_voices[s_id],
                 }
                 for s_id in sorted(p.staves_voices.keys())
@@ -539,7 +565,8 @@ class MusicData:
         for idx, n in enumerate(selected_notes, start=1):
             prefix = f"note {idx} " if is_chord else ""
             for attribute_key, value in self._note_attribute_pairs(n).items():
-                rows.append((f"{prefix}{attribute_key}", attribute_key, n, value))
+                label = vocabulary.attribute_label(attribute_key, self.uk_terms)
+                rows.append((f"{prefix}{label}", attribute_key, n, value))
         return rows
 
     def _format_note_for_region_3(self, note: NoteData) -> str:
@@ -557,7 +584,11 @@ class MusicData:
         for key in self.DISPLAY_ATTRIBUTE_ORDER:
             if key not in wanted or key not in pairs:
                 continue
-            parts.append(pairs[key] if key == "step" else f"{key} {pairs[key]}")
+            if key == "step":
+                parts.append(pairs[key])
+            else:
+                label = vocabulary.attribute_label(key, self.uk_terms)
+                parts.append(f"{label} {pairs[key]}")
         return ", ".join(parts)
 
     def get_region_3_data(self) -> List[str]:
@@ -710,11 +741,15 @@ class MusicData:
         return display * beat_unit_ql
 
     def tempo_beat_unit_name_at(self, index: Optional[int] = None) -> str:
-        """The beat unit label (e.g. "eighth") in effect at `index` (or the
-        cursor) - lets the status bar show the right unit even where a
-        mid-score tempo marking changes beat unit, not just the number."""
+        """The beat unit label (e.g. "eighth"/"quaver") in effect at `index`
+        (or the cursor) - lets the status bar show the right unit even where
+        a mid-score tempo marking changes beat unit, not just the number.
+        F4/D-6: translated per self.uk_terms - both current callers
+        (_tempo_status_field below, and main_window.py's Tempo Offset dialog
+        construction) are display-only, so this is the single change point
+        that covers both."""
         _, _, name = self._tempo_change_at(index)
-        return name
+        return vocabulary.duration_name(name, self.uk_terms)
 
     def set_playback_tempo_offset(self, offset: float) -> None:
         """Clamp offset so effective_tempo_display_bpm() always stays within
@@ -762,8 +797,8 @@ class MusicData:
         looked up in Region 4 matches the stave it was toggled under."""
         for p in self.parts_info:
             if p.part_id == part_id:
-                return p.staves_clefs.get(staff, "Standard stave")
-        return "Standard stave"
+                return vocabulary.clef_name(p.staves_clefs.get(staff, "Standard stave"), self.uk_terms)
+        return vocabulary.clef_name("Standard stave", self.uk_terms)
 
     def get_playback_events_for_indices(
         self, selected_indices: List[int], index: Optional[int] = None
@@ -854,9 +889,10 @@ class MusicData:
         field is the one place a screen-reader user can check the current
         playback tempo without a forced announcement (Phase D deliberately
         skipped for now)."""
+        bar_word = vocabulary.bar_word(self.uk_terms).capitalize()
         current = self.get_current_slice()
         if current is None:
-            return ["Measure - beat -", "Key: -", "Time: -", self._tempo_status_field()]
+            return [f"{bar_word} - beat -", "Key: -", "Time: -", self._tempo_status_field()]
 
         beat = current.beat_position
         beat_str = str(int(beat)) if float(beat).is_integer() else str(beat)
@@ -864,7 +900,7 @@ class MusicData:
         key_name = FIFTHS_MAP.get(current.key_fifths, f"{current.key_fifths} sharps/flats")
 
         return [
-            f"Measure {current.measure} beat {beat_str}",
+            f"{bar_word} {current.measure} beat {beat_str}",
             f"Key: {key_name}",
             f"Time: {ts_num}/{ts_den}",
             self._tempo_status_field(),

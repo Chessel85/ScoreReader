@@ -13,9 +13,13 @@ class GotoMeasureDialog(QDialog):
     MusicData.jump_to_measure() the typed-digits path uses, just triggered
     from here instead of Enter."""
 
-    def __init__(self, parent=None, current_measure: Optional[int] = None):
+    def __init__(self, parent=None, current_measure: Optional[int] = None, word: str = "Measure"):
         super().__init__(parent)
-        self.setWindowTitle("Go to Measure")
+        # F4/D-6: word is the caller's already-dialect-translated label
+        # ("Measure"/"Bar") - same pattern as TempoOffsetDialog's
+        # beat_unit_name param, this dialog stays dialect-agnostic and just
+        # interpolates whatever word string it's given.
+        self.setWindowTitle(f"Go to {word}")
 
         self.measure_edit = QLineEdit(self)
         # Whole measure numbers only - this jumps to a measure, not a
@@ -26,7 +30,7 @@ class GotoMeasureDialog(QDialog):
             self.measure_edit.setText(str(current_measure))
             self.measure_edit.selectAll()
 
-        label = QLabel("Measure number:", self)
+        label = QLabel(f"{word} number:", self)
         label.setBuddy(self.measure_edit)
 
         buttons = QDialogButtonBox(

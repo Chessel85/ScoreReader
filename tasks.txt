@@ -671,8 +671,43 @@ PHASE F - NOTE DISPLAY CONFIGURATION                      (3 tasks)
         a separate Options dialog; only the ordering half remains open.
 [ ] F3  Capture further attributes from the source file: dynamics, staccato,
         fingering - Ref 16 AC3
-[ ] F4  UK / US music vocabulary toggle: bar vs measure, crotchet vs quarter
+[x] F4  UK / US music vocabulary toggle: bar vs measure, crotchet vs quarter
         note, quaver vs eighth note - Discussion Points, see D-6
+        > DONE 2026-08-10. Purely presentational per the user - internal
+          identifiers (attribute_key "measure"/"stave", method names,
+          MusicXML type strings) never change, only rendered text. Scope
+          widened beyond the PDD's literal two examples to include
+          stave/staff too, per the user's own framing ("treat it like any
+          other term... use UK and US when it surfaces to the UI"). New
+          models/vocabulary.py (Qt-free) holds the word-choice/translation
+          helpers; MusicData gained uk_terms: bool (default False - required
+          for backward compatibility with every existing test's US-dialect
+          assertions). GOTCHA: the two term families translate in OPPOSITE
+          directions because the app's hardcoded text was already
+          inconsistent - measure/duration names default US (translate to UK
+          only when uk_terms), stave/staff default UK (translate to US only
+          when NOT uk_terms) - commented explicitly at both definition sites
+          to head off future confusion.
+        > Default dialect: UK, unless QLocale.system().territory() resolves
+          confidently to United States, in which case US - any other/
+          indeterminate locale stays UK (never a guess). Lives in
+          main_window.py, not models/, since it needs Qt; injectable via a
+          new MainWindow(uk_terms=...) constructor param (same D-7 DI
+          pattern as synth) so tests get a deterministic result regardless
+          of the machine running them - GOTCHA hit live: this dev machine's
+          own OS locale is en_GB, so the existing test suite (previously
+          assuming US wording unconditionally) broke wholesale until the
+          window fixture pinned uk_terms=False explicitly.
+        > uk_terms is a SESSION preference, not a per-score one (unlike
+          metronome_enabled/voice_display_attributes) - MusicData is wholly
+          replaced on every file load, so _on_score_loaded explicitly
+          reapplies MainWindow's own self._uk_terms onto each freshly-loaded
+          MusicData, and toggle_uk_terms() (unlike toggle_metronome) still
+          works with no score loaded. Region 1's "Tempo" credit is baked
+          once at parse time in US units (MusicXMLReader) - get_region_1_data
+          now overrides it live from tempo_bpm/tempo_beat_unit_quarter_length
+          directly rather than returning self.credits verbatim, so toggling
+          is reflected without reloading the file.
 
 
 ###
@@ -785,11 +820,18 @@ D-5  Multi-part GM programs and MIDI channel allocation
      MusicData.get_channel_for_part() / get_gmidi_program_for_part().
 
 D-6  UK vs US music vocabulary
-     From the spec's Discussion Points: bar/measure, crotchet/quarter note,
-     quaver/eighth note. Open: which is the default, does the toggle affect
-     screen reader announcements as well as on-screen labels, and does it
-     reach Region 4 attribute names ("measure" is currently a literal key).
-     Interacts with A9's tempo wording. Decide in F4.
+     RESOLVED 2026-08-10 in F4. Default: UK, unless QLocale.system() resolves
+     confidently to a US territory - any other/indeterminate locale stays
+     UK. Screen reader announcements: no separate channel needed (Phase D
+     was already skipped) - NVDA reads whatever on-screen text the toggle
+     produces, so on-screen and spoken wording are automatically the same
+     thing. Region 4 attribute names: the internal "measure"/"stave" keys
+     are NEVER renamed (storage/menu wiring depend on them staying stable) -
+     only the rendered display LABEL changes, via
+     models/vocabulary.attribute_label(). Scope ended up wider than the
+     spec's two literal examples - stave/staff included too, per the user's
+     own framing that this is purely a UX/presentation concern, not
+     something to special-case.
 
 D-7  How tests avoid opening audio hardware
      DECIDED 2026-08-05: constructor injection. MainWindow(synth=None)
@@ -908,5 +950,5 @@ COVERAGE CHECK - every requirement appears at least once
   Reported bugs: tempo units A9, playback instrument A8
   Functional debt: metronome click sound quality E8/E11, see D-14
   Discussion Points: nav keys scoped to Note region (RESOLVED) D-2/C1,
-                     UK-US vocabulary D-6/F4
+                     UK-US vocabulary (RESOLVED) D-6/F4
 ###
