@@ -81,6 +81,14 @@ Region 3 is `ExtendedSelection` and defaults to selecting every note in the curr
 - Not yet built despite being specified: voice control, edit mode, MIDI/Guitar Pro/BME I/O, capo handling, chord naming, and settings persistence.
 - Metronome click sound (Ref 14) is functional but not satisfying - two synthesis attempts (a sawtooth lead, then GM percussion Claves) were both live-tested and found lacking. Tracked as functional debt, not a missing feature; see tasks.txt E11 / D-14.
 
+## Git workflow
+
+The user has given standing authorization to commit and push once they say
+"commit"/"push"/"commit and push" (or similar) for that request - don't ask
+for confirmation again first. This doesn't extend to force-push, reset --hard,
+or other destructive git operations, which still need explicit confirmation
+each time per the Executing Actions With Care guidance.
+
 ## Git recovery notes
 
 Local tags `recovered-2026-08-03` (= `b4b7c52`) and `pre-reset-tip` (= `b914f67`) pin the August commits that a hard reset orphaned, so `git gc` can't drop them. **Do not push these tags** — their ancestry contains the 148 MB soundfont and the push will be rejected. The recovered content itself is already on `main` as commit `8385e59`, applied as a fresh tree copy rather than a merge for exactly that reason.
