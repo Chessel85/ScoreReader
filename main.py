@@ -6,6 +6,8 @@ from main_window import MainWindow
 
 def main():
     app = QApplication(sys.argv)
+    app.setOrganizationName("Recall Score")
+    app.setApplicationName("Recall Score")
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

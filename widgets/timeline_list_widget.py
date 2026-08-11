@@ -77,7 +77,22 @@ class TimelineListWidget(QListWidget):
         elif key == Qt.Key.Key_End:
             main_win.navigate_timeline_end()
         elif key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            # Qt's native ExtendedSelection arrow handling only collapses
+            # the multi-row selection down to the newly-current row as a
+            # side effect of the current row actually changing - at a
+            # boundary (Up already on the top row of a selected chord, or
+            # Down already on the bottom) there's nowhere to move to, so it
+            # no-ops and leaves every note in the chord still selected.
+            # Live-tested bug: landing on a chord then pressing Up did
+            # nothing, even though Down correctly narrowed to the next row.
+            # Explicitly re-collapsing after every Up/Down (not just at a
+            # boundary) is a no-op when the native handling already did it,
+            # and fixes the boundary case the same way.
             super().keyPressEvent(event)
+            current = self.currentItem()
+            if current is not None:
+                self.clearSelection()
+                current.setSelected(True)
             main_win.on_region_3_vertical_move()
         elif key == Qt.Key.Key_Tab:
             main_win.focus_next_region(self)

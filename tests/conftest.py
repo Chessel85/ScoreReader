@@ -167,6 +167,17 @@ def score_duet() -> str:
 
 
 @pytest.fixture
+def score_duet_mxl() -> str:
+    """The same score as score_duet, but the real compressed .mxl the user
+    would actually open - internally just META-INF/container.xml + a member
+    named score.xml, same as every other real .mxl in files/, which is
+    exactly the "every real file is internally called score.xml" case that
+    per-file config naming (Ref 27) must key off the outer .mxl filename
+    instead of."""
+    return _require(SCORES_DIR / "Chessel Duet.mxl")
+
+
+@pytest.fixture
 def score_long_tune() -> str:
     """4/4, one part, 130 measures, no pickup - a real score with genuine
     multi-digit measure numbers, for C4's digit-entry bar jump (Ref 6).
@@ -204,6 +215,20 @@ def timeline():
 def null_synth() -> NullSynth:
     """Recording stand-in for SynthEngine. Never touches audio hardware."""
     return NullSynth()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_persistence(monkeypatch, tmp_path):
+    """Phase G: redirects app_settings/score_config's on-disk locations into
+    a per-test tmp_path, the same reasoning as MainWindow's uk_terms
+    constructor override (D-7) - without this, tests would read and write
+    the real developer machine's %LOCALAPPDATA%\\Recall Score\\ folder,
+    both polluting real user data and making test behaviour depend on
+    whatever that machine's settings.json/*.rsc files already contain."""
+    from persistence import app_settings, score_config
+
+    monkeypatch.setattr(app_settings, "settings_path", lambda: tmp_path / "settings.json")
+    monkeypatch.setattr(score_config, "config_dir", lambda: tmp_path / "scores")
 
 
 @pytest.fixture(autouse=True)

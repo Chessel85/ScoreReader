@@ -27,6 +27,26 @@ def test_reader_captures_part_structure(minimal_score):
 
 
 @pytest.mark.slow
+def test_reader_handles_compressed_mxl_the_same_as_the_uncompressed_score(score_duet, score_duet_mxl):
+    """Both MusicXMLReader's own ElementTree pass and TimelineBuilder's
+    (invoked via MusicData(file_path=...), see the `timeline` fixture used
+    elsewhere) previously did a raw ET.parse() that can't open a .mxl zip
+    container - this is the regression test for that fix."""
+    from models.music_data import MusicData
+
+    uncompressed = MusicXMLReader(score_duet).load()
+    compressed = MusicXMLReader(score_duet_mxl).load()
+
+    assert [p.name for p in compressed.parts_info] == [p.name for p in uncompressed.parts_info]
+    assert len(compressed.timeline_slices) == len(uncompressed.timeline_slices)
+
+    # TimelineBuilder's own fallback ET.parse (no pre-parsed root), the path
+    # a direct MusicData(file_path=...) construction takes.
+    direct = MusicData(file_path=score_duet_mxl)
+    assert len(direct.timeline_slices) == len(uncompressed.timeline_slices)
+
+
+@pytest.mark.slow
 def test_tempo_display_reflects_the_scores_own_beat_unit(score_duet):
     """A9: reported bug - Chessel Duet is eighth=96 and music21's
     getQuarterBPM() converts that to 48, so the old code displayed "48 BPM"

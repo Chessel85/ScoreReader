@@ -8,6 +8,7 @@ from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
 from models.tempo_change import TempoChange
 from models.vocabulary import articulation_name, dynamic_name
+from parsers.xml_source import read_musicxml_root
 
 
 def _duration_divs(elem) -> int:
@@ -130,7 +131,7 @@ class TimelineBuilder:
         root = self._root
         if root is None:
             try:
-                root = ET.parse(self.file_path).getroot()
+                root = read_musicxml_root(self.file_path)
             except Exception as e:
                 print(f"[ERROR] Failed to parse XML for timeline: {e}")
                 return []

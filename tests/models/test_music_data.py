@@ -8,6 +8,7 @@ from models.music_data import MusicData
 from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
 from models.vocabulary import attribute_label
+from persistence.score_config import ScoreConfig
 
 
 def test_minimal_score_yields_one_slice_per_note(timeline, minimal_score):
@@ -978,3 +979,175 @@ def test_set_display_attribute_can_remove_step_leaving_a_blank_voice():
 
     assert md.voice_display_attributes[("P1", 1, 1)] == set()
     assert md.note_has_display_attribute(note, "step") is False
+
+
+# F2/Ref 15 AC4: attribute ORDERING (as opposed to F1's add/remove above).
+
+def test_move_attribute_order_swaps_adjacent_entries():
+    md = MusicData(parts_info=[PartStructureInfo(part_id="P1", staves_voices={1: [1]})])
+
+    assert md.move_attribute_order("octave", up=True) is True
+    assert md.attribute_order[:2] == ["octave", "step"]
+
+    assert md.move_attribute_order("octave", up=False) is True
+    assert md.attribute_order[:2] == ["step", "octave"]
+
+
+def test_move_attribute_order_boundary_and_unknown_key_are_no_ops():
+    md = MusicData(parts_info=[PartStructureInfo(part_id="P1", staves_voices={1: [1]})])
+    original = list(md.attribute_order)
+
+    assert md.move_attribute_order("step", up=True) is False, "step is already first"
+    assert md.move_attribute_order("pluck", up=False) is False, "pluck is already last"
+    assert md.move_attribute_order("not-a-real-attribute", up=True) is False
+    assert md.attribute_order == original
+
+
+def test_move_attribute_order_within_scope_skips_hidden_neighbours():
+    """A dialog filtered to attributes present for one Region 2 node
+    (`within`) still moves the visible list by exactly one row per click -
+    any attribute_order entries not in `within` sitting between the moved
+    key and its visible neighbour are displaced, but their order among
+    themselves is untouched."""
+    md = MusicData(parts_info=[PartStructureInfo(part_id="P1", staves_voices={1: [1]})])
+
+    md.attribute_order = ["A", "B", "C", "D", "E"]
+    assert md.move_attribute_order("E", up=True, within=["A", "C", "E"]) is True
+    assert md.attribute_order == ["A", "B", "E", "C", "D"]
+
+    md.attribute_order = ["A", "B", "C", "D", "E"]
+    assert md.move_attribute_order("A", up=False, within=["A", "C", "E"]) is True
+    assert md.attribute_order == ["B", "C", "A", "D", "E"]
+
+
+def test_move_attribute_order_within_scope_boundary_is_a_no_op():
+    md = MusicData(parts_info=[PartStructureInfo(part_id="P1", staves_voices={1: [1]})])
+    md.attribute_order = ["A", "B", "C", "D", "E"]
+
+    assert md.move_attribute_order("A", up=True, within=["A", "C", "E"]) is False
+    assert md.move_attribute_order("E", up=False, within=["A", "C", "E"]) is False
+    assert md.attribute_order == ["A", "B", "C", "D", "E"]
+
+
+def test_attribute_keys_for_voices_filters_by_voice_and_unions_across_notes(
+    timeline, dynamics_articulation_fingering_score
+):
+    md = timeline(dynamics_articulation_fingering_score)
+
+    piano_bass = md.attribute_keys_for_voices({("P1", 2, 2)})
+    assert "fingering" in piano_bass
+    assert "dynamic" not in piano_bass
+    assert "articulation" not in piano_bass
+    assert "pluck" not in piano_bass
+
+    guitar = md.attribute_keys_for_voices({("P2", 1, 1)})
+    assert "fingering" in guitar
+    assert "pluck" in guitar
+    assert "dynamic" not in guitar
+
+    piano_treble = md.attribute_keys_for_voices({("P1", 1, 1)})
+    assert "dynamic" in piano_treble
+    assert "articulation" in piano_treble
+
+
+def test_attribute_keys_for_voices_orders_by_attribute_order(
+    timeline, dynamics_articulation_fingering_score
+):
+    md = timeline(dynamics_articulation_fingering_score)
+    md.move_attribute_order("fingering", up=True, within=["dynamic", "articulation", "fingering"])
+
+    keys = md.attribute_keys_for_voices({("P1", 1, 1)})
+
+    assert keys.index("fingering") < keys.index("articulation")
+
+
+def test_region_3_extra_attributes_follow_a_mutated_attribute_order(timeline, minimal_score):
+    md = timeline(minimal_score)
+    note = md.timeline_slices[0].notes[0]  # C, octave 4, ts_duration 1.0
+    voice_key = (note.part_id, note.staff, note.voice)
+    md.voice_display_attributes[voice_key] = {"duration", "step", "octave"}
+    md.move_attribute_order("duration", up=True, within=["step", "octave", "duration"])
+
+    assert md.get_region_3_data() == ["C, duration 1, octave 4"]
+
+
+def test_region_4_rows_follow_a_mutated_attribute_order(timeline, minimal_score):
+    md = timeline(minimal_score)
+    md.move_attribute_order("octave", up=True)  # now sits before "step"
+
+    data_keys = list(md.get_region_4_data_for_indices([0]).keys())
+
+    assert data_keys[0] == attribute_label("octave", md.uk_terms)
+    assert data_keys[1] == attribute_label("step", md.uk_terms)
+
+
+# --- Ref 27: export_config/apply_config -------------------------------------
+
+def test_export_config_defaults_to_an_all_visible_empty_config(timeline, minimal_score):
+    """A fresh MusicData with nothing toggled must export an empty
+    voices_off (not the full voice list) - see apply_config's docstring for
+    why voices_off, not an on-list, is what makes reloading best-effort."""
+    md = timeline(minimal_score)
+
+    config = md.export_config()
+
+    assert config.voices_off == set()
+    assert config.metronome_enabled is False
+    assert config.voice_display_attributes == {}
+    assert config.attribute_order == md.DISPLAY_ATTRIBUTE_ORDER
+
+
+def test_export_then_apply_config_round_trips_full_state(
+    timeline, flute_crotchets_viola_semibreves_score
+):
+    md = timeline(flute_crotchets_viola_semibreves_score)
+    md.set_active_voice_filter({("P2", 1, 1)})  # viola only, flute off
+    md.voice_display_attributes[("P2", 1, 1)] = {"step", "octave"}
+    md.move_attribute_order("octave", up=True)
+    md.toggle_metronome()
+
+    config = md.export_config()
+
+    fresh = timeline(flute_crotchets_viola_semibreves_score)
+    fresh.apply_config(config)
+
+    assert fresh.active_voice_filter == {("P2", 1, 1)}
+    assert fresh.voice_display_attributes == {("P2", 1, 1): {"step", "octave"}}
+    assert fresh.attribute_order == md.attribute_order
+    assert fresh.metronome_enabled is True
+
+
+def test_apply_config_is_best_effort_against_a_mismatched_score(timeline, minimal_score):
+    """Ref 27: a saved config referencing a part/voice or attribute key that
+    doesn't exist in the freshly-loaded score must be silently dropped -
+    not rejected wholesale - and whatever else it references must still
+    apply. This is the resolved "what if the config doesn't match" design
+    question: best-effort, no dialog, no partial-vs-abort choice exposed to
+    the user."""
+    config = ScoreConfig(
+        # "Classical Guitar" part/voice this score doesn't have - the
+        # scenario from planning: config says a part is off, but that part
+        # is simply absent from the current score.
+        voices_off={("Classical Guitar", 1, 1)},
+        metronome_enabled=True,
+        voice_display_attributes={("Classical Guitar", 1, 1): {"step", "octave"}},
+        attribute_order=["not-a-real-attribute", "octave", "step"],
+    )
+
+    target = timeline(minimal_score)  # single part "P1", no "Classical Guitar" voice at all
+    target.apply_config(config)
+
+    # The unknown voices_off entry doesn't correspond to anything in this
+    # score, so every voice minimal_score actually has stays visible.
+    assert target.active_voice_filter == {("P1", 1, 1)}
+    # Same for voice_display_attributes: the unknown key is dropped.
+    assert target.voice_display_attributes == {}
+    # The unknown attribute key is dropped but the rest of the saved order
+    # survives, and every valid key still ends up present (nothing vanishes
+    # from rendering just because it wasn't in the saved list).
+    assert "not-a-real-attribute" not in target.attribute_order
+    assert target.attribute_order[:2] == ["octave", "step"]
+    assert set(target.attribute_order) == set(target.DISPLAY_ATTRIBUTE_ORDER)
+    # metronome_enabled has no notion of "matching the score", so it always
+    # applies as-is.
+    assert target.metronome_enabled is True

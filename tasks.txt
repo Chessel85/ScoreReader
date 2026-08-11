@@ -33,15 +33,14 @@ PHASE ORDER RATIONALE
   characterisation tests are what prove they are still correct afterwards.
 
 CURRENT STATE
-  Done      : Ref 18 (TS-relative beat units - verified on 6/8), Ref 7
-              (Region 2 filtering - parts/staves/voices toggle via Region
-              2's O key, see B1-B4)
-  Broken    : Ref 17 - pickup numbering is wrong on scores MuseScore exports
-              with number="0" implicit="yes" (see A3)
-  Partial   : Ref 1 (no announcements), Ref 2 (Region 3 only, no boundary
-              cue), Refs 8/9 (audition fires, latency unmeasured, wrong
-              instrument), Ref 16 (no rests), Ref 20 (string/fret only),
-              Ref 25 (MusicXML only)
+  This block described the pre-Phase-A state (2026-08-04) and had gone stale
+  - everything it called "Broken"/"Partial" was resolved by Phase A-C and no
+  longer reflected reality, which is itself the argument for not maintaining
+  a second status summary by hand. As of 2026-08-10: Phases A-F are done
+  (F1-F4 all [x]). The [x]/[ ] markers on each task below plus the
+  COVERAGE CHECK table at the end of this file (Ref N -> owning task(s))
+  are the authoritative status - check those instead of trusting a prose
+  summary to stay in sync.
 
 TEST SCORES (files/)
   Use these real MuseScore exports for functional/integration testing - each
@@ -68,6 +67,34 @@ TEST SCORES (files/)
                           excludes elsewhere, see C5). Provided by the user
                           for C4 (digit-entry bar jump, Ref 6), to exercise a
                           real multi-digit measure number end to end.
+  Fingers and             4/4, TWO parts (Piano GM 1 with 2 staves, Acoustic
+   articulations          Guitar GM 26 with 1 staff), no pickup. Real
+                          MuseScore 4.7.4 export provided by the user for F3
+                          (Ref 16 AC3/Ref 20). No score_* pytest fixture
+                          wired up yet (checked directly via
+                          MusicData(file_path=...) in an ad-hoc script when
+                          F3 was live-tested) - add one the same way as the
+                          four scores above if a test needs it directly;
+                          F3's own regression tests instead use the smaller
+                          hand-written dynamics_articulation_fingering.
+                          musicxml/multi_value_technical.musicxml fixtures
+                          (D-8 pattern). Exercises: a <direction>-based
+                          dynamics mark (fff, then pp later) that must attach
+                          to the note at its own offset/staff and not leak
+                          onto a bass note sharing that offset; piano
+                          fingering on both staves; guitar staccato/stress
+                          articulations and a trill; and - the case that
+                          caught F3's real bug - one guitar note whose
+                          notations/technical carries THREE <pluck> marks
+                          together (p/i/m/a rasgueado), which a naive
+                          .find() silently truncated to just the first.
+                          NOTE: the user intended to also add a thumb ("p")
+                          pluck mark but it does not actually appear
+                          anywhere in this export (checked via full-file
+                          grep) - likely picked MuseScore's Dynamics "p"
+                          palette item instead of the RH-fingering "p" one,
+                          both being single-letter marks. Not a parser gap;
+                          re-check if the user re-adds it and re-exports.
 
 
 ###
@@ -469,6 +496,18 @@ assumed:
           now checks is_paused first and resumes instead. Ctrl+Space
           narrowed to pause-only (it used to also resume on a second press,
           colliding with Space's new job).
+        > FIX 2026-08-11 (live-tested, user decision): reaching the end of
+          the piece naturally (AC2) left the cursor on the last note played
+          instead of reverting to the original start (AC5) - Sequencer.stop()
+          already did the revert for an explicit interrupt, but natural
+          completion in _advance() just flipped is_playing off in place,
+          on the reading that AC5's "stopping" meant interrupting only.
+          Asked the user directly: AC5 now also applies when the end is
+          reached on its own. _advance() reverts _current_index to
+          _original_start_index there too; MainWindow._on_sequencer_finished
+          syncs active_event_index/the regions to match for a cursor-
+          tracking run (Space), the same way _stop_sequencer already did for
+          an explicit stop.
 
 [x] E6  Two-bar phrase audition on Enter; re-trigger while playing stops it - Ref 11
         > DONE 2026-08-07. Fills in the "buffer empty" Enter branch C4 left
@@ -665,10 +704,27 @@ PHASE F - NOTE DISPLAY CONFIGURATION                      (4 tasks)
              NVDA. Reverted to a plain menu.exec(global_pos) (one manual
              arrow press needed - "more normal" anyway, per the user).
 
-[ ] F2  Options dialog to control note-display attribute ORDERING - Ref 15
+[x] F2  Options dialog to control note-display attribute ORDERING - Ref 15
         AC4. Scope control (global/part/staff/voice - now voice/stave/part/
         score) shipped with F1 above via Region 4's context menu instead of
-        a separate Options dialog; only the ordering half remains open.
+        a separate Options dialog; only the ordering half remained open.
+        > DONE 2026-08-10, not yet live-tested. Options > Reorder
+          Attributes... opens a dialog scoped to whichever part/staff/voice
+          is selected in Region 2, listing only the attributes present
+          anywhere in the score for that scope (MusicData.
+          attribute_keys_for_voices), with Move Up/Move Down buttons
+          (Alt+U/Alt+D mnemonics) reordering them. The order itself is a
+          single global list (MusicData.attribute_order), not per-voice -
+          Region 3 and Region 4 both render from it now (previously Region
+          4's row order was a separate hardcoded sequence that only
+          happened to match DISPLAY_ATTRIBUTE_ORDER). Session-scoped like
+          uk_terms: MainWindow keeps its own copy and reapplies it after
+          every file load rather than letting a fresh MusicData reset it.
+          Deliberately does NOT duplicate F1's add/remove context menu - the
+          dialog only reorders. Whether focus should land on the list row
+          vs. stay on the clicked Move button after each move (currently:
+          moves to the list) is a live-testing question, same as several
+          other focus/NVDA-timing decisions in this phase.
 [x] F3  Capture further attributes from the source file: dynamics, staccato,
         fingering - Ref 16 AC3
         > DONE 2026-08-10, live-tested against a real MuseScore export
@@ -788,17 +844,96 @@ PHASE F - NOTE DISPLAY CONFIGURATION                      (4 tasks)
 
 
 ###
-PHASE G - PER-SCORE PERSISTENCE                           (2 tasks)   Ref 27
+PHASE G - PER-SCORE PERSISTENCE                           (5 tasks)   Ref 27
 ###
-[ ] G1  Persist part/staff/voice toggles and metronome state per score file
+[x] G0  Fix .mxl (compressed MusicXML) loading - prerequisite, not itself
+        part of Ref 27
+        > DONE 2026-08-11. MusicXMLReader._parse_xml_root and
+          TimelineBuilder.build's fallback both did a raw ET.parse(), which
+          can't open a .mxl zip container - music21.converter.parse (used
+          for tempo/key/time only) already handled .mxl fine, but the
+          ElementTree passes that are the actual source of truth for
+          parts/timeline didn't. Discovered while planning G1: every real
+          .mxl in files/ (confirmed via files/Chessel Duet.mxl) contains an
+          internal member literally named score.xml regardless of the outer
+          filename, same as this project's own uncompressed test scores -
+          so per-file config naming has to key off the outer filename, which
+          only works once .mxl actually loads. New parsers/xml_source.py
+          (read_musicxml_root) reads META-INF/container.xml's rootfile
+          rather than guessing a member name; both call sites use it now.
+[x] G1  Persist part/staff/voice toggles and metronome state per score file
         - Ref 27 AC1
-[ ] G2  Persist note display configuration per scope - Ref 27 AC2
+        > DONE 2026-08-11. New persistence/score_config.py: ScoreConfig
+          (voices_off, metronome_enabled, voice_display_attributes,
+          attribute_order) + config_dir/path_for/load_for/save/delete_for.
+          Keyed purely by the music file's own basename+extension (e.g.
+          "Chessel Duet.mxl.rsc") - no path/location component, so moving
+          the file around still finds the same config; two different files
+          sharing a name collide, accepted as a consequence of best-effort
+          loading rather than engineered around (user decision).
+          MusicData.export_config/apply_config do the actual save/restore;
+          apply_config is best-effort by construction - voices_off (not an
+          on-list) and voice_display_attributes/attribute_order are
+          filtered against the freshly-loaded score's own known
+          voices/attribute keys, so a saved entry that no longer matches
+          (e.g. a part that's gone) is silently dropped rather than
+          rejecting the whole config or showing a dialog (user decision).
+          MainWindow.load_score_from_file saves the outgoing file's config
+          before swapping in a new one; closeEvent saves on shutdown; both
+          call _save_current_score_config. _on_score_loaded loads and
+          applies the incoming file's config.
+[x] G2  Persist note display configuration per scope - Ref 27 AC2
+        > DONE 2026-08-11, same change as G1 (voice_display_attributes is
+          one of ScoreConfig's fields). attribute_order (F2's ordering, not
+          just which attributes are shown) is ALSO per-file - goes beyond
+          Ref 27 AC2's literal wording but was explicitly requested. This
+          simplified main_window.py: attribute_order was previously a
+          MainWindow-tracked "session preference" (self._attribute_order,
+          reapplied onto every freshly-loaded MusicData, same pattern as
+          uk_terms) - that's gone now, replaced by "apply the loaded
+          config's order if there is one, else keep MusicData's own
+          DISPLAY_ATTRIBUTE_ORDER default."
+[x] G3  Global settings persisted across sessions independent of any file
+        (language) - adjacent to Ref 27, not required by its literal text
+        > DONE 2026-08-11. Explicitly NOT per-file, unlike G1/G2's fields:
+          UK/US terminology (F4/D-6) stays a single app-wide preference so
+          switching files mid-session never changes the displayed language
+          (user decision, after discussing making it per-file and rejecting
+          that). New persistence/app_settings.py (AppSettings.uk_terms) -
+          loaded once at MainWindow startup (falling back to
+          detect_default_uk_terms() if nothing saved yet), written
+          immediately on every change in set_uk_terms rather than batched
+          to shutdown like G1/G2's per-file config, since it's one small
+          write and losing it to a crash would be more noticeable.
+[x] G4  App renamed in the title bar; title shows the loaded file; Edit
+        menu (Open Local Folder / Clear Preferences) - UI work needed to
+        make G0-G3 usable, not itself required by Ref 27
+        > DONE 2026-08-11. Window title was still "Score View & Editor"
+          (main_window.py) even though AboutDialog already said "Recall
+          Score" - now "Recall Score" by default, "<filename> - Recall
+          Score" once a file is loaded. New top-level Edit menu, after
+          File: "Open Local Folder" (QDesktopServices to
+          score_config.config_dir()) and a dynamic-label "Clear Preferences
+          for <filename>" (disabled with no file loaded) that deletes that
+          file's .rsc. Deliberately minimal - Ref 27's persistence is meant
+          to stay mostly invisible to the user; these two entries are the
+          only acknowledgement the .rsc mechanism exists at all.
 
 
 ###
 PHASE H - TABLATURE                                       (4 tasks)
 ###
 [ ] H1  Left and right hand finger attributes on notes - Ref 20
+        > NOTE 2026-08-10: largely already delivered as a side effect of F3.
+          NoteData.fingering (left/guitar-LH/piano, notations/technical/
+          fingering) and NoteData.pluck (guitar RH p/i/m/a, notations/
+          technical/pluck) are parsed and already toggleable in Region 3/4
+          via F1's generic attribute system, same as the pre-existing
+          string/fret. Ref 20 AC1 also names String Number/Fret Number/
+          Voice, which were already done before F3. Before starting fresh
+          work here: check whether anything is actually still missing
+          (tablature-specific announcement wording? capo interaction, which
+          is H2's job?) rather than assuming this is greenfield.
 [ ] H2  Capo: raise playback pitch, show note names and frets relative to it - Ref 21
 [ ] H3  Identify the chord sounding at the cursor and name it - Ref 22 AC1/AC3
 [ ] H4  Describe fretboard shapes in words, e.g. "barred G at 3rd fret" - Ref 22 AC2
@@ -1026,6 +1161,77 @@ D-15 Stave/staff excluded from F4's UK/US vocabulary toggle
      any other never-translated attribute key. Revisit only if asked for
      again - the removed functions are recoverable via git log on F4's
      commit if so.
+
+D-16 setCurrentRow(row)'s one-arg form does NOT default to NoUpdate
+     FIXED 2026-08-10, live-tested regression, found right after F2. F3's
+     fix for "a single-note slice has nothing for NVDA to announce after
+     selectAll()" (see Selection-driven regions in CLAUDE.md) was written on
+     the assumption that QListWidget.setCurrentRow(row) - the plain one-arg
+     overload - uses QItemSelectionModel::NoUpdate internally, so it could
+     set the current item after selectAll() without touching the selection.
+     Confirmed by direct test against this PySide6 build that it does not:
+     it collapses the selection down to just `row`. That silently broke
+     "moving onto a chord selects and sounds every note in it" - only the
+     first note in a multi-note slice stayed selected and sounded. Fixed by
+     passing the flag explicitly: setCurrentRow(0,
+     QItemSelectionModel.SelectionFlag.NoUpdate) in
+     MainWindow._update_timeline_views. Regression test:
+     test_navigating_onto_a_chord_selects_and_sounds_every_note in
+     tests/test_main_window.py. Lesson for future Qt selection-model code in
+     this app: don't trust an overload's assumed default command without
+     checking it against the actual PySide6 build in use.
+
+D-17 Up arrow did nothing at the top of a chord's selection
+     FIXED 2026-08-11, live-tested regression, found during Phase G testing
+     (unrelated to G itself). Landing on a chord selects every note in it,
+     current row 0. Down correctly narrowed the selection to row 1 - Qt's
+     native ExtendedSelection arrow handling collapses a multi-row selection
+     to the new current row, but only as a SIDE EFFECT of the current row
+     actually changing. Up at row 0 has nowhere to move, so it silently
+     no-op'd and left the whole chord selected instead of narrowing to the
+     top note. Fixed in TimelineListWidget.keyPressEvent by explicitly
+     clearing selection and reselecting currentItem() after every Up/Down,
+     not just relying on the native move to do it - a no-op when the native
+     handling already collapsed correctly, and the actual fix at a boundary.
+     Regression test:
+     test_up_arrow_at_the_top_of_a_chord_collapses_selection_to_the_first_note
+     in tests/test_main_window.py.
+
+D-18 Region 2 rebuild clobbered a restored Ref 27 voice filter on reload
+     FIXED 2026-08-11, live-tested regression, found testing Phase G (G1).
+     MainWindow._on_score_loaded applied a saved ScoreConfig
+     (MusicData.apply_config, correctly setting active_voice_filter) BEFORE
+     calling _update_ui_regions, which rebuilds Region 2 from scratch via
+     load_score_structure - that resets every node back to enabled=True and,
+     through the very same filter_changed signal a live Region 2 toggle
+     uses, silently overwrote the just-restored filter back to "everything
+     on". Net effect: a saved "voice off" toggle (e.g. the user's own repro -
+     switching off Viola in Way To Go.mxl) came back on after every reload,
+     even though attribute order (which doesn't route through Region 2)
+     persisted correctly. Fixed by snapshotting the restored filter before
+     _update_ui_regions runs, then handing it to a new
+     Region2ListWidget.apply_active_voice_tuples() afterward - restores
+     Region 2's own per-node on/off state (inferring a whole part/staff was
+     toggled off whenever every voice under it ends up inactive, so the UI
+     collapses the same way the original toggle would have) and re-emits
+     filter_changed through the normal signal path, the same one a live
+     toggle already uses. Regression test:
+     test_voice_filter_persists_across_reload_of_same_file in
+     tests/test_main_window.py.
+     > FOLLOW-UP 2026-08-11 (live-tested, found right after D-18 above): the
+       filter itself was restored correctly (Region 2 showed the toggled
+       voice off, subsequent navigation excluded it) - but
+       _update_ui_regions's own initial audition (play_all=True) fired
+       BEFORE apply_active_voice_tuples ran, so the very first sound heard
+       on load still included the voice that was supposed to be off (user's
+       own repro: hearing both flute and viola on load despite viola being
+       correctly shown/enacted as off from that point on). _update_ui_regions
+       now takes a play_all param; _on_score_loaded passes play_all=False
+       when there's a filter to restore and fires the audition itself
+       (_play_selected_region_3_notes) only after
+       region_2.apply_active_voice_tuples has run - one correct audition,
+       not one wrong one followed by a silent correction. Regression test:
+       test_initial_audition_on_reload_respects_the_restored_voice_filter.
 
 
 ###

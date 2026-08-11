@@ -170,7 +170,14 @@ class Sequencer(QObject):
         if self._pending_next_index is None:
             # The ring-out wait scheduled at the end of _sound_current_step
             # has completed - only now is playback actually finished.
+            # Ref 10 AC5's "stopping reverts to the original start position"
+            # also applies here, not just to an explicit interrupt (stop()
+            # above does the same _original_start_index reset) - user
+            # decision, since reaching the end naturally is still "stopping"
+            # from the listener's point of view, not a new position to land
+            # on and leave the cursor at.
             self._is_playing = False
+            self._current_index = self._original_start_index
             self.finished.emit()
             return
         self._current_index = self._pending_next_index

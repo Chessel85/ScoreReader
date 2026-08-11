@@ -121,6 +121,23 @@ class Region2HierarchyModel:
 
         return visible
 
+    def set_active_voice_tuples(self, active_tuples: Set[Tuple[str, int, int]]) -> None:
+        """Restores on/off state for every node from a flat set of active
+        (part_id, staff_id, voice_id) tuples (Ref 27) - e.g. a saved
+        ScoreConfig applied after build_from_score has reset every node back
+        to its default enabled=True. The flat set alone can't distinguish
+        "the user toggled the whole part off" from "every individual voice
+        under it happened to end up off", so this infers the former
+        whenever every leaf under a node is inactive, collapsing that node
+        the same way the user's original toggle would have (and leaving it
+        enabled, with only specific voice rows off, otherwise)."""
+        for part in self.roots:
+            for staff in part.children:
+                for voice in staff.children:
+                    voice.enabled = (voice.part_id, voice.staff_id, voice.voice_id) in active_tuples
+                staff.enabled = any(v.enabled for v in staff.children) if staff.children else True
+            part.enabled = any(s.enabled for s in part.children) if part.children else True
+
     def get_active_voice_tuples(self) -> Set[Tuple[str, int, int]]:
         """
         Returns a set of (part_id, staff_id, voice_id) tuples that are currently active
@@ -140,3 +157,33 @@ class Region2HierarchyModel:
                             active_set.add((voice.part_id, voice.staff_id, voice.voice_id))
 
         return active_set
+
+
+def voice_tuples_for_node(node: Region2Node) -> Set[Tuple[str, int, int]]:
+    """Every (part_id, staff_id, voice_id) tuple reachable below `node`,
+    regardless of enabled state - deliberately distinct from
+    get_active_voice_tuples (Ref 7's playback/display filter), since F2's
+    attribute-order dialog scopes by tree position, not by what's currently
+    toggled on/off."""
+    if node.node_type == "voice":
+        return {(node.part_id, node.staff_id, node.voice_id)}
+    if node.node_type == "staff":
+        return {(node.part_id, node.staff_id, voice.voice_id) for voice in node.children}
+    return {
+        (node.part_id, staff.staff_id, voice.voice_id)
+        for staff in node.children
+        for voice in staff.children
+    }
+
+
+def node_breadcrumb(node: Region2Node) -> str:
+    """"Piano > Bass Clef > Voice 5"-style path from the root down to
+    `node`, for the F2 attribute-order dialog's title - display_name is
+    indented with leading spaces for the flat-list rendering
+    (Region2ListWidget.refresh_list), which strip() removes here."""
+    parts = []
+    current: Optional[Region2Node] = node
+    while current is not None:
+        parts.append(current.display_name.strip())
+        current = current.parent
+    return " > ".join(reversed(parts))

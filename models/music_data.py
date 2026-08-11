@@ -9,6 +9,7 @@ from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
 from models.tempo_change import TempoChange
 from parsers.timeline_builder import TimelineBuilder
+from persistence.score_config import ScoreConfig
 
 
 @dataclass
@@ -92,6 +93,13 @@ class MusicData:
     uk_terms: bool = False
 
     def __post_init__(self):
+        # F2/Ref 15 AC4: the live, per-instance, mutable rendering order -
+        # DISPLAY_ATTRIBUTE_ORDER (defined below, alongside the rest of the
+        # attribute system) stays the fixed default every fresh MusicData
+        # starts from. MainWindow reapplies its own session-level copy after
+        # every load (MusicData is wholly replaced then), the same pattern
+        # already used for uk_terms.
+        self.attribute_order: List[str] = list(self.DISPLAY_ATTRIBUTE_ORDER)
         if self.file_path:
             builder = TimelineBuilder(self.file_path, self.parts_info, root=self.xml_root)
             self.timeline_slices = builder.build()
@@ -479,6 +487,21 @@ class MusicData:
         self.active_voice_filter = set(active_tuples)
         self._invalidate_visibility_cache()
 
+    def _all_voice_tuples(self) -> Set[Tuple[str, int, int]]:
+        """Every (part_id, staff, voice) this score actually has - the
+        universe export_config/apply_config (Ref 27) filter saved voice keys
+        against. Scans _real_timeline_slices' actual notes (same source
+        attribute_keys_for_voices uses) rather than parts_info, since
+        parts_info is only populated by MusicXMLReader.load() - a MusicData
+        built directly via MusicData(file_path=...) (the timeline test
+        fixture, and TimelineBuilder's own fast path) leaves it empty even
+        though the notes themselves are already there."""
+        return {
+            (n.part_id, n.staff, n.voice)
+            for event_slice in self._real_timeline_slices
+            for n in event_slice.notes
+        }
+
     def _visible_notes(self, index: Optional[int] = None) -> List[NoteData]:
         """Notes at the given slice that pass the Region 2 filter (Ref 7),
         or at the current cursor position when index is None (the default,
@@ -505,10 +528,10 @@ class MusicData:
             if (n.part_id, n.staff, n.voice) in self.active_voice_filter
         ]
 
-    # Ref 15 AC4: fixed rendering order for Region 3's optional extra
-    # attributes - same key set/order Region 4's rows already use.
-    # Attribute-ordering customization (F2) is deferred; this list is the
-    # only order that exists for now.
+    # Ref 15 AC4: the fixed DEFAULT rendering order for Region 3's optional
+    # extra attributes and Region 4's rows - every fresh MusicData starts
+    # attribute_order (see __post_init__) as a copy of this. F2's
+    # attribute-order dialog mutates that live copy, never this constant.
     DISPLAY_ATTRIBUTE_ORDER = [
         "step", "octave", "midi", "measure", "beat position", "duration",
         "part", "stave", "voice", "string", "fret",
@@ -567,14 +590,21 @@ class MusicData:
         more than one note is selected (a chord), attribute_key never does.
         Shared source for get_region_4_data_for_indices (the dict Region 4
         renders) and get_region_4_row_targets (which row maps to which
-        note/attribute, for the Ref 15 AC4 context menu)."""
+        note/attribute, for the Ref 15 AC4 context menu). Row order follows
+        attribute_order (F2) - the same live order Region 3's optional extras
+        render in - rather than _note_attribute_pairs' own dict-insertion
+        order, so reordering attributes can't leave the two regions
+        disagreeing about sequence."""
         is_chord = len(selected_notes) > 1
         rows = []
         for idx, n in enumerate(selected_notes, start=1):
             prefix = f"note {idx} " if is_chord else ""
-            for attribute_key, value in self._note_attribute_pairs(n).items():
+            pairs = self._note_attribute_pairs(n)
+            for attribute_key in self.attribute_order:
+                if attribute_key not in pairs:
+                    continue
                 label = vocabulary.attribute_label(attribute_key, self.uk_terms)
-                rows.append((f"{prefix}{label}", attribute_key, n, value))
+                rows.append((f"{prefix}{label}", attribute_key, n, pairs[attribute_key]))
         return rows
 
     def _format_note_for_region_3(self, note: NoteData) -> str:
@@ -589,7 +619,7 @@ class MusicData:
         wanted = self.voice_display_attributes.get(voice_key, self.DEFAULT_DISPLAY_ATTRIBUTES)
         pairs = self._note_attribute_pairs(note)
         parts = []
-        for key in self.DISPLAY_ATTRIBUTE_ORDER:
+        for key in self.attribute_order:
             if key not in wanted or key not in pairs:
                 continue
             if key == "step":
@@ -687,6 +717,106 @@ class MusicData:
             else:
                 current.discard(attribute_key)
             self.voice_display_attributes[voice_key] = current
+
+    def move_attribute_order(self, attribute_key: str, up: bool, within: Optional[List[str]] = None) -> bool:
+        """F2/Ref 15 AC4: move `attribute_key` one step earlier (up=True) or
+        later (up=False) in attribute_order - the single global rendering
+        order Region 3/4 both read (_format_note_for_region_3,
+        _region_4_rows). Returns False (no-op) at a boundary or if
+        attribute_key isn't present, mirroring move_timeline_left/right's
+        boundary-bool convention.
+
+        `within`, if given, is a subset of attribute_order (e.g. the
+        attribute-order dialog's per-Region-2-node filtered list) - the move
+        is then relative to attribute_key's nearest neighbour IN THAT SUBSET,
+        not its immediate neighbour in the full order. Any attribute_order
+        entries that aren't in `within` and sit between attribute_key and
+        that neighbour are carried along for the ride: their positions
+        relative to each other are untouched, only their position relative to
+        the moved attribute shifts. This is what makes a dialog filtered down
+        to "attributes present for this voice" still move its visible list by
+        exactly one row per click, without the caller needing to know
+        anything about the attributes it can't see.
+
+        Implementation note: computing the neighbour's index in the full
+        order BEFORE popping attribute_key out of it, then inserting
+        attribute_key at that same (now-still-valid) index, is what makes one
+        pop/insert pair correct for both directions - no separate branching
+        needed for "neighbour was before" vs "neighbour was after"."""
+        order = self.attribute_order
+        if attribute_key not in order:
+            return False
+        sequence = within if within is not None else order
+        if attribute_key not in sequence:
+            return False
+        pos = sequence.index(attribute_key)
+        neighbor_pos = pos - 1 if up else pos + 1
+        if not (0 <= neighbor_pos < len(sequence)):
+            return False
+        neighbor_key = sequence[neighbor_pos]
+        source_index = order.index(attribute_key)
+        target_index = order.index(neighbor_key)
+        order.pop(source_index)
+        order.insert(target_index, attribute_key)
+        return True
+
+    def attribute_keys_for_voices(self, voice_tuples: Set[Tuple[str, int, int]]) -> List[str]:
+        """Every attribute key that has a value on at least one note
+        belonging to one of `voice_tuples`, anywhere in the score (not just
+        the current slice), ordered per attribute_order. Powers the F2
+        attribute-order dialog's per-Region-2-node list - scans
+        _real_timeline_slices (the stable, marker-free timeline) rather than
+        timeline_slices, since the metronome can temporarily replace the
+        latter with a merged view that includes marker-only slices."""
+        present: Set[str] = set()
+        for event_slice in self._real_timeline_slices:
+            for note in event_slice.notes:
+                if (note.part_id, note.staff, note.voice) in voice_tuples:
+                    present |= self._note_attribute_pairs(note).keys()
+        return [key for key in self.attribute_order if key in present]
+
+    def export_config(self) -> ScoreConfig:
+        """Ref 27: this score's current state as a ScoreConfig, for
+        persistence/score_config.save(). voices_off is the complement of
+        active_voice_filter (empty when active_voice_filter is None, since
+        None already means "everything visible") rather than the ON-list
+        itself - see apply_config for why that's what makes reloading
+        best-effort."""
+        voices_off: Set[Tuple[str, int, int]] = set()
+        if self.active_voice_filter is not None:
+            voices_off = self._all_voice_tuples() - self.active_voice_filter
+        return ScoreConfig(
+            voices_off=voices_off,
+            metronome_enabled=self.metronome_enabled,
+            voice_display_attributes={
+                k: set(v) for k, v in self.voice_display_attributes.items()
+            },
+            attribute_order=list(self.attribute_order),
+        )
+
+    def apply_config(self, config: ScoreConfig) -> None:
+        """Ref 27: restores a previously saved ScoreConfig, best-effort - a
+        saved entry that no longer corresponds to anything in THIS score
+        (different part names, a voice that's gone, an attribute key this
+        build doesn't know) is silently dropped rather than rejecting the
+        whole config, so a stale or partially-matching .rsc still applies
+        everything it can instead of falling back to all-defaults."""
+        known_voices = self._all_voice_tuples()
+        active = known_voices - (config.voices_off & known_voices)
+        self.set_active_voice_filter(active)
+
+        self.voice_display_attributes = {
+            voice_key: set(attrs)
+            for voice_key, attrs in config.voice_display_attributes.items()
+            if voice_key in known_voices
+        }
+
+        known_attribute_keys = set(self.DISPLAY_ATTRIBUTE_ORDER)
+        ordered = [key for key in config.attribute_order if key in known_attribute_keys]
+        ordered += [key for key in self.DISPLAY_ATTRIBUTE_ORDER if key not in ordered]
+        self.attribute_order = ordered
+
+        self.set_metronome_enabled(config.metronome_enabled)
 
     def get_midi_notes_for_indices(self, selected_indices: List[int]) -> List[int]:
         notes = self._visible_notes()

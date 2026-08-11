@@ -66,6 +66,24 @@ def test_playback_waits_for_the_last_note_to_ring_out_before_finishing(
     assert seq.is_playing is False
 
 
+def test_reaching_the_end_naturally_reverts_to_the_original_start_index(
+    timeline, null_synth, minimal_score
+):
+    """Ref 10 AC5 (user decision): reaching the end of a run on its own is
+    still "stopping" from the listener's point of view, not a new position
+    to land on - it reverts current_index the same way an explicit stop()
+    does, rather than leaving the cursor on the last note played."""
+    md = timeline(minimal_score, tempo_bpm=120)
+    seq, timer = _build(md, null_synth)
+
+    seq.play_from(1)  # start mid-piece, at D
+    for _ in range(3):
+        timer.fire()  # E, F, then the ring-out wait for F
+
+    assert seq.current_index == 1
+    assert seq.is_playing is False
+
+
 def test_pause_freezes_the_index_and_silences_the_sounding_note(
     timeline, null_synth, minimal_score
 ):

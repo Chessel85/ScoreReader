@@ -1,8 +1,10 @@
 # widgets/region2_list_widget.py
+from typing import Optional
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QListWidget, QListWidgetItem
 
-from .region2_manager import Region2HierarchyModel
+from .region2_manager import Region2HierarchyModel, Region2Node
 
 
 class Region2ListWidget(QListWidget):
@@ -24,9 +26,29 @@ class Region2ListWidget(QListWidget):
         self.model_manager = Region2HierarchyModel()
         self._current_visible_nodes = []
 
+    def current_node(self) -> Optional[Region2Node]:
+        """The Region2Node behind the focused row, or None if the list is
+        empty/no score is loaded - powers F2's attribute-order dialog, which
+        scopes itself to whatever part/staff/voice the user was on in Region
+        2 when they opened it."""
+        row = self.currentRow()
+        if 0 <= row < len(self._current_visible_nodes):
+            return self._current_visible_nodes[row]
+        return None
+
     def load_score_structure(self, parts_data: list):
         """Populates the list from parsed MusicXML metadata."""
         self.model_manager.build_from_score(parts_data)
+        self.refresh_list()
+
+    def apply_active_voice_tuples(self, active_tuples: set):
+        """Ref 27: restores on/off state from a saved ScoreConfig, after
+        load_score_structure has already reset every node to its default
+        enabled=True. refresh_list()'s filter_changed emission at the end is
+        what actually propagates the restored state back to MusicData and
+        Region 3 (MainWindow._on_region_2_filter_changed) - the same signal
+        path a live toggle already uses, not a separate one."""
+        self.model_manager.set_active_voice_tuples(active_tuples)
         self.refresh_list()
 
     def refresh_list(self, preferred_node_id: str = None):

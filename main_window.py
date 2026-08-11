@@ -1,8 +1,9 @@
 # main_window.py
-from typing import Optional
+import os
+from typing import List, Optional
 
-from PySide6.QtCore import QLocale, Qt
-from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QShortcut
+from PySide6.QtCore import QItemSelectionModel, QLocale, QUrl, Qt
+from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -22,10 +23,14 @@ from audio.metronome import click_event_for_beat
 from audio.sequencer import Sequencer
 from audio.synth_engine import SynthEngine
 from models.music_data import MusicData
-from models.vocabulary import bar_word
+from models.vocabulary import attribute_label, bar_word
+from persistence import app_settings, score_config
+from persistence.app_settings import AppSettings
 from widgets.about_dialog import AboutDialog
+from widgets.attribute_order_dialog import AttributeOrderDialog
 from widgets.goto_measure_dialog import GotoMeasureDialog
 from widgets.region2_list_widget import Region2ListWidget
+from widgets.region2_manager import node_breadcrumb, voice_tuples_for_node
 from widgets.region4_table_widget import Region4TableWidget
 from widgets.region_table_widget import RegionTableWidget
 from widgets.status_bar_widget import StatusBarWidget
@@ -71,14 +76,18 @@ class MainWindow(QMainWindow):
         real SynthEngine. Tests pass a stand-in so no audio device is
         opened, and so they can assert what would have sounded.
 
-        uk_terms: F4/D-6 startup dialect. Defaults to None, which resolves
-        via detect_default_uk_terms() (OS-locale detection) - same
-        constructor-injection pattern as synth above (D-7), so tests get a
-        deterministic value regardless of the machine running them instead
-        of depending on its real OS locale.
+        uk_terms: F4/D-6 startup dialect override. Defaults to None, which
+        resolves to whatever AppSettings has saved from a previous session
+        (persistence/app_settings.py - a global preference, independent of
+        which file is loaded), falling back to detect_default_uk_terms()
+        (OS-locale detection) only when nothing has ever been saved. Passing
+        an explicit value (as tests do) skips both and is not itself
+        persisted - same constructor-injection pattern as synth above (D-7),
+        so tests get a deterministic value regardless of the machine running
+        them or its saved settings.
         """
         super().__init__()
-        self.setWindowTitle("Score View & Editor")
+        self.setWindowTitle("Recall Score")
         self.resize(800, 600)
 
         self._music_data: MusicData | None = None
@@ -88,13 +97,20 @@ class MainWindow(QMainWindow):
         # that score's MusicData) - (re)created in _on_score_loaded.
         self.sequencer: Sequencer | None = None
 
-        # F4/D-6: a SESSION preference, not a per-score one like
-        # metronome_enabled - MusicData is wholly replaced on every file
-        # load (_on_score_loaded), so this lives here and is explicitly
-        # reapplied onto each freshly-loaded MusicData rather than living
-        # only on MusicData itself. Set before setup_menu() since menu text
-        # (goto_measure_action) depends on it at construction time.
-        self._uk_terms: bool = uk_terms if uk_terms is not None else detect_default_uk_terms()
+        # F4/D-6/Ref 27: a GLOBAL preference (persistence/app_settings.py),
+        # not a per-score one like metronome_enabled - MusicData is wholly
+        # replaced on every file load (_on_score_loaded), so this lives here
+        # and is explicitly reapplied onto each freshly-loaded MusicData
+        # rather than living only on MusicData itself. Set before
+        # setup_menu() since menu text (goto_measure_action) depends on it
+        # at construction time.
+        if uk_terms is not None:
+            self._uk_terms: bool = uk_terms
+        else:
+            saved_uk_terms = app_settings.load().uk_terms
+            self._uk_terms: bool = (
+                saved_uk_terms if saved_uk_terms is not None else detect_default_uk_terms()
+            )
 
         self.setup_ui()
         self.setup_menu()
@@ -235,10 +251,25 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(exit_action)
 
+        # Ref 27: the user is meant to stay mostly unaware .rsc files exist
+        # at all (Phase G) - these two entries are the deliberate exception,
+        # a minimal escape hatch rather than a settings UI.
+        edit_menu = menu_bar.addMenu("&Edit")
+
+        open_folder_action = QAction("Open Local &Folder", self)
+        open_folder_action.setStatusTip("Open the folder where saved preferences are stored")
+        open_folder_action.triggered.connect(self._open_score_config_folder)
+        edit_menu.addAction(open_folder_action)
+
+        self.clear_preferences_action = QAction(self._clear_preferences_action_text(), self)
+        self.clear_preferences_action.triggered.connect(self._clear_current_score_preferences)
+        edit_menu.addAction(self.clear_preferences_action)
+        self._refresh_clear_preferences_action()
+
         # C8: Navigation duplicates, as menu items, the keyboard-only ways of
         # moving to the start, end, or a specific measure (Refs 5, 6) - for
         # anyone who prefers a menu over typing into the Note region.
-        # Edit/View/Options are deliberately not added yet - see tasks.txt C8.
+        # View/Options are deliberately not added yet - see tasks.txt C8.
         navigation_menu = menu_bar.addMenu("&Navigation")
 
         # Kept as attributes, not local variables - PySide's Python wrapper
@@ -326,6 +357,15 @@ class MainWindow(QMainWindow):
         self.metronome_action.triggered.connect(self.toggle_metronome)
         options_menu.addAction(self.metronome_action)
 
+        # F2/Ref 15 AC4: the ordering half of the attribute-display system -
+        # scope/add-remove shipped earlier as Region 4's right-click menu
+        # (F1). No dedicated shortcut, same as Terminology Language above -
+        # mnemonic A doesn't collide with anything else in this menu (Tempo
+        # Offset and Terminology Language both already use T).
+        self.attribute_order_action = QAction("Reorder &Attributes...", self)
+        self.attribute_order_action.triggered.connect(self._show_attribute_order_dialog)
+        options_menu.addAction(self.attribute_order_action)
+
         help_menu = menu_bar.addMenu("&Help")
 
         self.about_action = QAction("&About Recall Score...", self)
@@ -398,6 +438,53 @@ class MainWindow(QMainWindow):
     def _show_about_dialog(self):
         AboutDialog(self).exec()
 
+    def _attribute_order_pairs_for_node(self, node) -> list:
+        """(attribute_key, label) pairs, in current attribute_order, for
+        every attribute present anywhere in the score for `node`'s scope -
+        the label already dialect-translated so AttributeOrderDialog itself
+        stays dialect-agnostic (same convention as GotoMeasureDialog's
+        `word` param)."""
+        voice_tuples = voice_tuples_for_node(node)
+        keys = self._music_data.attribute_keys_for_voices(voice_tuples)
+        return [(key, attribute_label(key, self._music_data.uk_terms)) for key in keys]
+
+    def _show_attribute_order_dialog(self):
+        """Options > Reorder Attributes... (F2, Ref 15 AC4): scoped to
+        whichever part/staff/voice is currently selected in Region 2 - the
+        dialog's whole context comes from there, so that's also where focus
+        returns afterward (same reasoning as GotoMeasureDialog returning to
+        Region 3, rather than TempoOffsetDialog's previous-focus-restore)."""
+        if not self._music_data:
+            return
+        node = self.region_2.current_node()
+        if node is None:
+            return
+
+        dialog = AttributeOrderDialog(
+            self,
+            pairs=self._attribute_order_pairs_for_node(node),
+            scope_description=node_breadcrumb(node),
+        )
+        dialog.move_requested.connect(
+            lambda attribute_key, up: self._on_attribute_order_move(dialog, node, attribute_key, up)
+        )
+        dialog.exec()
+        self.region_2.setFocus()
+
+    def _on_attribute_order_move(self, dialog: AttributeOrderDialog, node, attribute_key: str, up: bool):
+        """Handles AttributeOrderDialog.move_requested - MusicData owns the
+        actual reorder, this just applies it and pushes the result back to
+        Region 3/4 and the (still open) dialog."""
+        if not self._music_data:
+            return
+        voice_tuples = voice_tuples_for_node(node)
+        within = self._music_data.attribute_keys_for_voices(voice_tuples)
+        if not self._music_data.move_attribute_order(attribute_key, up, within=within):
+            return
+        self._refresh_region_3_labels()
+        self._on_region_3_selection_changed()
+        dialog.refresh_list(self._attribute_order_pairs_for_node(node), preferred_key=attribute_key)
+
     def create_property_list(self, items: list, table_cls: type = RegionTableWidget) -> RegionTableWidget:
         table = table_cls(len(items), 2)
         table.setHorizontalHeaderLabels(["Property", "Value"])
@@ -428,6 +515,8 @@ class MainWindow(QMainWindow):
         if self._load_thread is not None:
             return
 
+        self._save_current_score_config()
+
         self._load_thread = ScoreLoadThread(file_path, self)
         self._load_thread.loaded.connect(self._on_score_loaded)
         self._load_thread.failed.connect(self._on_score_load_failed)
@@ -438,15 +527,47 @@ class MainWindow(QMainWindow):
         if self.sequencer is not None:
             self.sequencer.stop()
         self._music_data = music_data
+        self.setWindowTitle(f"{os.path.basename(music_data.file_path)} - Recall Score")
         # F4/D-6: MusicData is wholly replaced on every load, but the
-        # vocabulary preference is a session one, not a per-score one -
-        # reapply it here or the dialect would silently reset to
-        # MusicData's own bare-construction default (US) on every open.
+        # vocabulary preference is a global one (persistence/app_settings.py),
+        # not a per-score one - reapply it here or the dialect would silently
+        # reset to MusicData's own bare-construction default (US) on every
+        # open.
         self._music_data.uk_terms = self._uk_terms
+        # Ref 27: restore whatever this file's own part/staff/voice toggles,
+        # shown attributes, attribute order and metronome state were last
+        # left as - best-effort against the freshly-parsed score, see
+        # MusicData.apply_config.
+        saved_config = score_config.load_for(music_data.file_path)
+        restored_active_voice_filter = None
+        if saved_config is not None:
+            self._music_data.apply_config(saved_config)
+            # _update_ui_regions (below) rebuilds Region 2 from scratch via
+            # load_score_structure, which resets every node to its default
+            # enabled=True and - through the same filter_changed signal a
+            # live toggle uses - overwrites the active_voice_filter
+            # apply_config just set back to "everything on" (live-tested
+            # regression: a saved voice-off toggle silently came back on
+            # after reload). Snapshot the restored filter now, before that
+            # happens, so it can be handed to Region 2 afterward instead.
+            restored_active_voice_filter = set(self._music_data.active_voice_filter)
+        self._refresh_clear_preferences_action()
         self.sequencer = Sequencer(music_data, self.synth, parent=self)
         self.sequencer.step_played.connect(self._on_sequencer_step)
         self.sequencer.finished.connect(self._on_sequencer_finished)
-        self._update_ui_regions()
+        # Live-tested regression: _update_ui_regions's own initial audition
+        # (play_all=True) used to fire before the saved voice filter was
+        # handed to Region 2 below, so a file with e.g. the viola saved off
+        # was still heard playing both flute and viola the instant it
+        # loaded, even though Region 2 immediately showed the correct
+        # on/off state and every subsequent move correctly excluded it.
+        # Suppress that first audition when there's a filter to restore, and
+        # fire it ourselves once Region 2's restored state is actually in
+        # effect.
+        self._update_ui_regions(play_all=restored_active_voice_filter is None)
+        if restored_active_voice_filter is not None:
+            self.region_2.apply_active_voice_tuples(restored_active_voice_filter)
+            self._play_selected_region_3_notes()
 
     def _on_score_load_failed(self, error_text: str):
         print(f"[ERROR] Failed to load score file:\n{error_text}")
@@ -670,15 +791,18 @@ class MainWindow(QMainWindow):
     def set_uk_terms(self, uk_terms: bool):
         """Options > Terminology Language > UK/US. Unlike toggle_metronome,
         this must still set the preference and update the menu even with no
-        score loaded - it's a session preference (see self._uk_terms comment
-        in __init__), not a per-score one. Refreshes every region the
-        vocabulary touches: Region 1 (Tempo credit), Region 3/4 (via the
-        same lightweight _refresh_region_3_labels F1's attribute toggle
-        already uses - no re-audition/selection loss), and the status bar.
+        score loaded - it's a global preference (see self._uk_terms comment
+        in __init__), not a per-score one, and is persisted immediately
+        (rather than batched to closeEvent like per-file config) so it
+        survives even a crash. Refreshes every region the vocabulary
+        touches: Region 1 (Tempo credit), Region 3/4 (via the same
+        lightweight _refresh_region_3_labels F1's attribute toggle already
+        uses - no re-audition/selection loss), and the status bar.
         _populate_table preserves each table's current row/column across the
         rebuild (live-tested bug: Region 1/4's position was jumping to the
         top-left cell on every terminology change)."""
         self._uk_terms = uk_terms
+        app_settings.save(AppSettings(uk_terms=uk_terms))
         self.uk_language_action.setChecked(uk_terms)
         self.us_language_action.setChecked(not uk_terms)
         self.goto_measure_action.setText(self._goto_measure_action_text())
@@ -879,11 +1003,19 @@ class MainWindow(QMainWindow):
         # window above so the selection model's real currentChanged signal
         # fires and the accessibility bridge actually posts the
         # notification - the same path Up/Down already gets for free from
-        # Qt's own key handling. setCurrentRow(row) (the plain one-arg form)
-        # uses QItemSelectionModel::NoUpdate, so it does not disturb the
-        # selectAll() selection just made.
+        # Qt's own key handling.
+        #
+        # Live-tested regression: setCurrentRow(row), the plain one-arg
+        # form, was believed to use QItemSelectionModel::NoUpdate and so
+        # leave the selectAll() selection alone - it does not. In this
+        # PySide6 version it collapses the selection down to just `row`,
+        # which silently turned "moving onto a chord selects and sounds
+        # every note in it" into "only the first note sounds" the moment a
+        # slice had more than one note. The explicit NoUpdate flag below is
+        # what actually gets the documented behaviour: current item set (for
+        # NVDA), selectAll()'s selection left untouched (for the chord).
         if self.region_3.count() > 0:
-            self.region_3.setCurrentRow(0)
+            self.region_3.setCurrentRow(0, QItemSelectionModel.SelectionFlag.NoUpdate)
 
         self._on_region_3_selection_changed()
         self._update_status_bar()
@@ -947,9 +1079,18 @@ class MainWindow(QMainWindow):
     def _on_sequencer_finished(self):
         """Reaching the end of a run (full playback, Ref 10 AC2, or a
         phrase audition finishing on its own, Ref 11) flips is_playing to
-        False without MainWindow calling stop() - only the playback-status
-        field needs to catch up; the last step_played already left the
-        cursor/regions in the right place."""
+        False without MainWindow calling stop(). Sequencer itself now
+        reverts _current_index back to _original_start_index when this
+        happens (user decision: AC5's "stopping reverts to the original
+        start" applies to reaching the end naturally too, not just an
+        explicit interrupt) - a cursor-tracking run (Space, not a phrase
+        audition) must sync active_event_index/the regions to that reverted
+        position the same way _stop_sequencer does for an explicit stop,
+        rather than leaving them on the last note the way step_played left
+        them mid-playback."""
+        if self.sequencer.update_cursor and self._music_data:
+            self._music_data.active_event_index = self.sequencer.current_index
+            self._update_timeline_views(play_all=False)
         self._update_playback_status_field()
 
     def _populate_table(self, table: QTableWidget, data_dict: dict):
@@ -975,14 +1116,14 @@ class MainWindow(QMainWindow):
             restore_col = current_col if current_col in (0, 1) else 0
             table.setCurrentCell(restore_row, restore_col)
 
-    def _update_ui_regions(self):
+    def _update_ui_regions(self, play_all: bool = True):
         if not self._music_data:
             return
 
         self._populate_table(self.region_1, self._music_data.get_region_1_data())
         self.region_2.load_score_structure(self._music_data.get_score_structure())
         self.metronome_action.setChecked(self._music_data.metronome_enabled)
-        self._update_timeline_views(play_all=True)
+        self._update_timeline_views(play_all=play_all)
 
     def _on_focus_changed(self, old, now):
         """C7: remembers which region last held focus, so F6's "regions"
@@ -1024,9 +1165,42 @@ class MainWindow(QMainWindow):
             self.status_bar.first_field().setFocus()
 
     def closeEvent(self, event):
+        self._save_current_score_config()
         if self._load_thread is not None:
             self._load_thread.wait()
         if self.sequencer is not None:
             self.sequencer.stop()
         self.synth.close()
         super().closeEvent(event)
+
+    def _save_current_score_config(self):
+        """Ref 27: writes the currently-loaded score's part/staff/voice
+        toggles, shown attributes, attribute order and metronome state to
+        its .rsc, so they're there to restore next time this file is
+        opened. Called right before swapping in a new file
+        (load_score_from_file) and on app shutdown (closeEvent) - the two
+        points the user asked for, not on every individual toggle."""
+        if self._music_data is None or not self._music_data.file_path:
+            return
+        score_config.save(self._music_data.file_path, self._music_data.export_config())
+
+    def _open_score_config_folder(self):
+        folder = score_config.config_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+    def _clear_preferences_action_text(self) -> str:
+        if self._music_data is None or not self._music_data.file_path:
+            return "&Clear Preferences"
+        name = os.path.basename(self._music_data.file_path)
+        return f"&Clear Preferences for {name}"
+
+    def _refresh_clear_preferences_action(self):
+        has_file = self._music_data is not None and bool(self._music_data.file_path)
+        self.clear_preferences_action.setText(self._clear_preferences_action_text())
+        self.clear_preferences_action.setEnabled(has_file)
+
+    def _clear_current_score_preferences(self):
+        if self._music_data is None or not self._music_data.file_path:
+            return
+        score_config.delete_for(self._music_data.file_path)

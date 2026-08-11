@@ -8,6 +8,7 @@ from models.duration_units import beat_unit_display_name
 from models.key_signatures import FIFTHS_MAP
 from models.music_data import MusicData
 from models.parts_structure import PartStructureInfo
+from parsers.xml_source import read_musicxml_root
 
 class MusicXMLReader:
     """Parses MusicXML metadata via ElementTree and streams via music21 into MusicData."""
@@ -58,7 +59,7 @@ class MusicXMLReader:
         """Parses the file once; every etree-based extractor below reads
         from this same root instead of re-parsing the file itself (R2)."""
         try:
-            return ET.parse(self.file_path).getroot()
+            return read_musicxml_root(self.file_path)
         except Exception as e:
             print(f"[ERROR] Failed to parse XML file: {e}")
             return None

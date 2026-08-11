@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QLabel, QTableWidget
 
 from main_window import MainWindow, detect_default_uk_terms
 from widgets.about_dialog import AboutDialog
+from widgets.attribute_order_dialog import AttributeOrderDialog
 from widgets.goto_measure_dialog import GotoMeasureDialog
 from widgets.tempo_offset_dialog import TempoOffsetDialog
 
@@ -90,6 +91,46 @@ def test_navigating_onto_a_single_note_slice_sets_a_current_row(window, qtbot, m
 
     assert window.region_3.currentRow() == 0
     assert window.region_3.currentItem() is not None
+
+
+def test_navigating_onto_a_chord_selects_and_sounds_every_note(window, qtbot, null_synth, chord_score):
+    """Live-tested regression: the fix above (setCurrentRow(0) after
+    selectAll() so a single-note slice has a definite current item for NVDA)
+    was believed to leave selectAll()'s selection untouched via
+    QItemSelectionModel::NoUpdate, since that's what the plain one-arg
+    setCurrentRow overload is documented to do - it doesn't, in the PySide6
+    version this app runs on, and collapsed a chord's selection down to just
+    row 0. That silently turned "moving onto a chord sounds every note in
+    it" into "only the first note sounds". chord_score's second slice is a
+    D+F chord - both notes must stay selected and both must sound."""
+    load_and_wait(window, qtbot, chord_score)
+    null_synth.played.clear()
+
+    window.navigate_timeline_right()  # C -> the D+F chord
+
+    assert [window.region_3.item(i).text() for i in range(window.region_3.count())] == ["D", "F"]
+    assert sorted(i.row() for i in window.region_3.selectedIndexes()) == [0, 1]
+    assert null_synth.last_played["midi_notes"] == [62, 65]
+
+
+def test_up_arrow_at_the_top_of_a_chord_collapses_selection_to_the_first_note(
+    window, qtbot, null_synth, chord_score
+):
+    """Live-tested regression: landing on a chord selects every note in it
+    (current row 0). Down correctly narrows the selection to row 1, but
+    pressing Up right away did nothing - Qt's native ExtendedSelection arrow
+    handling only collapses a multi-row selection down to the new current
+    row as a SIDE EFFECT of the current row actually changing; Up at row 0
+    has nowhere to move to, so it silently no-ops and leaves the whole chord
+    selected instead of narrowing to just the top note."""
+    load_and_wait(window, qtbot, chord_score)
+    window.navigate_timeline_right()  # C -> the D+F chord
+    assert sorted(i.row() for i in window.region_3.selectedIndexes()) == [0, 1]
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Up)
+
+    assert [i.row() for i in window.region_3.selectedIndexes()] == [0]
+    assert window.region_3.currentRow() == 0
 
 
 def test_playback_stops_previous_notes_before_starting_new_ones(
@@ -777,6 +818,82 @@ def test_tempo_offset_dialog_rejects_non_numeric_input(window):
     assert validator.validate("abc", 0)[0] == QValidator.State.Invalid
 
 
+# --- F2: Attribute order dialog (Ref 15 AC4) ------------------------------
+
+def test_attribute_order_pairs_scope_to_the_selected_region_2_node(
+    window, qtbot, dynamics_articulation_fingering_score
+):
+    load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
+    node = next(
+        n for n in window.region_2._current_visible_nodes if n.node_id == "voice_P1_1_1"
+    )
+
+    keys = [key for key, _ in window._attribute_order_pairs_for_node(node)]
+
+    assert "dynamic" in keys
+    assert "articulation" in keys
+    assert "pluck" not in keys, "pluck only appears on the guitar part, not this piano voice"
+
+
+def test_attribute_order_move_updates_music_data_and_returns_focus_to_region_2(
+    window, qtbot, dynamics_articulation_fingering_score, monkeypatch
+):
+    """Simulates clicking Move Up on "octave" while the dialog is open -
+    move_requested is connected before exec() is called, same as the real
+    button click would fire it, so faking exec() to emit the signal and
+    then return is enough to drive the whole wiring without a real modal
+    loop (same injection convention as GotoMeasureDialog/TempoOffsetDialog)."""
+    load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
+
+    dialog = AttributeOrderDialog(window, pairs=[], scope_description="")
+
+    def fake_exec():
+        dialog.move_requested.emit("octave", True)
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(dialog, "exec", fake_exec)
+    monkeypatch.setattr(
+        "main_window.AttributeOrderDialog",
+        lambda parent, pairs, scope_description: dialog,
+    )
+
+    window._show_attribute_order_dialog()
+
+    assert window._music_data.attribute_order[0] == "octave"
+    assert window.focusWidget() is window.region_2
+
+
+def test_attribute_order_persists_per_file_not_across_different_files(
+    window, qtbot, dynamics_articulation_fingering_score, minimal_score, monkeypatch
+):
+    """Ref 27: attribute_order is per-file (a Phase G decision, unlike
+    uk_terms which stays a global preference) - reordering one file must
+    not leak into a different file that has no saved config of its own, and
+    must be there again when that same file is reloaded (load_score_from_file
+    saves the outgoing file's config before swapping in the new one)."""
+    load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
+
+    dialog = AttributeOrderDialog(window, pairs=[], scope_description="")
+
+    def fake_exec():
+        dialog.move_requested.emit("octave", True)
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(dialog, "exec", fake_exec)
+    monkeypatch.setattr(
+        "main_window.AttributeOrderDialog",
+        lambda parent, pairs, scope_description: dialog,
+    )
+    window._show_attribute_order_dialog()
+    assert window._music_data.attribute_order[0] == "octave"
+
+    load_and_wait(window, qtbot, minimal_score)
+    assert window._music_data.attribute_order[0] != "octave"
+
+    load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
+    assert window._music_data.attribute_order[0] == "octave"
+
+
 def test_f_s_d_shortcuts_fire_from_any_region(window, qtbot, minimal_score):
     load_and_wait(window, qtbot, minimal_score)
     _show(window, qtbot)
@@ -858,7 +975,11 @@ def test_sequencer_steps_advance_the_cursor_and_regions_over_real_time(
     """Only the wiring is exercised here - the Sequencer's own scheduling
     math is covered deterministically in tests/audio/test_sequencer.py with
     a FakeTimer. This one real QTimer is sped up via a very high tempo so
-    the whole 4-note piece finishes in well under a second."""
+    the whole 4-note piece finishes in well under a second. Ref 10 AC5 (user
+    decision): reaching the end naturally reverts the cursor to where
+    playback started, same as an explicit Stop - not a new position of its
+    own - so the final active_event_index is back at 0, not the last note
+    actually played."""
     load_and_wait(window, qtbot, minimal_score)
     window._music_data.tempo_bpm = 60000  # 1 quarter = 1ms
     null_synth.played.clear()
@@ -866,9 +987,9 @@ def test_sequencer_steps_advance_the_cursor_and_regions_over_real_time(
     window.toggle_play_stop()
     qtbot.waitUntil(lambda: not window.sequencer.is_playing, timeout=2000)
 
-    assert window._music_data.active_event_index == 3
     assert [p["midi_notes"] for p in null_synth.played] == [[60], [62], [64], [65]]
-    assert window.status_bar._fields[0].text() == "Measure 1 beat 4"
+    assert window._music_data.active_event_index == 0
+    assert window.status_bar._fields[0].text() == "Measure 1 beat 1"
 
 
 # --- E6: two-bar phrase audition on Enter (Ref 11) -----------------------
@@ -1099,12 +1220,28 @@ def test_ctrl_m_shortcut_toggles_the_metronome(window, qtbot, minimal_score):
     assert window._music_data.metronome_enabled is True
 
 
-def test_metronome_resets_to_off_on_a_new_score_load(window, qtbot, minimal_score):
+def test_metronome_state_persists_across_reload_of_same_file(window, qtbot, minimal_score):
+    """Ref 27 AC1: unlike the old always-resets-to-off behaviour, the
+    metronome is now per-file - load_score_from_file saves the outgoing
+    score's config (including metronome_enabled) before swapping in a fresh
+    MusicData, and _on_score_loaded restores it when the same file's .rsc is
+    found again."""
     load_and_wait(window, qtbot, minimal_score)
     window.toggle_metronome()
     assert window.metronome_action.isChecked() is True
 
     load_and_wait(window, qtbot, minimal_score)
+
+    assert window._music_data.metronome_enabled is True
+    assert window.metronome_action.isChecked() is True
+
+
+def test_metronome_starts_off_for_a_file_with_no_saved_config(window, qtbot, minimal_score, chord_score):
+    load_and_wait(window, qtbot, minimal_score)
+    window.toggle_metronome()
+    assert window.metronome_action.isChecked() is True
+
+    load_and_wait(window, qtbot, chord_score)
 
     assert window._music_data.metronome_enabled is False
     assert window.metronome_action.isChecked() is False
@@ -1400,3 +1537,123 @@ def test_region_4_attribute_menu_score_scope_fans_out_to_every_part(
 
     labels = _region_3_labels(window)
     assert all("octave " in label for label in labels), "every voice in the score, including P2, is affected"
+
+
+# --- Ref 27: app naming, window title, Edit menu, per-file persistence ------
+
+def test_window_title_before_any_file_is_loaded(window):
+    assert window.windowTitle() == "Recall Score"
+
+
+def test_window_title_shows_loaded_filename(window, qtbot, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+
+    assert window.windowTitle() == "minimal_4_4.musicxml - Recall Score"
+
+
+def test_clear_preferences_action_disabled_with_no_file_loaded(window):
+    assert window.clear_preferences_action.isEnabled() is False
+    assert window.clear_preferences_action.text() == "&Clear Preferences"
+
+
+def test_clear_preferences_action_enabled_and_labelled_after_load(window, qtbot, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+
+    assert window.clear_preferences_action.isEnabled() is True
+    assert window.clear_preferences_action.text() == "&Clear Preferences for minimal_4_4.musicxml"
+
+
+def test_open_local_folder_action_opens_the_config_directory(window, monkeypatch):
+    from pathlib import Path
+
+    from persistence import score_config
+
+    opened = []
+    monkeypatch.setattr(
+        "main_window.QDesktopServices.openUrl",
+        lambda url: opened.append(url.toLocalFile()),
+    )
+
+    window._open_score_config_folder()
+
+    assert len(opened) == 1
+    assert Path(opened[0]) == score_config.config_dir()
+
+
+def test_clear_preferences_deletes_the_saved_config(window, qtbot, minimal_score):
+    from persistence import score_config
+
+    load_and_wait(window, qtbot, minimal_score)
+    window.toggle_metronome()
+    window._save_current_score_config()
+    assert score_config.load_for(minimal_score) is not None
+
+    window._clear_current_score_preferences()
+
+    assert score_config.load_for(minimal_score) is None
+
+
+def test_closing_the_window_saves_the_current_score_config(window, qtbot, minimal_score):
+    from persistence import score_config
+
+    load_and_wait(window, qtbot, minimal_score)
+    window.toggle_metronome()
+
+    window.close()
+
+    saved = score_config.load_for(minimal_score)
+    assert saved is not None
+    assert saved.metronome_enabled is True
+
+
+def test_voice_filter_persists_across_reload_of_same_file(
+    window, qtbot, flute_crotchets_viola_semibreves_score
+):
+    """Live-tested regression: _update_ui_regions rebuilds Region 2 from
+    scratch via load_score_structure, which resets every node to its
+    default enabled=True and - through the very same filter_changed signal
+    a live toggle uses - silently overwrote the active_voice_filter
+    MusicData.apply_config had just restored, so a saved "voice off" toggle
+    came back on after every reload. _on_score_loaded must hand the restored
+    filter to Region 2 (apply_active_voice_tuples) after that rebuild, not
+    rely on apply_config's write to MusicData surviving it."""
+    load_and_wait(window, qtbot, flute_crotchets_viola_semibreves_score)
+
+    viola_row = next(
+        i for i, node in enumerate(window.region_2._current_visible_nodes)
+        if node.node_id == "part_P2"
+    )
+    window.region_2.setCurrentRow(viola_row)
+    qtbot.keyClick(window.region_2, Qt.Key.Key_O)
+    assert window._music_data.active_voice_filter == {("P1", 1, 1)}
+
+    load_and_wait(window, qtbot, flute_crotchets_viola_semibreves_score)
+
+    assert window._music_data.active_voice_filter == {("P1", 1, 1)}
+    assert window.region_2._current_visible_nodes[viola_row].enabled is False
+
+
+def test_initial_audition_on_reload_respects_the_restored_voice_filter(
+    window, qtbot, null_synth, flute_crotchets_viola_semibreves_score
+):
+    """Live-tested regression, found right after the filter-persistence fix
+    above: the filter itself was restored correctly (Region 2 showed viola
+    off, subsequent navigation excluded it), but _update_ui_regions's own
+    initial audition (play_all=True) fired BEFORE the restored filter was
+    handed to Region 2, so the very first sound on load still included the
+    voice that was supposed to be off. _on_score_loaded now suppresses that
+    first audition when there's a filter to restore and fires it itself once
+    Region 2's restored state is actually in effect."""
+    load_and_wait(window, qtbot, flute_crotchets_viola_semibreves_score)
+    viola_row = next(
+        i for i, node in enumerate(window.region_2._current_visible_nodes)
+        if node.node_id == "part_P2"
+    )
+    window.region_2.setCurrentRow(viola_row)
+    qtbot.keyClick(window.region_2, Qt.Key.Key_O)  # viola off
+
+    null_synth.played.clear()
+    load_and_wait(window, qtbot, flute_crotchets_viola_semibreves_score)
+
+    assert len(null_synth.played) == 1, "must not audition twice (once wrong, once corrected)"
+    assert null_synth.played[0]["midi_notes"] == [72]  # flute's C5 only, not the viola too
