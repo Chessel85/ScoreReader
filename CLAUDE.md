@@ -17,7 +17,7 @@ Windows, Python 3.13, dependencies in the checked-out `.venv` (not tracked):
 .venv\Scripts\Activate.ps1                # then plain `python main.py`
 ```
 
-Dependencies are split: `requirements.txt` (runtime — PySide6 6.11, music21 10.5, pyfluidsynth 1.4) and `requirements-dev.txt` (pytest, pytest-qt, pytest-cov). `mido` is no longer used or installed. No linter is configured.
+Dependencies are split: `requirements.txt` (runtime — PySide6 6.11, music21 10.5, pyfluidsynth 1.4), `requirements-dev.txt` (pytest, pytest-qt, pytest-cov), and `requirements-build.txt` (pyinstaller — only needed to build the Windows installer, see Packaging below). `mido` is no longer used or installed. No linter is configured.
 
 ```powershell
 .venv\Scripts\python.exe -m pytest                    # whole suite (~0.6s)
@@ -42,6 +42,17 @@ VS Code launch config is "Python: Current File" (debugpy) — debug by opening `
 **This is load-bearing.** The 148 MB soundfont exceeds GitHub's 100 MB file limit; committing it in August blocked all pushes and the recovery attempt cost two days of work. Never `git add` these paths, never remove those `.gitignore` entries, and if you need to restore them use `git cat-file blob <sha> > <path>` — `git checkout <commit> -- bin/` stages the files and reintroduces the problem.
 
 If the binaries are missing the app still runs: `SynthEngine` sets `FLUIDSYNTH_AVAILABLE = False`, prints a warning, and every playback call becomes a no-op.
+
+## Packaging (Windows installer)
+
+`packaging/build_installer.ps1` (M2, NFR-02 AC-02.1/AC-02.3) produces `dist_installer/RecallScore-Setup-<version>.exe` — a standard NSIS wizard (Welcome/Components/Directory/Start Menu/Install/Finish) that installs to Program Files (per-machine, requires admin — a deliberate choice, confirmed with the user) and registers a real uninstaller under Add/Remove Programs. Run it via `powershell -File packaging\build_installer.ps1`; requires the project `.venv` (installs `pyinstaller` from `requirements-build.txt` on first run if missing) and NSIS's `makensis.exe` on PATH or in one of the two standard `Program Files` locations.
+
+- **`packaging/RecallScore.spec`** — PyInstaller onedir build of `main.py`. Bundles `bin/*.dll` and `soundfonts/FluidR3_GM.sf2` (the gitignored local binaries above) into the frozen app so the installed app needs no separate download — this works with zero changes to `audio/synth_engine.py`'s `PROJECT_ROOT`/`BIN_DIR` resolution, because PyInstaller fakes frozen modules' `__file__` to a path under `sys._MEIPASS` matching the source tree, so `dirname(dirname(audio/synth_engine.py))` still lands on the bundle root. Excludes music21's bundled example-score corpus (`collect_data_files(..., excludes=["corpus/**", ...])`, ~58 MB) since the app only ever calls `converter.parse()` on the user's own file, never `music21.corpus` — and excludes `matplotlib`/`PIL` entirely, which music21 declares as hard dependencies purely for its unused `graph`/`audioSearch` plotting modules (confirmed via grep: only those two subpackages import matplotlib anywhere in music21).
+- **GOTCHA, live-tested (Windows 10 VM, no audio hardware):** a `console=False` build (required - a GUI app shouldn't flash a console window) runs with `sys.stdout`/`sys.stderr` set to `None`, not just closed. This app's error handling is `print("[ERROR] ...")`-based throughout (see "Known gaps" below) - the moment anything on that path prints, e.g. `SynthEngine._init_engine` catching a WASAPI open failure on a machine with no sound device, `print()` itself throws `AttributeError: 'NoneType' object has no attribute 'write'`, which PyInstaller's bootloader surfaces as "Failed to execute script 'main'" - reported by the user as their very first launch on a Windows 10 VM. Fixed in `main.py`'s `_redirect_stdio_if_headless()`, called before any other import: when `sys.stdout`/`sys.stderr` are `None`, redirects them to `%LOCALAPPDATA%\Recall Score\recall_score.log` (falls back to `os.devnull` if even that can't be opened) so every existing `print()` call site keeps working unmodified instead of crashing. Verified by monkeypatching `sys.stdout = sys.stderr = None` before importing `main` and confirming a simulated FluidSynth-init failure lands in the log file instead of raising.
+- **`packaging/installer.nsi`** — the NSIS script itself; not meant to be invoked directly (`makensis` needs `/DAPP_VERSION`/`/DDIST_DIR`/`/DOUT_DIR` defined, which only `build_installer.ps1` supplies). Per-user app settings/per-score config (`persistence/app_settings.py`, `persistence/score_config.py`) already live under each user's own `AppData` via `QStandardPaths` regardless of where the app binary is installed, so per-machine install doesn't make preferences shared across users — confirmed with the user before picking Program Files over a per-user install dir. Uninstalling deliberately does not delete that `AppData` config; Edit menu → "Open Local Folder" (G4) already exposes it if the user wants to clear it by hand.
+- **`packaging/version_info.txt`** — regenerated fresh by `build_installer.ps1` on every run from `version.py`'s `__version__`, not tracked in git. Embeds the Windows exe version resource (FileVersion/ProductVersion/etc.) via PyInstaller's `--version-file` mechanism.
+- **`packaging/icon.ico`** — not yet supplied (user intends to add one); both the spec and `main.py`'s `_app_icon_path()` check for its existence and no-op gracefully without it. Once added, commit it normally (it's a small real asset, unlike `bin/`/`soundfonts/`) and it's picked up by the next build automatically, no script changes needed.
+- **`packaging/THIRD_PARTY_NOTICES.txt`** — LGPL attribution for the bundled FluidSynth/GLib/libsndfile/libinstpatch DLLs (dynamically loaded via `ctypes.CDLL`, not statically linked, satisfying the LGPL re-linking requirement) and a note on the FluidR3_GM SoundFont's own licensing, which isn't carried in this repo and should be attached separately if the installer is redistributed.
 
 ## Architecture
 
@@ -87,6 +98,28 @@ Region 3's row text and Region 4's rows both go through an attribute system beyo
 - Parsing errors are swallowed with `print("[ERROR] ...")` and partial state. Ref 25 / NFR-06 call for an accessible error dialog; prefer moving that way over adding more silent prints.
 - Not yet built despite being specified: voice control, edit mode, MIDI/Guitar Pro/BME I/O, capo handling, chord naming.
 - Metronome click sound (Ref 14) is functional but not satisfying - two synthesis attempts (a sawtooth lead, then GM percussion Claves) were both live-tested and found lacking. Tracked as functional debt, not a missing feature; see tasks.txt E11 / D-14.
+
+## Working autonomously
+
+The user has given standing authorization for routine implementation/debugging
+actions during a coding task - running tests, writing and running ad hoc
+repro scripts, reading/searching files, non-destructive edits - without
+pausing to check in first. This was given explicitly after Phase G's work
+involved many individual tool-approval prompts (pytest runs, `python -c`
+repro scripts) the user found repetitive. It doesn't extend to destructive or
+hard-to-reverse actions (force-push, `reset --hard`, deleting files not
+created this session, etc.), which still need explicit confirmation each time
+per the Executing Actions With Care guidance - this authorization is about
+not asking before *routine* work, not a blanket override of that.
+
+`.claude/settings.json` also allowlists `.venv/Scripts/python.exe -m pytest *`
+(read-only test runs) to cut down actual permission prompts; rerun the
+`fewer-permission-prompts` skill periodically as new frequent read-only
+command patterns show up in transcripts. Ad hoc `python -c`/interpreter
+invocations are deliberately NOT allowlisted there - that's equivalent to
+arbitrary code execution and stays a per-prompt approval regardless of this
+section, though the user may still choose to grant it locally via
+`.claude/settings.local.json` (not checked in).
 
 ## Git workflow
 

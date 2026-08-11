@@ -983,7 +983,41 @@ PHASE M - CROSS-PLATFORM AND PACKAGING                    (4 tasks)
 ###
 [ ] M1  macOS audio driver selection (coreaudio in place of wasapi) and
         keyboard/focus parity with Windows - NFR-01
-[ ] M2  Windows installer (.exe / .msi) with bundled runtime - NFR-02 AC-02.1/AC-02.3
+[x] M2  Windows installer (.exe / .msi) with bundled runtime - NFR-02 AC-02.1/AC-02.3
+        > DONE 2026-08-11. New packaging/ (RecallScore.spec, installer.nsi,
+          build_installer.ps1) - PyInstaller onedir bundle (PySide6, music21
+          minus its unused corpus/matplotlib/PIL, bin/*.dll, soundfonts/
+          FluidR3_GM.sf2) wrapped by an NSIS wizard into dist_installer/
+          RecallScore-Setup-<version>.exe. Per-machine install (Program
+          Files, admin) - confirmed with the user; per-user AppData
+          settings (Ref 27) are unaffected since QStandardPaths resolves
+          those independent of install location. Real Add/Remove Programs
+          entry with a working uninstaller; deliberately leaves the user's
+          AppData config alone on uninstall. See CLAUDE.md "Packaging" for
+          the full breakdown.
+        > FIX 2026-08-11 (live-tested on a Windows 10 VM, first real
+          install): "Failed to execute script 'main'" /
+          'NoneType' object has no attribute 'write' on launch. ROOT CAUSE:
+          console=False (required for a GUI app) means sys.stdout/stderr
+          are None, not just closed - this app's print()-based error
+          handling (see "Known gaps") crashes the instant anything on that
+          path prints, which it did immediately: the VM has no audio
+          hardware, so SynthEngine's WASAPI open fails at startup and the
+          print() meant to report that warning is what actually crashed.
+          Fixed by main.py's _redirect_stdio_if_headless(), called before
+          any other import - redirects None stdout/stderr to
+          %LOCALAPPDATA%\Recall Score\recall_score.log so every existing
+          print() call site keeps working. GOTCHA WORTH REMEMBERING for any
+          future --windowed/console=False PyInstaller work.
+        > RE-TESTED 2026-08-11 (same Windows 10 VM, after the FIX above):
+          uninstalled the crashing build, installed the rebuilt one, app
+          now launches without the stdio crash. Confirms the fix, and
+          along the way exercised the uninstaller (removing a prior
+          install cleanly) for the first time too.
+        > Icon (packaging/icon.ico) still not supplied - both the spec and
+          main.py's _app_icon_path() degrade gracefully without it.
+          Desktop-shortcut checkbox and audio playback on real hardware
+          still not live-tested (the VM used so far has no sound card).
 [ ] M3  macOS signed .dmg or .app bundle - NFR-02 AC-02.2
 [ ] M4  Audit for zero network calls in core features - NFR-07
 

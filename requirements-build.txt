@@ -1,0 +1,5 @@
+# Packaging-only dependency for building the Windows installer
+# (packaging/build_installer.ps1 - Ref M2). Not needed to run or test the
+# app - see requirements.txt / requirements-dev.txt for those.
+
+pyinstaller==6.22.0

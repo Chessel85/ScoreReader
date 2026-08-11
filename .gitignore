@@ -9,3 +9,10 @@ soundfonts/
 output.txt
 Product Definition Document.html
 *.png
+
+# Windows installer build output (packaging/build_installer.ps1, M2) -
+# regenerated from source every run, not source itself.
+/build/
+/dist/
+/dist_installer/
+packaging/version_info.txt

@@ -1,0 +1,53 @@
+Recall Score - Third-Party Notices
+===================================
+
+This installer bundles the following native components so the app runs with
+no separate install step (NFR-02 AC-02.3). None of their source code is
+modified; they are used exactly as built upstream.
+
+FluidSynth (libfluidsynth.dll, libfluidsynth-3.dll)
+  License: GNU Lesser General Public License v2.1 or later (LGPL-2.1+)
+  https://github.com/FluidSynth/fluidsynth
+  Loaded dynamically at runtime (audio/synth_engine.py uses ctypes.CDLL and
+  the pyfluidsynth Python binding) - not statically linked - satisfying the
+  LGPL's re-linking requirement. Users may replace bin/libfluidsynth*.dll
+  with a compatible build of their own.
+
+GLib / GObject / GThread (libglib-2.0-0.dll, libgobject-2.0-0.dll,
+libgthread-2.0-0.dll, libintl-8.dll)
+  License: GNU Lesser General Public License v2.1 or later (LGPL-2.1+)
+  https://gitlab.gnome.org/GNOME/glib
+
+libsndfile (libsndfile-1.dll)
+  License: GNU Lesser General Public License v2.1 or later (LGPL-2.1+)
+  https://github.com/libsndfile/libsndfile
+
+libinstpatch (libinstpatch-2.dll)
+  License: GNU Lesser General Public License v2.1 or later (LGPL-2.1+)
+  https://github.com/swami/libinstpatch
+
+GCC runtime support (libgcc_s_sjlj-1.dll, libgomp-1.dll, libstdc++-6.dll,
+libwinpthread-1.dll)
+  License: GNU General Public License v3 with the GCC Runtime Library
+  Exception (permits distribution alongside non-GPL applications)
+  https://gcc.gnu.org/onlinedocs/libstdc++/manual/license.html
+
+pyfluidsynth (Python binding, vendored via pip into the frozen bundle)
+  License: GNU Lesser General Public License v2.1 or later (LGPL-2.1+)
+  https://github.com/nwhitehead/pyfluidsynth
+
+FluidR3_GM.sf2 (SoundFont, General MIDI instrument samples)
+  Author: Frank Wen (release archive originally distributed as "FluidR3
+  GM"). This build does not carry the original license text bundled
+  upstream with the .sf2 - if you redistribute this installer, attach the
+  soundfont's own license file alongside this notice rather than relying on
+  this summary.
+
+PySide6 / Qt (LGPL-3.0, dynamically linked via the Qt for Python wheels) and
+music21 (BSD-3-Clause) are also embedded but are Python packages, not
+compiled binaries carried in bin/ - see their own PyPI project pages for
+full license text.
+
+Full license texts for the LGPL/GPL components above are available from
+their respective project pages linked here, or in bin/ if a COPYING file is
+placed there before packaging.
