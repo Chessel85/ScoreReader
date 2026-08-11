@@ -1,0 +1,1122 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Recall Score User Guide</title>
+  <style>
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      background-color: #1a1a1a;
+      border: none;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">Recall Score User Guide</h1>
+</header>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#recall-score-user-guide"
+id="toc-recall-score-user-guide">Recall Score — User Guide</a>
+<ul>
+<li><a href="#introduction" id="toc-introduction">1. Introduction</a>
+<ul>
+<li><a href="#what-recall-score-is-for"
+id="toc-what-recall-score-is-for">1.1 What Recall Score Is For</a></li>
+<li><a href="#who-this-guide-is-for" id="toc-who-this-guide-is-for">1.2
+Who This Guide Is For</a></li>
+<li><a href="#how-to-read-this-guide-with-a-screen-reader"
+id="toc-how-to-read-this-guide-with-a-screen-reader">1.3 How to Read
+This Guide with a Screen Reader</a></li>
+</ul></li>
+<li><a href="#getting-started" id="toc-getting-started">2. Getting
+Started</a>
+<ul>
+<li><a href="#installing-recall-score-windows"
+id="toc-installing-recall-score-windows">2.1 Installing Recall Score
+(Windows)</a></li>
+<li><a href="#opening-a-score-file" id="toc-opening-a-score-file">2.2
+Opening a Score File</a></li>
+<li><a href="#supported-file-types" id="toc-supported-file-types">2.3
+Supported File Types</a></li>
+<li><a href="#a-five-minute-first-walkthrough"
+id="toc-a-five-minute-first-walkthrough">2.4 A Five-Minute First
+Walkthrough</a></li>
+</ul></li>
+<li><a href="#understanding-the-screen-layout"
+id="toc-understanding-the-screen-layout">3. Understanding the Screen
+Layout</a>
+<ul>
+<li><a href="#the-four-regions-at-a-glance"
+id="toc-the-four-regions-at-a-glance">3.1 The Four Regions at a
+Glance</a></li>
+<li><a href="#region-1-score-information"
+id="toc-region-1-score-information">3.2 Region 1: Score
+Information</a></li>
+<li><a href="#region-2-parts-staves-and-voices"
+id="toc-region-2-parts-staves-and-voices">3.3 Region 2: Parts, Staves
+and Voices</a></li>
+<li><a href="#region-3-note-timeline"
+id="toc-region-3-note-timeline">3.4 Region 3: Note Timeline</a></li>
+<li><a href="#region-4-note-attributes"
+id="toc-region-4-note-attributes">3.5 Region 4: Note Attributes</a></li>
+<li><a href="#the-status-bar" id="toc-the-status-bar">3.6 The Status
+Bar</a></li>
+</ul></li>
+<li><a href="#moving-between-regions" id="toc-moving-between-regions">4.
+Moving Between Regions</a>
+<ul>
+<li><a href="#cycling-through-the-four-regions-tab-shifttab"
+id="toc-cycling-through-the-four-regions-tab-shifttab">4.1 Cycling
+Through the Four Regions (Tab / Shift+Tab)</a></li>
+<li><a href="#switching-between-the-regions-area-and-the-status-bar-f6"
+id="toc-switching-between-the-regions-area-and-the-status-bar-f6">4.2
+Switching Between the Regions Area and the Status Bar (F6)</a></li>
+<li><a href="#jumping-to-the-note-region-from-anywhere-n"
+id="toc-jumping-to-the-note-region-from-anywhere-n">4.3 Jumping to the
+Note Region from Anywhere (N)</a></li>
+</ul></li>
+<li><a href="#navigating-the-timeline"
+id="toc-navigating-the-timeline">5. Navigating the Timeline</a>
+<ul>
+<li><a href="#stepping-note-by-note-left-right-arrow"
+id="toc-stepping-note-by-note-left-right-arrow">5.1 Stepping Note by
+Note (Left / Right Arrow)</a></li>
+<li><a href="#jumping-by-measure-ctrlleft-ctrlright"
+id="toc-jumping-by-measure-ctrlleft-ctrlright">5.2 Jumping by Measure
+(Ctrl+Left / Ctrl+Right)</a></li>
+<li><a href="#jumping-to-the-start-and-end-of-the-piece-home-end"
+id="toc-jumping-to-the-start-and-end-of-the-piece-home-end">5.3 Jumping
+to the Start and End of the Piece (Home / End)</a></li>
+<li><a href="#jumping-to-a-specific-bar-number"
+id="toc-jumping-to-a-specific-bar-number">5.4 Jumping to a Specific Bar
+Number</a></li>
+<li><a href="#moving-between-notes-in-a-chord-up-down-arrow"
+id="toc-moving-between-notes-in-a-chord-up-down-arrow">5.5 Moving
+Between Notes in a Chord (Up / Down Arrow)</a></li>
+<li><a href="#boundary-sounds-what-the-doh-means"
+id="toc-boundary-sounds-what-the-doh-means">5.6 Boundary Sounds: What
+the “Doh” Means</a></li>
+</ul></li>
+<li><a href="#choosing-what-you-hear-and-see"
+id="toc-choosing-what-you-hear-and-see">6. Choosing What You Hear and
+See</a>
+<ul>
+<li><a href="#the-part-stave-voice-hierarchy"
+id="toc-the-part-stave-voice-hierarchy">6.1 The Part / Stave / Voice
+Hierarchy</a></li>
+<li><a href="#turning-a-part-stave-or-voice-on-or-off"
+id="toc-turning-a-part-stave-or-voice-on-or-off">6.2 Turning a Part,
+Stave or Voice On or Off</a></li>
+<li><a href="#how-filtering-affects-navigation-and-playback"
+id="toc-how-filtering-affects-navigation-and-playback">6.3 How Filtering
+Affects Navigation and Playback</a></li>
+</ul></li>
+<li><a href="#listening-to-the-score" id="toc-listening-to-the-score">7.
+Listening to the Score</a>
+<ul>
+<li><a href="#automatic-playback-while-you-navigate"
+id="toc-automatic-playback-while-you-navigate">7.1 Automatic Playback
+While You Navigate</a></li>
+<li><a href="#playing-the-whole-piece-play-pause-stop"
+id="toc-playing-the-whole-piece-play-pause-stop">7.2 Playing the Whole
+Piece (Play / Pause / Stop)</a></li>
+<li><a href="#auditioning-a-short-phrase-enter"
+id="toc-auditioning-a-short-phrase-enter">7.3 Auditioning a Short Phrase
+(Enter)</a></li>
+<li><a href="#auditioning-the-current-chord-shiftspace"
+id="toc-auditioning-the-current-chord-shiftspace">7.4 Auditioning the
+Current Chord (Shift+Space)</a></li>
+<li><a href="#changing-playback-tempo"
+id="toc-changing-playback-tempo">7.5 Changing Playback Tempo</a></li>
+<li><a href="#using-the-metronome" id="toc-using-the-metronome">7.6
+Using the Metronome</a></li>
+</ul></li>
+<li><a href="#understanding-note-attributes"
+id="toc-understanding-note-attributes">8. Understanding Note
+Attributes</a>
+<ul>
+<li><a href="#whats-shown-by-default"
+id="toc-whats-shown-by-default">8.1 What’s Shown by Default</a></li>
+<li><a
+href="#adding-more-detail-dynamics-articulation-fingering-string-fret"
+id="toc-adding-more-detail-dynamics-articulation-fingering-string-fret">8.2
+Adding More Detail (Dynamics, Articulation, Fingering, String,
+Fret)</a></li>
+<li><a
+href="#choosing-where-an-attribute-applies-voice-stave-part-score"
+id="toc-choosing-where-an-attribute-applies-voice-stave-part-score">8.3
+Choosing Where an Attribute Applies (Voice / Stave / Part /
+Score)</a></li>
+<li><a href="#changing-the-order-attributes-are-read"
+id="toc-changing-the-order-attributes-are-read">8.4 Changing the Order
+Attributes Are Read</a></li>
+</ul></li>
+<li><a href="#terminology-uk-and-us-music-vocabulary"
+id="toc-terminology-uk-and-us-music-vocabulary">9. Terminology: UK and
+US Music Vocabulary</a>
+<ul>
+<li><a href="#what-changes-when-you-switch"
+id="toc-what-changes-when-you-switch">9.1 What Changes When You
+Switch</a></li>
+<li><a href="#switching-terminology-language"
+id="toc-switching-terminology-language">9.2 Switching Terminology
+Language</a></li>
+</ul></li>
+<li><a href="#your-settings-are-remembered"
+id="toc-your-settings-are-remembered">10. Your Settings Are
+Remembered</a>
+<ul>
+<li><a href="#whats-saved-per-score" id="toc-whats-saved-per-score">10.1
+What’s Saved Per Score</a></li>
+<li><a href="#whats-saved-across-all-scores"
+id="toc-whats-saved-across-all-scores">10.2 What’s Saved Across All
+Scores</a></li>
+<li><a href="#clearing-saved-preferences-for-a-score"
+id="toc-clearing-saved-preferences-for-a-score">10.3 Clearing Saved
+Preferences for a Score</a></li>
+</ul></li>
+<li><a href="#menu-reference" id="toc-menu-reference">11. Menu
+Reference</a>
+<ul>
+<li><a href="#file-menu" id="toc-file-menu">11.1 File Menu</a></li>
+<li><a href="#edit-menu" id="toc-edit-menu">11.2 Edit Menu</a></li>
+<li><a href="#navigation-menu" id="toc-navigation-menu">11.3 Navigation
+Menu</a></li>
+<li><a href="#options-menu" id="toc-options-menu">11.4 Options
+Menu</a></li>
+<li><a href="#help-menu" id="toc-help-menu">11.5 Help Menu</a></li>
+</ul></li>
+<li><a href="#keyboard-shortcut-reference"
+id="toc-keyboard-shortcut-reference">12. Keyboard Shortcut
+Reference</a></li>
+<li><a href="#troubleshooting" id="toc-troubleshooting">13.
+Troubleshooting</a>
+<ul>
+<li><a href="#no-sound" id="toc-no-sound">13.1 No Sound</a></li>
+<li><a href="#a-file-wont-open" id="toc-a-file-wont-open">13.2 A File
+Won’t Open</a></li>
+<li><a href="#where-settings-are-stored-on-disk"
+id="toc-where-settings-are-stored-on-disk">13.3 Where Settings Are
+Stored on Disk</a></li>
+</ul></li>
+<li><a href="#whats-not-yet-supported"
+id="toc-whats-not-yet-supported">14. What’s Not Yet Supported</a></li>
+<li><a href="#getting-help-and-reporting-problems"
+id="toc-getting-help-and-reporting-problems">15. Getting Help and
+Reporting Problems</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="recall-score-user-guide">Recall Score — User Guide</h1>
+<p><em>This guide describes Recall Score, a screen-reader-first music
+score and guitar-tab viewer for visually impaired musicians, version
+0.1.12 (Windows).</em></p>
+<h2 id="introduction">1. Introduction</h2>
+<h3 id="what-recall-score-is-for">1.1 What Recall Score Is For</h3>
+<p>Recall Score lets you explore, study and memorise a piece of music by
+ear, using a screen reader and the keyboard, without needing to see the
+page. Every move you make through a score is spoken by your screen
+reader and heard as MIDI playback, so you always know exactly where you
+are and what’s sounding.</p>
+<p>The app is built around a simple idea: visually impaired musicians
+usually can’t read notation and play an instrument at the same time, so
+memorising a piece well enough to play it from memory matters more than
+it does for a sighted player. Recall Score is designed to make that
+memorising process as efficient as possible.</p>
+<h3 id="who-this-guide-is-for">1.2 Who This Guide Is For</h3>
+<p>This guide is written for anyone using Recall Score to read and
+listen to a score - the app’s current focus. If you’re configuring the
+app for your own workflow (choosing which details are spoken, setting UK
+or US terminology), the same sections apply to you too.</p>
+<p>Some roles described in the project’s own design documents -
+hands-free control by voice, editing and transcribing scores, capo and
+chord-naming support for tablature - aren’t built yet. See §14 for
+exactly what’s not here yet, so you don’t spend time hunting for
+something that doesn’t exist.</p>
+<h3 id="how-to-read-this-guide-with-a-screen-reader">1.3 How to Read
+This Guide with a Screen Reader</h3>
+<p>This document is one long page. Use your screen reader’s heading
+navigation (for example, the <code>H</code> key in NVDA) to jump between
+the numbered sections and subsections below, or search the page directly
+for a keystroke or menu name. §12 is a single reference table of every
+keyboard shortcut in the app - worth bookmarking or returning to
+directly rather than reading top to bottom.</p>
+<p>Keystrokes are always written out in full, for example
+<code>Ctrl+Left Arrow</code> means: hold Ctrl and press the Left Arrow
+key.</p>
+<h2 id="getting-started">2. Getting Started</h2>
+<h3 id="installing-recall-score-windows">2.1 Installing Recall Score
+(Windows)</h3>
+<p>Recall Score ships as a standard Windows installer,
+<code>RecallScore-Setup-&lt;version&gt;.exe</code>. Run it and follow
+the wizard (Welcome, Components, Install Location, Start Menu shortcut,
+Install, Finish). Because it installs into Program Files, Windows will
+ask for administrator permission during setup - this is expected.</p>
+<p>Once installed, Recall Score appears in your Start Menu and in
+Add/Remove Programs like any other Windows application, with a normal
+uninstaller. Uninstalling does <strong>not</strong> delete any
+preferences you’ve saved for individual scores (§10) - those live
+separately under your own Windows user profile and are covered in §13.3
+if you ever want to clear them by hand.</p>
+<h3 id="opening-a-score-file">2.2 Opening a Score File</h3>
+<p>Choose <strong>File &gt; Open…</strong> (or press
+<code>Ctrl+O</code>). A standard file-open dialog titled “Open MusicXML
+Score” appears. Choose your file and select Open. Once the file has
+finished loading, the four regions and status bar (§3) populate
+automatically - Region 1 with the score’s title, composer, key, time
+signature and tempo, Region 2 with its parts and staves, and so on.</p>
+<h3 id="supported-file-types">2.3 Supported File Types</h3>
+<p>Today, Recall Score opens <strong>MusicXML</strong> files only -
+<code>.xml</code>, <code>.musicxml</code>, and the compressed
+<code>.mxl</code> format that many notation programs (including
+MuseScore) export by default. Support for MIDI, Guitar Pro and Braille
+Music Editor files is planned but not built yet - see §14.</p>
+<h3 id="a-five-minute-first-walkthrough">2.4 A Five-Minute First
+Walkthrough</h3>
+<p>A short first run-through, once you have a MusicXML file to open:</p>
+<ol type="1">
+<li><strong>Open a file.</strong> <code>Ctrl+O</code>, choose your file.
+Region 1 now describes the piece - title, composer, key, time signature,
+starting tempo.</li>
+<li><strong>Get to the notes.</strong> Press <code>N</code> from
+anywhere to jump straight to the Note region (Region 3, §3.4).</li>
+<li><strong>Step through it.</strong> Press <code>Right Arrow</code> a
+few times. Each press moves to the next note or chord and plays it.
+<code>Left Arrow</code> goes back.</li>
+<li><strong>Listen to a chord’s individual notes.</strong> If you land
+on a chord (several notes at once), press <code>Down Arrow</code> to
+hear each note in it one at a time, <code>Up Arrow</code> to go back
+up.</li>
+<li><strong>Try filtering.</strong> Press <code>Tab</code> twice to
+reach Region 2 (Parts, Staves and Voices). Press <code>Down Arrow</code>
+to a part or stave, then <code>O</code> to switch it off. Press
+<code>N</code> to jump back to the Note region and move around again -
+notice that part is now silent and no longer listed. Press
+<code>O</code> again on that same row in Region 2 to bring it back.</li>
+<li><strong>Check your position at any time.</strong> Press
+<code>F6</code> to move to the status bar and hear the current measure,
+beat, key and time signature; <code>F6</code> again returns you to
+whichever region you were last on.</li>
+</ol>
+<p>From here, §5 onward covers every navigation and playback control in
+detail.</p>
+<h2 id="understanding-the-screen-layout">3. Understanding the Screen
+Layout</h2>
+<h3 id="the-four-regions-at-a-glance">3.1 The Four Regions at a
+Glance</h3>
+<p>The main window is a 2x2 grid of four regions, plus a status bar:</p>
+<ul>
+<li><strong>Region 1 (top-left): Score Information</strong> - the
+piece’s metadata.</li>
+<li><strong>Region 2 (top-right): Parts, Staves and Voices</strong> -
+what’s switched on or off.</li>
+<li><strong>Region 3 (bottom-left): Note Timeline</strong> - the notes
+at your current position; this is where you navigate through the
+music.</li>
+<li><strong>Region 4 (bottom-right): Note Attributes</strong> - full
+detail on whatever is currently selected in Region 3.</li>
+</ul>
+<p><code>Tab</code> moves focus forward through the four regions in this
+order, wrapping back to Region 1 after Region 4; <code>Shift+Tab</code>
+moves backward. Each region also has its own normal Up/Down row
+navigation for moving within it - only Region 3 additionally responds to
+the timeline keys described in §5, and only moving through Region 3
+triggers audio playback.</p>
+<h3 id="region-1-score-information">3.2 Region 1: Score Information</h3>
+<p>Shows the score’s title, composer or artist, key signature, time
+signature and starting tempo, as read from the file when it was opened.
+These are the piece’s <strong>opening</strong> values and don’t change
+as you move through the score - for values that track your current
+position instead (useful on a piece whose key or time signature changes
+partway through), see the status bar in §3.6.</p>
+<h3 id="region-2-parts-staves-and-voices">3.3 Region 2: Parts, Staves
+and Voices</h3>
+<p>A flat, navigable list representing the score’s structure: each Part
+(for example “Classical Guitar”) can contain one or more Staves, each
+Stave one or more Voices. Every row reads its name together with its
+current state, for example <code>Classical Guitar - on</code> or
+<code>Treble stave - on</code>. Use <code>O</code> to toggle the focused
+row - see §6 for how filtering works.</p>
+<h3 id="region-3-note-timeline">3.4 Region 3: Note Timeline</h3>
+<p>The region you’ll spend the most time in. It lists the note or notes
+sounding at your current position in the score.
+<code>Left</code>/<code>Right Arrow</code> move through time;
+<code>Up</code>/<code>Down Arrow</code> move between individual notes
+when several sound together. Every move plays what’s now current through
+MIDI, using each part’s own instrument sound from the file.</p>
+<h3 id="region-4-note-attributes">3.5 Region 4: Note Attributes</h3>
+<p>Shows full detail for whichever note(s) are currently selected in
+Region 3 - by default step, octave, measure number, beat position and
+duration, plus dynamics, articulation, fingering, string, fret and other
+details when the source file provides them and they’ve been switched on
+(§8). This region updates automatically to always match Region 3’s
+current selection.</p>
+<h3 id="the-status-bar">3.6 The Status Bar</h3>
+<p>Six individually focusable fields, in order: measure and beat
+position, key signature, time signature, playback tempo, playback status
+(Playing/Paused/Stopped) and metronome state (On/Off). Once focus is in
+the status bar, <code>Tab</code>/<code>Shift+Tab</code> cycle only
+between these six fields and wrap around, rather than leaving the pane -
+only <code>F6</code>/<code>Shift+F6</code> (§4.2) move focus in or out
+of the status bar.</p>
+<p>Unlike Region 1, the status bar tracks your <strong>current cursor
+position</strong> - if a score changes key or time signature partway
+through, the status bar reflects whatever is in effect where you are
+right now. It can also be read at any time, from any region, using your
+screen reader’s own “report status bar” command (<code>NVDA+End</code>
+on NVDA).</p>
+<h2 id="moving-between-regions">4. Moving Between Regions</h2>
+<h3 id="cycling-through-the-four-regions-tab-shifttab">4.1 Cycling
+Through the Four Regions (Tab / Shift+Tab)</h3>
+<p><code>Tab</code> moves focus to the next region in the Region 1 → 2 →
+3 → 4 → 1 cycle; <code>Shift+Tab</code> moves in reverse. This is
+separate from each region’s own internal Up/Down navigation -
+<code>Tab</code> always changes which region has focus, it never scrolls
+within one.</p>
+<h3 id="switching-between-the-regions-area-and-the-status-bar-f6">4.2
+Switching Between the Regions Area and the Status Bar (F6)</h3>
+<p><code>F6</code> toggles focus between the regions area (returning to
+whichever region you last had focus in) and the status bar.
+<code>Shift+F6</code> does the same thing - since there are only two
+panes, there’s no meaningful “reverse” direction. The menu bar is
+reached the normal Windows way (the <code>Alt</code> key), not through
+<code>F6</code>.</p>
+<h3 id="jumping-to-the-note-region-from-anywhere-n">4.3 Jumping to the
+Note Region from Anywhere (N)</h3>
+<p>Press <code>N</code> at any time - from any region or the status bar
+- to move focus straight to the Note region (Region 3) without changing
+your timeline position. This saves repeatedly tabbing all the way around
+just to get back to the notes.</p>
+<h2 id="navigating-the-timeline">5. Navigating the Timeline</h2>
+<p>Everything in this section only takes effect while focus is in the
+Note region (Region 3). The same keys do nothing in the other regions -
+each of those uses its own native navigation instead.</p>
+<h3 id="stepping-note-by-note-left-right-arrow">5.1 Stepping Note by
+Note (Left / Right Arrow)</h3>
+<p>Moves to the next or previous <strong>active event</strong> - a
+position in the score where at least one currently-visible note sounds.
+All notes at the new position are selected and played together.</p>
+<h3 id="jumping-by-measure-ctrlleft-ctrlright">5.2 Jumping by Measure
+(Ctrl+Left / Ctrl+Right)</h3>
+<p><code>Ctrl+Right Arrow</code> jumps to the first active event of the
+next bar. <code>Ctrl+Left Arrow</code> jumps to the first active event
+of the current bar, or to the previous bar’s first active event if
+you’re already sitting on it. If the piece has a pickup bar, it’s
+numbered 0 and comes before bar 1.</p>
+<h3 id="jumping-to-the-start-and-end-of-the-piece-home-end">5.3 Jumping
+to the Start and End of the Piece (Home / End)</h3>
+<p><code>Home</code> moves to the very first active note (the pickup
+bar, if there is one); <code>End</code> moves to the very last. Trailing
+bars that are nothing but rests padding out the final printed system
+don’t count - <code>End</code> lands on the last note actually played,
+not on empty bars after it. <code>Home</code> and <code>End</code> never
+play the boundary sound (§5.6) even if you’re already at that position,
+since they’re jumping to a known place rather than attempting to move
+past a limit.</p>
+<h3 id="jumping-to-a-specific-bar-number">5.4 Jumping to a Specific Bar
+Number</h3>
+<p>With focus in the Note region, type a bar number using the digit keys
+- no dialog needed - then press <code>Enter</code> to jump straight to
+its first active event, which plays immediately. Press
+<code>Escape</code> at any point before <code>Enter</code> to clear what
+you’ve typed without moving. Typing a bar number that doesn’t exist in
+the piece plays the boundary sound (§5.6) and leaves your position
+unchanged.</p>
+<p>You can also reach the same feature through <strong>Navigation &gt;
+Go to Measure…</strong> (<code>Ctrl+G</code>), a dialog pre-filled with
+your current bar number if you’d rather use a menu than type directly
+into the Note region.</p>
+<h3 id="moving-between-notes-in-a-chord-up-down-arrow">5.5 Moving
+Between Notes in a Chord (Up / Down Arrow)</h3>
+<p>When several notes sound together at one position,
+<code>Left</code>/<code>Right Arrow</code> selects and plays all of them
+at once. <code>Up</code>/<code>Down Arrow</code> narrows the selection
+down to one note at a time, so you can hear and inspect each note in the
+chord individually. Press <code>Ctrl+A</code> at any point to reselect
+every note at the current position again.</p>
+<h3 id="boundary-sounds-what-the-doh-means">5.6 Boundary Sounds: What
+the “Doh” Means</h3>
+<p>A short, quiet, low note plays whenever you try to move past either
+end of the piece - with <code>Left</code>/<code>Right Arrow</code>,
+<code>Ctrl+Left</code>/<code>Ctrl+Right</code>, by typing a bar number
+that doesn’t exist, or by pressing <code>Space</code> to start playback
+while already sitting on the very last note. It’s a deliberate,
+unobtrusive “you’ve reached the edge” cue, not an error message - your
+position never changes when you hear it.</p>
+<h2 id="choosing-what-you-hear-and-see">6. Choosing What You Hear and
+See</h2>
+<h3 id="the-part-stave-voice-hierarchy">6.1 The Part / Stave / Voice
+Hierarchy</h3>
+<p>Region 2 (§3.3) mirrors the structure of the file you’ve opened: each
+Part can contain one or more Staves, and each Stave one or more Voices.
+A guitar-and-piano duet, for example, typically shows two Parts, with
+the piano Part split into two Staves (treble and bass) each with its own
+Voices.</p>
+<h3 id="turning-a-part-stave-or-voice-on-or-off">6.2 Turning a Part,
+Stave or Voice On or Off</h3>
+<p>With focus on a row in Region 2, press <code>O</code> to toggle it
+between on and off. Switching a Part or Stave off hides everything
+nested underneath it from both the Note region and playback - but each
+child keeps its own individual on/off state in the background, so
+turning the parent back on restores exactly what you had before, not a
+blanket “everything on” reset.</p>
+<h3 id="how-filtering-affects-navigation-and-playback">6.3 How Filtering
+Affects Navigation and Playback</h3>
+<p>Filtering changes what you hear and see at each position in the
+timeline - it never changes which positions exist to move between. Your
+current place in the timeline, and Region 3’s selection, stay exactly
+where they were before and after any toggle in Region 2.</p>
+<h2 id="listening-to-the-score">7. Listening to the Score</h2>
+<h3 id="automatic-playback-while-you-navigate">7.1 Automatic Playback
+While You Navigate</h3>
+<p>Every move within the Note region - stepping with
+<code>Left</code>/<code>Right Arrow</code>, moving within a chord with
+<code>Up</code>/<code>Down Arrow</code>, or switching a part on or off
+in Region 2 - immediately plays whatever is now current, using each
+part’s own instrument sound from the file. A chord spanning two parts
+(say, piano and guitar) sounds both instruments together, not just
+one.</p>
+<h3 id="playing-the-whole-piece-play-pause-stop">7.2 Playing the Whole
+Piece (Play / Pause / Stop)</h3>
+<p><code>Space</code> starts playback from your current position, and
+also resumes playback if it’s currently paused. <code>Ctrl+Space</code>
+pauses playback (resume with <code>Space</code>, not
+<code>Ctrl+Space</code> again). Pausing updates the regions to reflect
+wherever playback stopped. Stopping playback - or letting it reach the
+end of the piece naturally - always returns your position to wherever
+playback originally started from, not to the last note heard.</p>
+<h3 id="auditioning-a-short-phrase-enter">7.3 Auditioning a Short Phrase
+(Enter)</h3>
+<p>With focus in the Note region and no bar number currently being typed
+(§5.4), <code>Enter</code> plays a short phrase: from beat 1 of the
+current measure through the end of the next measure, then stops on its
+own. This is meant for hearing the immediate musical context around your
+position without committing to full playback. Pressing
+<code>Enter</code> again while it’s still playing stops it early. Either
+way, your actual cursor position is left untouched.</p>
+<h3 id="auditioning-the-current-chord-shiftspace">7.4 Auditioning the
+Current Chord (Shift+Space)</h3>
+<p>Plays every note sounding at your current position together, each
+held for its own written duration. Press <code>Shift+Space</code> again
+at any point to re-trigger it.</p>
+<h3 id="changing-playback-tempo">7.5 Changing Playback Tempo</h3>
+<p><code>F</code> speeds playback up by 10bpm, <code>S</code> slows it
+down by 10bpm, and <code>D</code> resets to the score’s own written
+tempo. These are global shortcuts - they work regardless of which region
+has focus, since tempo is a playback-wide setting rather than something
+tied to one region. Changing it is purely a listening aid: it never
+edits the tempo actually written into the score.</p>
+<p>For finer control, <strong>Options &gt; Tempo Offset…</strong> (or
+<code>Ctrl+T</code>) opens a dialog where you can type an exact offset,
+including decimal values. Recall Score always keeps the effective tempo
+within a hard 30-300bpm range - a value you enter outside that range is
+automatically brought back within it rather than rejected.</p>
+<p>The status bar’s “Playback tempo” field always shows the current
+effective tempo in the score’s own units (for example, “96 eighth notes
+per minute” for a piece marked in eighth notes), and reads “(score
+default)” whenever no offset is currently applied.</p>
+<h3 id="using-the-metronome">7.6 Using the Metronome</h3>
+<p><strong>Options &gt; Toggle Metronome</strong>, or
+<code>Ctrl+M</code>, turns a click on: one per beat, with a distinctly
+louder, accented click on beat 1 of every bar. With the metronome
+switched on, beat positions that have no note or rest of their own
+become reachable, audible stops in the timeline too, so you can navigate
+through - and hear the pulse of - even entirely silent passages.</p>
+<p>The click’s actual sound is still being refined. It’s functionally
+complete (correct timing, correctly accented beat 1, navigable silent
+beats) but isn’t the final polished tone yet - if it sounds a little
+plain for now, that’s known and being worked on.</p>
+<h2 id="understanding-note-attributes">8. Understanding Note
+Attributes</h2>
+<h3 id="whats-shown-by-default">8.1 What’s Shown by Default</h3>
+<p>By default, the Note region (Region 3) speaks only each note’s plain
+name - for example “C”, “F sharp”, “B double flat”. Accidentals are
+always spelled out in full for clear pronunciation, and octave numbers
+are left out to keep things brief. A rest is simply announced as
+“rest”.</p>
+<p>Region 4 always shows a fuller picture of whatever is currently
+selected - step, octave, measure number, beat position and duration -
+plus whichever of the extra details in §8.2 the file provides and you’ve
+chosen to show.</p>
+<h3
+id="adding-more-detail-dynamics-articulation-fingering-string-fret">8.2
+Adding More Detail (Dynamics, Articulation, Fingering, String,
+Fret)</h3>
+<p>Depending on what the source file contains, additional details may be
+available: dynamics markings (forte, piano, and so on), articulation
+(staccato, accent, trill, and similar), fingering, string and fret
+numbers, and plucking-hand markings for guitar. An attribute only
+appears on a note when it’s <strong>both</strong> switched on for that
+voice <strong>and</strong> actually present on that specific note - if a
+key is simply missing from one note’s row, that’s expected, not a
+fault.</p>
+<p>To switch an attribute on or off, open the context menu on the
+relevant row in Region 4: right-click it, or press the <code>Menu</code>
+key (or <code>Shift+F10</code>) while focused on it. The menu offers
+“Add to notes for this voice”, “Add to notes in same stave”, “Add to
+notes in the same part” and “Add to notes in the whole score” for an
+attribute that isn’t showing yet - or the matching “Remove for notes
+in…” options once it already is.</p>
+<h3 id="choosing-where-an-attribute-applies-voice-stave-part-score">8.3
+Choosing Where an Attribute Applies (Voice / Stave / Part / Score)</h3>
+<p>The scope you choose from that context menu decides how far the
+change reaches: just the one voice you’re on, everything sharing its
+stave, everything in its part, or the entire score. If you open the menu
+while several notes across different voices are selected (a chord), the
+scope you pick applies across every voice represented in that selection,
+not only the note you happened to open the menu from.</p>
+<h3 id="changing-the-order-attributes-are-read">8.4 Changing the Order
+Attributes Are Read</h3>
+<p><strong>Options &gt; Reorder Attributes…</strong> opens a dialog
+scoped to whatever part, stave or voice is currently selected in Region
+2, listing only the attributes relevant there. Use <strong>Move
+Up</strong> (<code>Alt+U</code>) and <strong>Move Down</strong>
+(<code>Alt+D</code>) to reorder them live. This order is a single
+setting that applies everywhere - both Region 3’s note labels and Region
+4’s rows follow it - it isn’t a separate ordering per voice.</p>
+<h2 id="terminology-uk-and-us-music-vocabulary">9. Terminology: UK and
+US Music Vocabulary</h2>
+<h3 id="what-changes-when-you-switch">9.1 What Changes When You
+Switch</h3>
+<p>Recall Score can speak either UK or US musical terminology:
+<strong>bar</strong> versus <strong>measure</strong>, and the
+<strong>crotchet/quaver/semiquaver</strong> family versus
+<strong>quarter note/eighth note/sixteenth note</strong>. This is purely
+a matter of wording on screen and in speech - nothing about how the
+score is stored, counted or played changes underneath it.</p>
+<p>One family is deliberately left out of this toggle: stave/staff
+naming (Region 2’s clef labels, and Region 4’s “stave” attribute) always
+reads the same way regardless of which terminology language is
+selected.</p>
+<h3 id="switching-terminology-language">9.2 Switching Terminology
+Language</h3>
+<p><strong>Options &gt; Terminology Language</strong> offers UK and US
+as two mutually exclusive choices - exactly one is always selected at a
+time. This is a single preference that applies across the whole
+application, not tied to any individual score, so opening a different
+file mid-session never changes which wording you’re hearing.</p>
+<h2 id="your-settings-are-remembered">10. Your Settings Are
+Remembered</h2>
+<h3 id="whats-saved-per-score">10.1 What’s Saved Per Score</h3>
+<p>For each individual score file, Recall Score remembers, and restores
+the next time you open that same file:</p>
+<ul>
+<li>Which parts, staves and voices are switched on or off.</li>
+<li>Whether the metronome is switched on.</li>
+<li>Which note attributes are shown for each voice (§8.2).</li>
+<li>The order those attributes are read in (§8.4).</li>
+</ul>
+<p>Files are matched by their own filename, so moving a file to a
+different folder doesn’t lose its saved settings. If a saved setting no
+longer matches the file - for example a part that’s since been renamed
+or removed - it’s simply left out rather than causing an error or a
+dialog.</p>
+<h3 id="whats-saved-across-all-scores">10.2 What’s Saved Across All
+Scores</h3>
+<p>Your UK/US terminology choice (§9) is the one preference that applies
+to every score, not just one - it stays as you last set it no matter
+which file you open next.</p>
+<h3 id="clearing-saved-preferences-for-a-score">10.3 Clearing Saved
+Preferences for a Score</h3>
+<p><strong>Edit &gt; Clear Preferences for
+<code>&lt;filename&gt;</code></strong> deletes just that one file’s
+saved settings, so it reverts to defaults the next time it’s opened.
+This menu item is disabled when no file is currently loaded.</p>
+<p><strong>Edit &gt; Open Local Folder</strong> opens the folder on disk
+where these saved settings actually live, in case you ever want to
+inspect or back them up directly (see also §13.3).</p>
+<h2 id="menu-reference">11. Menu Reference</h2>
+<h3 id="file-menu">11.1 File Menu</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Item</th>
+<th style="text-align: left;">Shortcut</th>
+<th style="text-align: left;">What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">Open…</td>
+<td style="text-align: left;">Ctrl+O</td>
+<td style="text-align: left;">Opens a MusicXML file.</td>
+</tr>
+<tr>
+<td style="text-align: left;">Exit</td>
+<td style="text-align: left;">-</td>
+<td style="text-align: left;">Closes Recall Score.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="edit-menu">11.2 Edit Menu</h3>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Item</th>
+<th style="text-align: left;">Shortcut</th>
+<th style="text-align: left;">What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">Open Local Folder</td>
+<td style="text-align: left;">-</td>
+<td style="text-align: left;">Opens the folder where saved per-score
+preferences are stored.</td>
+</tr>
+<tr>
+<td style="text-align: left;">Clear Preferences for
+<code>&lt;filename&gt;</code></td>
+<td style="text-align: left;">-</td>
+<td style="text-align: left;">Deletes the currently loaded file’s saved
+settings. Disabled when no file is loaded.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="navigation-menu">11.3 Navigation Menu</h3>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Item</th>
+<th style="text-align: left;">Shortcut</th>
+<th style="text-align: left;">What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">Move to First Note</td>
+<td style="text-align: left;">Home</td>
+<td style="text-align: left;">Jumps to the first active note. Only
+enabled while focus is already in the Note region.</td>
+</tr>
+<tr>
+<td style="text-align: left;">Move to Last Note</td>
+<td style="text-align: left;">End</td>
+<td style="text-align: left;">Jumps to the last active note. Only
+enabled while focus is already in the Note region.</td>
+</tr>
+<tr>
+<td style="text-align: left;">Go to Measure…</td>
+<td style="text-align: left;">Ctrl+G</td>
+<td style="text-align: left;">Opens a dialog, pre-filled with the
+current bar, to jump to a specific bar number.</td>
+</tr>
+<tr>
+<td style="text-align: left;">Move to Notes</td>
+<td style="text-align: left;">N</td>
+<td style="text-align: left;">Jumps focus to the Note region from
+anywhere, without moving your timeline position.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="options-menu">11.4 Options Menu</h3>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Item</th>
+<th style="text-align: left;">Shortcut</th>
+<th style="text-align: left;">What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">Tempo Offset…</td>
+<td style="text-align: left;">Ctrl+T</td>
+<td style="text-align: left;">Sets an exact playback tempo offset,
+including decimal values (§7.5).</td>
+</tr>
+<tr>
+<td style="text-align: left;">Terminology Language</td>
+<td style="text-align: left;">-</td>
+<td style="text-align: left;">Submenu to choose UK or US wording
+(§9.2).</td>
+</tr>
+<tr>
+<td style="text-align: left;">Toggle Metronome</td>
+<td style="text-align: left;">Ctrl+M</td>
+<td style="text-align: left;">Turns the beat click on or off
+(§7.6).</td>
+</tr>
+<tr>
+<td style="text-align: left;">Reorder Attributes…</td>
+<td style="text-align: left;">-</td>
+<td style="text-align: left;">Changes the order note attributes are read
+in for the current Region 2 scope (§8.4).</td>
+</tr>
+</tbody>
+</table>
+<h3 id="help-menu">11.5 Help Menu</h3>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Item</th>
+<th style="text-align: left;">Shortcut</th>
+<th style="text-align: left;">What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">About Recall Score…</td>
+<td style="text-align: left;">-</td>
+<td style="text-align: left;">Shows the application name, version number
+and a short description.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="keyboard-shortcut-reference">12. Keyboard Shortcut
+Reference</h2>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th style="text-align: left;">Action</th>
+<th style="text-align: left;">Keystroke</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">Move focus to the next / previous
+region</td>
+<td style="text-align: left;">Tab / Shift+Tab</td>
+</tr>
+<tr>
+<td style="text-align: left;">Toggle focus between the regions area and
+the status bar</td>
+<td style="text-align: left;">F6 / Shift+F6</td>
+</tr>
+<tr>
+<td style="text-align: left;">Jump focus to the Note region from
+anywhere</td>
+<td style="text-align: left;">N</td>
+</tr>
+<tr>
+<td style="text-align: left;">Step to the next / previous active event
+<em>(Note region only)</em></td>
+<td style="text-align: left;">Left Arrow / Right Arrow</td>
+</tr>
+<tr>
+<td style="text-align: left;">Jump to the first active event of the next
+/ current-or-previous bar <em>(Note region only)</em></td>
+<td style="text-align: left;">Ctrl+Left Arrow / Ctrl+Right Arrow</td>
+</tr>
+<tr>
+<td style="text-align: left;">Jump to the first / last active note
+<em>(Note region only)</em></td>
+<td style="text-align: left;">Home / End</td>
+</tr>
+<tr>
+<td style="text-align: left;">Type a bar number, then jump to it
+<em>(Note region only)</em></td>
+<td style="text-align: left;">0-9, then Enter</td>
+</tr>
+<tr>
+<td style="text-align: left;">Clear a typed bar number without moving
+<em>(Note region only)</em></td>
+<td style="text-align: left;">Escape</td>
+</tr>
+<tr>
+<td style="text-align: left;">Move between notes within a chord
+<em>(Note region only)</em></td>
+<td style="text-align: left;">Up Arrow / Down Arrow</td>
+</tr>
+<tr>
+<td style="text-align: left;">Reselect every note at the current
+position <em>(Note region only)</em></td>
+<td style="text-align: left;">Ctrl+A</td>
+</tr>
+<tr>
+<td style="text-align: left;">Open the Go to Measure dialog</td>
+<td style="text-align: left;">Ctrl+G</td>
+</tr>
+<tr>
+<td style="text-align: left;">Toggle the focused Part, Stave or Voice
+on/off <em>(Parts List region only)</em></td>
+<td style="text-align: left;">O</td>
+</tr>
+<tr>
+<td style="text-align: left;">Play / stop playback from the current
+position (also resumes from pause)</td>
+<td style="text-align: left;">Space</td>
+</tr>
+<tr>
+<td style="text-align: left;">Pause playback (resume with Space)</td>
+<td style="text-align: left;">Ctrl+Space</td>
+</tr>
+<tr>
+<td style="text-align: left;">Play a two-bar phrase around the current
+position <em>(Note region, no bar number pending)</em></td>
+<td style="text-align: left;">Enter</td>
+</tr>
+<tr>
+<td style="text-align: left;">Play every note at the current position
+together</td>
+<td style="text-align: left;">Shift+Space</td>
+</tr>
+<tr>
+<td style="text-align: left;">Increase / decrease playback tempo by
+10bpm</td>
+<td style="text-align: left;">F / S</td>
+</tr>
+<tr>
+<td style="text-align: left;">Reset playback tempo to the score’s own
+tempo</td>
+<td style="text-align: left;">D</td>
+</tr>
+<tr>
+<td style="text-align: left;">Open the Tempo Offset dialog</td>
+<td style="text-align: left;">Ctrl+T</td>
+</tr>
+<tr>
+<td style="text-align: left;">Toggle the metronome on/off</td>
+<td style="text-align: left;">Ctrl+M</td>
+</tr>
+<tr>
+<td style="text-align: left;">Open a note attribute’s context menu
+<em>(Note Attributes region only)</em></td>
+<td style="text-align: left;">right-click, or Menu key / Shift+F10</td>
+</tr>
+<tr>
+<td style="text-align: left;">Open a score file</td>
+<td style="text-align: left;">Ctrl+O</td>
+</tr>
+</tbody>
+</table>
+<h2 id="troubleshooting">13. Troubleshooting</h2>
+<h3 id="no-sound">13.1 No Sound</h3>
+<p>Recall Score plays sound through a bundled audio engine and
+instrument library that need to start up successfully when the
+application launches. If your machine has no working audio output, or
+something about the installation is incomplete, Recall Score still runs
+and lets you navigate and use every region normally - it simply won’t
+produce any sound, without announcing that fact on screen. As a first
+check, confirm your system’s normal audio output is working outside
+Recall Score too.</p>
+<h3 id="a-file-wont-open">13.2 A File Won’t Open</h3>
+<p>If a file fails to load, nothing changes on screen - there’s no error
+dialog for this yet (it’s on the list in §14). Check the log file at
+<code>%LOCALAPPDATA%\Recall Score\recall_score.log</code> for details of
+what went wrong. The most common cause is a file that isn’t valid
+MusicXML, or isn’t one of the supported extensions (§2.3):
+<code>.xml</code>, <code>.musicxml</code> or <code>.mxl</code>.</p>
+<h3 id="where-settings-are-stored-on-disk">13.3 Where Settings Are
+Stored on Disk</h3>
+<p><strong>Edit &gt; Open Local Folder</strong> opens the storage
+location directly. Both your per-score settings (§10.1) and your shared
+UK/US preference (§10.2) live under your own Windows user profile,
+entirely separate from where Recall Score itself is installed -
+reinstalling or moving the application doesn’t affect them.</p>
+<h2 id="whats-not-yet-supported">14. What’s Not Yet Supported</h2>
+<p>Recall Score is under active development. As of this version, the
+following are not yet available:</p>
+<ul>
+<li>Importing MIDI, Guitar Pro or Braille Music Editor files - only
+MusicXML can be opened today (§2.3).</li>
+<li>Saving or exporting a score in any format.</li>
+<li>Edit mode - scores can currently be viewed and navigated, but not
+changed.</li>
+<li>Hands-free voice control.</li>
+<li>Capo handling, automatic chord naming, and spoken descriptions of
+fretboard shapes for tablature.</li>
+<li>An accessible error dialog for a corrupt or unreadable file - see
+§13.2 for checking the log file in the meantime.</li>
+<li>macOS support - Windows only, for now.</li>
+<li>Forced or interrupting screen-reader announcements beyond whatever
+your screen reader already reads on a focus change - for example,
+there’s no separate spoken measure-number cue beyond what checking the
+status bar (§3.6) or Region 3 already tells you.</li>
+</ul>
+<h2 id="getting-help-and-reporting-problems">15. Getting Help and
+Reporting Problems</h2>
+<p>If you run into a problem, <strong>Help &gt; About Recall
+Score…</strong> shows the exact version you’re running - worth including
+if you report an issue. For anything that looks like a bug rather than
+one of the gaps listed in §14, check §13 first; if that doesn’t resolve
+it, please raise an issue on the project’s GitHub page:</p>
+<p><a href="https://github.com/Chessel85/ScoreReader/issues"
+class="uri">https://github.com/Chessel85/ScoreReader/issues</a></p>
+<p>Include what you were doing, the version number, and - if the app was
+involved - the contents of <code>recall_score.log</code> (§13.2).</p>
+</body>
+</html>

@@ -1,0 +1,589 @@
+# Recall Score — User Guide
+
+*This guide describes Recall Score, a screen-reader-first music score and
+guitar-tab viewer for visually impaired musicians, version 0.1.12
+(Windows).*
+
+## 1. Introduction
+
+### 1.1 What Recall Score Is For
+
+Recall Score lets you explore, study and memorise a piece of music by
+ear, using a screen reader and the keyboard, without needing to see the
+page. Every move you make through a score is spoken by your screen
+reader and heard as MIDI playback, so you always know exactly where you
+are and what's sounding.
+
+The app is built around a simple idea: visually impaired musicians
+usually can't read notation and play an instrument at the same time, so
+memorising a piece well enough to play it from memory matters more than
+it does for a sighted player. Recall Score is designed to make that
+memorising process as efficient as possible.
+
+### 1.2 Who This Guide Is For
+
+This guide is written for anyone using Recall Score to read and listen
+to a score - the app's current focus. If you're configuring the app for
+your own workflow (choosing which details are spoken, setting UK or US
+terminology), the same sections apply to you too.
+
+Some roles described in the project's own design documents - hands-free
+control by voice, editing and transcribing scores, capo and chord-naming
+support for tablature - aren't built yet. See §14 for exactly what's not
+here yet, so you don't spend time hunting for something that doesn't
+exist.
+
+### 1.3 How to Read This Guide with a Screen Reader
+
+This document is one long page. Use your screen reader's heading
+navigation (for example, the `H` key in NVDA) to jump between the
+numbered sections and subsections below, or search the page directly for
+a keystroke or menu name. §12 is a single reference table of every
+keyboard shortcut in the app - worth bookmarking or returning to
+directly rather than reading top to bottom.
+
+Keystrokes are always written out in full, for example `Ctrl+Left Arrow`
+means: hold Ctrl and press the Left Arrow key.
+
+## 2. Getting Started
+
+### 2.1 Installing Recall Score (Windows)
+
+Recall Score ships as a standard Windows installer,
+`RecallScore-Setup-<version>.exe`. Run it and follow the wizard (Welcome,
+Components, Install Location, Start Menu shortcut, Install, Finish).
+Because it installs into Program Files, Windows will ask for
+administrator permission during setup - this is expected.
+
+Once installed, Recall Score appears in your Start Menu and in
+Add/Remove Programs like any other Windows application, with a normal
+uninstaller. Uninstalling does **not** delete any preferences you've
+saved for individual scores (§10) - those live separately under your own
+Windows user profile and are covered in §13.3 if you ever want to clear
+them by hand.
+
+### 2.2 Opening a Score File
+
+Choose **File > Open...** (or press `Ctrl+O`). A standard file-open
+dialog titled "Open MusicXML Score" appears. Choose your file and select
+Open. Once the file has finished loading, the four regions and status
+bar (§3) populate automatically - Region 1 with the score's title,
+composer, key, time signature and tempo, Region 2 with its parts and
+staves, and so on.
+
+### 2.3 Supported File Types
+
+Today, Recall Score opens **MusicXML** files only - `.xml`, `.musicxml`,
+and the compressed `.mxl` format that many notation programs (including
+MuseScore) export by default. Support for MIDI, Guitar Pro and Braille
+Music Editor files is planned but not built yet - see §14.
+
+### 2.4 A Five-Minute First Walkthrough
+
+A short first run-through, once you have a MusicXML file to open:
+
+1. **Open a file.** `Ctrl+O`, choose your file. Region 1 now describes
+   the piece - title, composer, key, time signature, starting tempo.
+2. **Get to the notes.** Press `N` from anywhere to jump straight to the
+   Note region (Region 3, §3.4).
+3. **Step through it.** Press `Right Arrow` a few times. Each press
+   moves to the next note or chord and plays it. `Left Arrow` goes back.
+4. **Listen to a chord's individual notes.** If you land on a chord
+   (several notes at once), press `Down Arrow` to hear each note in it
+   one at a time, `Up Arrow` to go back up.
+5. **Try filtering.** Press `Tab` twice to reach Region 2 (Parts,
+   Staves and Voices). Press `Down Arrow` to a part or stave, then `O` to
+   switch it off. Press `N` to jump back to the Note region and move
+   around again - notice that part is now silent and no longer listed.
+   Press `O` again on that same row in Region 2 to bring it back.
+6. **Check your position at any time.** Press `F6` to move to the status
+   bar and hear the current measure, beat, key and time signature; `F6`
+   again returns you to whichever region you were last on.
+
+From here, §5 onward covers every navigation and playback control in
+detail.
+
+## 3. Understanding the Screen Layout
+
+### 3.1 The Four Regions at a Glance
+
+The main window is a 2x2 grid of four regions, plus a status bar:
+
+- **Region 1 (top-left): Score Information** - the piece's metadata.
+- **Region 2 (top-right): Parts, Staves and Voices** - what's switched
+  on or off.
+- **Region 3 (bottom-left): Note Timeline** - the notes at your current
+  position; this is where you navigate through the music.
+- **Region 4 (bottom-right): Note Attributes** - full detail on whatever
+  is currently selected in Region 3.
+
+`Tab` moves focus forward through the four regions in this order,
+wrapping back to Region 1 after Region 4; `Shift+Tab` moves backward.
+Each region also has its own normal Up/Down row navigation for moving
+within it - only Region 3 additionally responds to the timeline keys
+described in §5, and only moving through Region 3 triggers audio
+playback.
+
+### 3.2 Region 1: Score Information
+
+Shows the score's title, composer or artist, key signature, time
+signature and starting tempo, as read from the file when it was opened.
+These are the piece's **opening** values and don't change as you move
+through the score - for values that track your current position instead
+(useful on a piece whose key or time signature changes partway through),
+see the status bar in §3.6.
+
+### 3.3 Region 2: Parts, Staves and Voices
+
+A flat, navigable list representing the score's structure: each Part
+(for example "Classical Guitar") can contain one or more Staves, each
+Stave one or more Voices. Every row reads its name together with its
+current state, for example `Classical Guitar - on` or `Treble stave -
+on`. Use `O` to toggle the focused row - see §6 for how filtering works.
+
+### 3.4 Region 3: Note Timeline
+
+The region you'll spend the most time in. It lists the note or notes
+sounding at your current position in the score. `Left`/`Right Arrow`
+move through time; `Up`/`Down Arrow` move between individual notes when
+several sound together. Every move plays what's now current through
+MIDI, using each part's own instrument sound from the file.
+
+### 3.5 Region 4: Note Attributes
+
+Shows full detail for whichever note(s) are currently selected in Region
+3 - by default step, octave, measure number, beat position and
+duration, plus dynamics, articulation, fingering, string, fret and other
+details when the source file provides them and they've been switched on
+(§8). This region updates automatically to always match Region 3's
+current selection.
+
+### 3.6 The Status Bar
+
+Six individually focusable fields, in order: measure and beat position,
+key signature, time signature, playback tempo, playback status
+(Playing/Paused/Stopped) and metronome state (On/Off). Once focus is in
+the status bar, `Tab`/`Shift+Tab` cycle only between these six fields and
+wrap around, rather than leaving the pane - only `F6`/`Shift+F6` (§4.2)
+move focus in or out of the status bar.
+
+Unlike Region 1, the status bar tracks your **current cursor position**
+- if a score changes key or time signature partway through, the status
+bar reflects whatever is in effect where you are right now. It can also
+be read at any time, from any region, using your screen reader's own
+"report status bar" command (`NVDA+End` on NVDA).
+
+## 4. Moving Between Regions
+
+### 4.1 Cycling Through the Four Regions (Tab / Shift+Tab)
+
+`Tab` moves focus to the next region in the Region 1 → 2 → 3 → 4 → 1
+cycle; `Shift+Tab` moves in reverse. This is separate from each region's
+own internal Up/Down navigation - `Tab` always changes which region has
+focus, it never scrolls within one.
+
+### 4.2 Switching Between the Regions Area and the Status Bar (F6)
+
+`F6` toggles focus between the regions area (returning to whichever
+region you last had focus in) and the status bar. `Shift+F6` does the
+same thing - since there are only two panes, there's no meaningful
+"reverse" direction. The menu bar is reached the normal Windows way
+(the `Alt` key), not through `F6`.
+
+### 4.3 Jumping to the Note Region from Anywhere (N)
+
+Press `N` at any time - from any region or the status bar - to move
+focus straight to the Note region (Region 3) without changing your
+timeline position. This saves repeatedly tabbing all the way around just
+to get back to the notes.
+
+## 5. Navigating the Timeline
+
+Everything in this section only takes effect while focus is in the Note
+region (Region 3). The same keys do nothing in the other regions - each
+of those uses its own native navigation instead.
+
+### 5.1 Stepping Note by Note (Left / Right Arrow)
+
+Moves to the next or previous **active event** - a position in the score
+where at least one currently-visible note sounds. All notes at the new
+position are selected and played together.
+
+### 5.2 Jumping by Measure (Ctrl+Left / Ctrl+Right)
+
+`Ctrl+Right Arrow` jumps to the first active event of the next bar.
+`Ctrl+Left Arrow` jumps to the first active event of the current bar, or
+to the previous bar's first active event if you're already sitting on
+it. If the piece has a pickup bar, it's numbered 0 and comes before bar
+1.
+
+### 5.3 Jumping to the Start and End of the Piece (Home / End)
+
+`Home` moves to the very first active note (the pickup bar, if there is
+one); `End` moves to the very last. Trailing bars that are nothing but
+rests padding out the final printed system don't count - `End` lands on
+the last note actually played, not on empty bars after it. `Home` and
+`End` never play the boundary sound (§5.6) even if you're already at
+that position, since they're jumping to a known place rather than
+attempting to move past a limit.
+
+### 5.4 Jumping to a Specific Bar Number
+
+With focus in the Note region, type a bar number using the digit keys -
+no dialog needed - then press `Enter` to jump straight to its first
+active event, which plays immediately. Press `Escape` at any point
+before `Enter` to clear what you've typed without moving. Typing a bar
+number that doesn't exist in the piece plays the boundary sound (§5.6)
+and leaves your position unchanged.
+
+You can also reach the same feature through **Navigation > Go to
+Measure...** (`Ctrl+G`), a dialog pre-filled with your current bar
+number if you'd rather use a menu than type directly into the Note
+region.
+
+### 5.5 Moving Between Notes in a Chord (Up / Down Arrow)
+
+When several notes sound together at one position, `Left`/`Right Arrow`
+selects and plays all of them at once. `Up`/`Down Arrow` narrows the
+selection down to one note at a time, so you can hear and inspect each
+note in the chord individually. Press `Ctrl+A` at any point to reselect
+every note at the current position again.
+
+### 5.6 Boundary Sounds: What the "Doh" Means
+
+A short, quiet, low note plays whenever you try to move past either end
+of the piece - with `Left`/`Right Arrow`, `Ctrl+Left`/`Ctrl+Right`, by
+typing a bar number that doesn't exist, or by pressing `Space` to start
+playback while already sitting on the very last note. It's a deliberate,
+unobtrusive "you've reached the edge" cue, not an error message - your
+position never changes when you hear it.
+
+## 6. Choosing What You Hear and See
+
+### 6.1 The Part / Stave / Voice Hierarchy
+
+Region 2 (§3.3) mirrors the structure of the file you've opened: each
+Part can contain one or more Staves, and each Stave one or more Voices.
+A guitar-and-piano duet, for example, typically shows two Parts, with
+the piano Part split into two Staves (treble and bass) each with its own
+Voices.
+
+### 6.2 Turning a Part, Stave or Voice On or Off
+
+With focus on a row in Region 2, press `O` to toggle it between on and
+off. Switching a Part or Stave off hides everything nested underneath it
+from both the Note region and playback - but each child keeps its own
+individual on/off state in the background, so turning the parent back on
+restores exactly what you had before, not a blanket "everything on"
+reset.
+
+### 6.3 How Filtering Affects Navigation and Playback
+
+Filtering changes what you hear and see at each position in the
+timeline - it never changes which positions exist to move between. Your
+current place in the timeline, and Region 3's selection, stay exactly
+where they were before and after any toggle in Region 2.
+
+## 7. Listening to the Score
+
+### 7.1 Automatic Playback While You Navigate
+
+Every move within the Note region - stepping with `Left`/`Right Arrow`,
+moving within a chord with `Up`/`Down Arrow`, or switching a part on or
+off in Region 2 - immediately plays whatever is now current, using each
+part's own instrument sound from the file. A chord spanning two parts
+(say, piano and guitar) sounds both instruments together, not just one.
+
+### 7.2 Playing the Whole Piece (Play / Pause / Stop)
+
+`Space` starts playback from your current position, and also resumes
+playback if it's currently paused. `Ctrl+Space` pauses playback (resume
+with `Space`, not `Ctrl+Space` again). Pausing updates the regions to
+reflect wherever playback stopped. Stopping playback - or letting it
+reach the end of the piece naturally - always returns your position to
+wherever playback originally started from, not to the last note heard.
+
+### 7.3 Auditioning a Short Phrase (Enter)
+
+With focus in the Note region and no bar number currently being typed
+(§5.4), `Enter` plays a short phrase: from beat 1 of the current measure
+through the end of the next measure, then stops on its own. This is
+meant for hearing the immediate musical context around your position
+without committing to full playback. Pressing `Enter` again while it's
+still playing stops it early. Either way, your actual cursor position is
+left untouched.
+
+### 7.4 Auditioning the Current Chord (Shift+Space)
+
+Plays every note sounding at your current position together, each held
+for its own written duration. Press `Shift+Space` again at any point to
+re-trigger it.
+
+### 7.5 Changing Playback Tempo
+
+`F` speeds playback up by 10bpm, `S` slows it down by 10bpm, and `D`
+resets to the score's own written tempo. These are global shortcuts -
+they work regardless of which region has focus, since tempo is a
+playback-wide setting rather than something tied to one region. Changing
+it is purely a listening aid: it never edits the tempo actually written
+into the score.
+
+For finer control, **Options > Tempo Offset...** (or `Ctrl+T`) opens a
+dialog where you can type an exact offset, including decimal values.
+Recall Score always keeps the effective tempo within a hard 30-300bpm
+range - a value you enter outside that range is automatically brought
+back within it rather than rejected.
+
+The status bar's "Playback tempo" field always shows the current
+effective tempo in the score's own units (for example, "96 eighth notes
+per minute" for a piece marked in eighth notes), and reads "(score
+default)" whenever no offset is currently applied.
+
+### 7.6 Using the Metronome
+
+**Options > Toggle Metronome**, or `Ctrl+M`, turns a click on: one per
+beat, with a distinctly louder, accented click on beat 1 of every bar.
+With the metronome switched on, beat positions that have no note or rest
+of their own become reachable, audible stops in the timeline too, so you
+can navigate through - and hear the pulse of - even entirely silent
+passages.
+
+The click's actual sound is still being refined. It's functionally
+complete (correct timing, correctly accented beat 1, navigable silent
+beats) but isn't the final polished tone yet - if it sounds a little
+plain for now, that's known and being worked on.
+
+## 8. Understanding Note Attributes
+
+### 8.1 What's Shown by Default
+
+By default, the Note region (Region 3) speaks only each note's plain
+name - for example "C", "F sharp", "B double flat". Accidentals are
+always spelled out in full for clear pronunciation, and octave numbers
+are left out to keep things brief. A rest is simply announced as "rest".
+
+Region 4 always shows a fuller picture of whatever is currently selected
+- step, octave, measure number, beat position and duration - plus
+whichever of the extra details in §8.2 the file provides and you've
+chosen to show.
+
+### 8.2 Adding More Detail (Dynamics, Articulation, Fingering, String, Fret)
+
+Depending on what the source file contains, additional details may be
+available: dynamics markings (forte, piano, and so on), articulation
+(staccato, accent, trill, and similar), fingering, string and fret
+numbers, and plucking-hand markings for guitar. An attribute only
+appears on a note when it's **both** switched on for that voice **and**
+actually present on that specific note - if a key is simply missing from
+one note's row, that's expected, not a fault.
+
+To switch an attribute on or off, open the context menu on the relevant
+row in Region 4: right-click it, or press the `Menu` key (or
+`Shift+F10`) while focused on it. The menu offers "Add to notes for this
+voice", "Add to notes in same stave", "Add to notes in the same part"
+and "Add to notes in the whole score" for an attribute that isn't
+showing yet - or the matching "Remove for notes in..." options once it
+already is.
+
+### 8.3 Choosing Where an Attribute Applies (Voice / Stave / Part / Score)
+
+The scope you choose from that context menu decides how far the change
+reaches: just the one voice you're on, everything sharing its stave,
+everything in its part, or the entire score. If you open the menu while
+several notes across different voices are selected (a chord), the scope
+you pick applies across every voice represented in that selection, not
+only the note you happened to open the menu from.
+
+### 8.4 Changing the Order Attributes Are Read
+
+**Options > Reorder Attributes...** opens a dialog scoped to whatever
+part, stave or voice is currently selected in Region 2, listing only the
+attributes relevant there. Use **Move Up** (`Alt+U`) and **Move Down**
+(`Alt+D`) to reorder them live. This order is a single setting that
+applies everywhere - both Region 3's note labels and Region 4's rows
+follow it - it isn't a separate ordering per voice.
+
+## 9. Terminology: UK and US Music Vocabulary
+
+### 9.1 What Changes When You Switch
+
+Recall Score can speak either UK or US musical terminology: **bar**
+versus **measure**, and the **crotchet/quaver/semiquaver** family versus
+**quarter note/eighth note/sixteenth note**. This is purely a matter of
+wording on screen and in speech - nothing about how the score is stored,
+counted or played changes underneath it.
+
+One family is deliberately left out of this toggle: stave/staff naming
+(Region 2's clef labels, and Region 4's "stave" attribute) always reads
+the same way regardless of which terminology language is selected.
+
+### 9.2 Switching Terminology Language
+
+**Options > Terminology Language** offers UK and US as two mutually
+exclusive choices - exactly one is always selected at a time. This is a
+single preference that applies across the whole application, not tied to
+any individual score, so opening a different file mid-session never
+changes which wording you're hearing.
+
+## 10. Your Settings Are Remembered
+
+### 10.1 What's Saved Per Score
+
+For each individual score file, Recall Score remembers, and restores the
+next time you open that same file:
+
+- Which parts, staves and voices are switched on or off.
+- Whether the metronome is switched on.
+- Which note attributes are shown for each voice (§8.2).
+- The order those attributes are read in (§8.4).
+
+Files are matched by their own filename, so moving a file to a different
+folder doesn't lose its saved settings. If a saved setting no longer
+matches the file - for example a part that's since been renamed or
+removed - it's simply left out rather than causing an error or a dialog.
+
+### 10.2 What's Saved Across All Scores
+
+Your UK/US terminology choice (§9) is the one preference that applies to
+every score, not just one - it stays as you last set it no matter which
+file you open next.
+
+### 10.3 Clearing Saved Preferences for a Score
+
+**Edit > Clear Preferences for `<filename>`** deletes just that one
+file's saved settings, so it reverts to defaults the next time it's
+opened. This menu item is disabled when no file is currently loaded.
+
+**Edit > Open Local Folder** opens the folder on disk where these saved
+settings actually live, in case you ever want to inspect or back them up
+directly (see also §13.3).
+
+## 11. Menu Reference
+
+### 11.1 File Menu
+
+| Item | Shortcut | What it does |
+| :--- | :--- | :--- |
+| Open... | Ctrl+O | Opens a MusicXML file. |
+| Exit | - | Closes Recall Score. |
+
+### 11.2 Edit Menu
+
+| Item | Shortcut | What it does |
+| :--- | :--- | :--- |
+| Open Local Folder | - | Opens the folder where saved per-score preferences are stored. |
+| Clear Preferences for `<filename>` | - | Deletes the currently loaded file's saved settings. Disabled when no file is loaded. |
+
+### 11.3 Navigation Menu
+
+| Item | Shortcut | What it does |
+| :--- | :--- | :--- |
+| Move to First Note | Home | Jumps to the first active note. Only enabled while focus is already in the Note region. |
+| Move to Last Note | End | Jumps to the last active note. Only enabled while focus is already in the Note region. |
+| Go to Measure... | Ctrl+G | Opens a dialog, pre-filled with the current bar, to jump to a specific bar number. |
+| Move to Notes | N | Jumps focus to the Note region from anywhere, without moving your timeline position. |
+
+### 11.4 Options Menu
+
+| Item | Shortcut | What it does |
+| :--- | :--- | :--- |
+| Tempo Offset... | Ctrl+T | Sets an exact playback tempo offset, including decimal values (§7.5). |
+| Terminology Language | - | Submenu to choose UK or US wording (§9.2). |
+| Toggle Metronome | Ctrl+M | Turns the beat click on or off (§7.6). |
+| Reorder Attributes... | - | Changes the order note attributes are read in for the current Region 2 scope (§8.4). |
+
+### 11.5 Help Menu
+
+| Item | Shortcut | What it does |
+| :--- | :--- | :--- |
+| About Recall Score... | - | Shows the application name, version number and a short description. |
+
+## 12. Keyboard Shortcut Reference
+
+| Action | Keystroke |
+| :--- | :--- |
+| Move focus to the next / previous region | Tab / Shift+Tab |
+| Toggle focus between the regions area and the status bar | F6 / Shift+F6 |
+| Jump focus to the Note region from anywhere | N |
+| Step to the next / previous active event *(Note region only)* | Left Arrow / Right Arrow |
+| Jump to the first active event of the next / current-or-previous bar *(Note region only)* | Ctrl+Left Arrow / Ctrl+Right Arrow |
+| Jump to the first / last active note *(Note region only)* | Home / End |
+| Type a bar number, then jump to it *(Note region only)* | 0-9, then Enter |
+| Clear a typed bar number without moving *(Note region only)* | Escape |
+| Move between notes within a chord *(Note region only)* | Up Arrow / Down Arrow |
+| Reselect every note at the current position *(Note region only)* | Ctrl+A |
+| Open the Go to Measure dialog | Ctrl+G |
+| Toggle the focused Part, Stave or Voice on/off *(Parts List region only)* | O |
+| Play / stop playback from the current position (also resumes from pause) | Space |
+| Pause playback (resume with Space) | Ctrl+Space |
+| Play a two-bar phrase around the current position *(Note region, no bar number pending)* | Enter |
+| Play every note at the current position together | Shift+Space |
+| Increase / decrease playback tempo by 10bpm | F / S |
+| Reset playback tempo to the score's own tempo | D |
+| Open the Tempo Offset dialog | Ctrl+T |
+| Toggle the metronome on/off | Ctrl+M |
+| Open a note attribute's context menu *(Note Attributes region only)* | right-click, or Menu key / Shift+F10 |
+| Open a score file | Ctrl+O |
+
+## 13. Troubleshooting
+
+### 13.1 No Sound
+
+Recall Score plays sound through a bundled audio engine and instrument
+library that need to start up successfully when the application
+launches. If your machine has no working audio output, or something
+about the installation is incomplete, Recall Score still runs and lets
+you navigate and use every region normally - it simply won't produce any
+sound, without announcing that fact on screen. As a first check, confirm
+your system's normal audio output is working outside Recall Score too.
+
+### 13.2 A File Won't Open
+
+If a file fails to load, nothing changes on screen - there's no error
+dialog for this yet (it's on the list in §14). Check the log file at
+`%LOCALAPPDATA%\Recall Score\recall_score.log` for details of what went
+wrong. The most common cause is a file that isn't valid MusicXML, or
+isn't one of the supported extensions (§2.3): `.xml`, `.musicxml` or
+`.mxl`.
+
+### 13.3 Where Settings Are Stored on Disk
+
+**Edit > Open Local Folder** opens the storage location directly. Both
+your per-score settings (§10.1) and your shared UK/US preference (§10.2)
+live under your own Windows user profile, entirely separate from where
+Recall Score itself is installed - reinstalling or moving the
+application doesn't affect them.
+
+## 14. What's Not Yet Supported
+
+Recall Score is under active development. As of this version, the
+following are not yet available:
+
+- Importing MIDI, Guitar Pro or Braille Music Editor files - only
+  MusicXML can be opened today (§2.3).
+- Saving or exporting a score in any format.
+- Edit mode - scores can currently be viewed and navigated, but not
+  changed.
+- Hands-free voice control.
+- Capo handling, automatic chord naming, and spoken descriptions of
+  fretboard shapes for tablature.
+- An accessible error dialog for a corrupt or unreadable file - see
+  §13.2 for checking the log file in the meantime.
+- macOS support - Windows only, for now.
+- Forced or interrupting screen-reader announcements beyond whatever
+  your screen reader already reads on a focus change - for example,
+  there's no separate spoken measure-number cue beyond what checking the
+  status bar (§3.6) or Region 3 already tells you.
+
+## 15. Getting Help and Reporting Problems
+
+If you run into a problem, **Help > About Recall Score...** shows the
+exact version you're running - worth including if you report an issue.
+For anything that looks like a bug rather than one of the gaps listed in
+§14, check §13 first; if that doesn't resolve it, please raise an issue
+on the project's GitHub page:
+
+<https://github.com/Chessel85/ScoreReader/issues>
+
+Include what you were doing, the version number, and - if the app was
+involved - the contents of `recall_score.log` (§13.2).

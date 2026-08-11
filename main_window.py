@@ -1,5 +1,6 @@
 # main_window.py
 import os
+import sys
 from typing import List, Optional
 
 from PySide6.QtCore import QItemSelectionModel, QLocale, QUrl, Qt
@@ -52,6 +53,21 @@ def detect_default_uk_terms(system_locale: Optional[QLocale] = None) -> bool:
     # still returns the QLocale.Country enum (not a separate Territory enum
     # class, unlike some Qt6 versions/bindings) - verified via introspection.
     return loc.territory() != QLocale.Country.UnitedStates
+
+
+def _app_base_dir() -> str:
+    """A data file's parent directory: next to main_window.py (repo root) in
+    dev, or the frozen bundle root (sys._MEIPASS) once packaging/
+    RecallScore.spec bundles it - same idiom as main.py's _app_icon_path()."""
+    return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+
+
+def user_guide_html_path() -> str:
+    return os.path.join(_app_base_dir(), "docs", "user_guide.html")
+
+
+def examples_dir() -> str:
+    return os.path.join(_app_base_dir(), "examples")
 
 
 class MainWindow(QMainWindow):
@@ -243,11 +259,19 @@ class MainWindow(QMainWindow):
         open_action.setStatusTip("Open a MusicXML file")
         open_action.triggered.connect(self.open_file_dialog)
 
+        # Opens the same dialog as Open... but starting in examples/ (bundled
+        # via packaging/RecallScore.spec) instead of the last-used location -
+        # no shortcut, mnemonic E doesn't collide with Open...'s O or Exit's x.
+        open_example_action = QAction("Open E&xample Score...", self)
+        open_example_action.setStatusTip("Open a bundled example score")
+        open_example_action.triggered.connect(self.open_example_file_dialog)
+
         exit_action = QAction("E&xit", self)
         exit_action.setShortcut(QKeySequence.Quit)
         exit_action.triggered.connect(self.close)
 
         file_menu.addAction(open_action)
+        file_menu.addAction(open_example_action)
         file_menu.addSeparator()
         file_menu.addAction(exit_action)
 
@@ -368,6 +392,10 @@ class MainWindow(QMainWindow):
 
         help_menu = menu_bar.addMenu("&Help")
 
+        self.user_guide_action = QAction("&User Guide...", self)
+        self.user_guide_action.triggered.connect(self._show_user_guide)
+        help_menu.addAction(self.user_guide_action)
+
         self.about_action = QAction("&About Recall Score...", self)
         self.about_action.triggered.connect(self._show_about_dialog)
         help_menu.addAction(self.about_action)
@@ -438,6 +466,15 @@ class MainWindow(QMainWindow):
     def _show_about_dialog(self):
         AboutDialog(self).exec()
 
+    def _show_user_guide(self):
+        guide_path = user_guide_html_path()
+        if not os.path.exists(guide_path):
+            # I1 (accessible error dialog) is still open - print-based error
+            # handling matches every other failure path in this codebase.
+            print(f"[ERROR] User guide not found at {guide_path}")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(guide_path))
+
     def _attribute_order_pairs_for_node(self, node) -> list:
         """(attribute_key, label) pairs, in current attribute_order, for
         every attribute present anywhere in the score for `node`'s scope -
@@ -501,10 +538,16 @@ class MainWindow(QMainWindow):
         return table
 
     def open_file_dialog(self):
+        self._open_score_file_dialog(start_dir="")
+
+    def open_example_file_dialog(self):
+        self._open_score_file_dialog(start_dir=examples_dir())
+
+    def _open_score_file_dialog(self, start_dir: str):
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Open MusicXML Score",
-            "",
+            start_dir,
             "MusicXML Files (*.xml *.musicxml *.mxl);;All Files (*)",
         )
 
