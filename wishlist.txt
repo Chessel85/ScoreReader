@@ -1,0 +1,12 @@
+* Duration attribute is quoted as note type e.g. quaver, eighth note.  Means duration added to note region does not need the preceding word 'duration'.
+Quick attribute look up.  Use control + number row to make screen reader announce that number attribute from the attribute list e.g. Pressing control + 2 announces octave.  Can the app push text to the screen reader?
+* Score or piece summary report.  From something like view menu select Summary Report and it gives a load of info such as number of bars, range of notes, attributes present
+* From the reorder attributes dialogue I can discover what attributes are present but I can't easily add that attribute to the note region unless I actually find an example of it and do application key.  I want an easier way to add attributes to the note region.
+Perhaps have add and remove buttons in the reorder dialogue, or perhaps a find next attribute dialogue?
+* Is it  possible to rename a repo so the URL for it does not include my gitHub username?
+* A mute option so midi is not played.
+* Solo option for parts, staves and voices.
+* support for percussion parts.
+* Notes are always sorted highest pitch to lowest pitch for a voice.
+* Notes need to account for staff symbol e.g. a piano bass stave (without a treble) seems to play too high
+* Not sure notes are sounding for their stated duration e.g. Piano in Pashelbels Canon are all minims but sound like crotchets.
