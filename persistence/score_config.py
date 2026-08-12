@@ -45,6 +45,7 @@ class ScoreConfig:
     staves_off: Set[StaffKey] = field(default_factory=set)
     voices_off: Set[VoiceKey] = field(default_factory=set)
     metronome_enabled: bool = False
+    position_announcer_enabled: bool = False
     voice_display_attributes: Dict[VoiceKey, Set[str]] = field(default_factory=dict)
     attribute_order: List[str] = field(default_factory=list)
 
@@ -96,6 +97,7 @@ def load_for(file_path: str) -> Optional[ScoreConfig]:
             staves_off={_decode_staff_key(k) for k in data.get("staves_off", [])},
             voices_off={_decode_voice_key(k) for k in data.get("voices_off", [])},
             metronome_enabled=data.get("metronome_enabled", False),
+            position_announcer_enabled=data.get("position_announcer_enabled", False),
             voice_display_attributes={
                 _decode_voice_key(k): set(v)
                 for k, v in data.get("voice_display_attributes", {}).items()
@@ -117,6 +119,7 @@ def save(file_path: str, config: ScoreConfig) -> None:
         "staves_off": [_encode_staff_key(k) for k in sorted(config.staves_off)],
         "voices_off": [_encode_voice_key(k) for k in sorted(config.voices_off)],
         "metronome_enabled": config.metronome_enabled,
+        "position_announcer_enabled": config.position_announcer_enabled,
         "voice_display_attributes": {
             _encode_voice_key(k): sorted(v)
             for k, v in config.voice_display_attributes.items()

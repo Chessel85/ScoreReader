@@ -672,7 +672,7 @@ bug was an internal 44100-vs-48000 inconsistency within our own code, not a
 mismatch against the device), so no change was needed for other users on a
 44.1kHz device.
 
-[ ] E11 Metronome click sound quality - functional debt, not a missing
+[x] E11 Metronome click sound quality - functional debt, not a missing
         feature (Ref 14 AC1-AC3 are all functionally met by E8) - see D-14.
         > OPENED 2026-08-07. Two synthesis attempts, both live-tested by the
           user and found lacking: a synthesized sawtooth lead ("awful"),
@@ -687,6 +687,137 @@ mismatch against the device), so no change was needed for other users on a
           revisit when picked up, including checking whether a second
           concurrent audio stream competes with FluidSynth's own
           low-latency WASAPI session (Ref 9).
+        > DONE 2026-08-12. Went with real recorded WAV clips ("accent"/
+          "offbeat") rather than synthesis, resolving both this and Ref
+          28's own open "how does the position announcer play WAV clips"
+          question the same way: tools/wav_to_sf2.py (new standalone
+          script, see tools/README.md) builds a small custom soundfont
+          from a plain-text config (tools/config.ini, the user's own,
+          references tools/words1/ and tools/click1/ WAV recordings) -
+          checked into git as soundfonts/recall_score_sounds.sf2(.json)
+          despite soundfonts/ otherwise being gitignored (.gitignore has
+          an explicit `soundfonts/*` + negation exception, since a bare
+          `soundfonts/` directory-rule silently defeats a later per-file
+          negation - a real gotcha hit while making this change, worth
+          remembering). SynthEngine._load_click_soundfont loads it as a
+          SECOND soundfont (its own sfid) alongside FluidR3_GM, staying
+          entirely inside the existing FluidSynth/WASAPI session per the
+          precedent above - no second audio stream. audio/metronome.py's
+          click_event_for_beat now returns (channel, bank, program,
+          pitch, velocity) - accent vs regular beat is which SAMPLE plays
+          (two different recorded sounds, program_select onto the
+          dedicated click soundfont) rather than a velocity difference on
+          one fixed Claves voice. SynthEngine.play_click no longer takes
+          duration_ms as a parameter - a one-shot sample only plays to
+          its natural end if held that long, and unlike a real note there
+          is no score position to read a duration from, so
+          _load_click_soundfont reads each sample's real length from the
+          sidecar recall_score_sounds.sf2.json (built by the tool from
+          each WAV's own frame count) into self._click_durations_ms,
+          keyed by (bank, program, pitch) - NOT a flat per-note dict,
+          since the talking metronome's words and the click's sounds can
+          legitimately share note NUMBERS across different presets.
+          VERIFIED, not just "the bytes parse": rendered the generated
+          soundfont through real FluidSynth (fluidsynth.Synth.
+          get_samples(), no audio device needed) and measured that
+          channel 9 (METRONOME_CHANNEL, chosen historically for GM
+          percussion's channel-10 behaviour, D-5) does NOT still force
+          bank 128 percussion lookups now that a custom soundfont is
+          program_select'd there instead of relying on GM - correlation
+          0.999 against the identical render on an ordinary channel.
+          Packaging (packaging/RecallScore.spec) updated to bundle the
+          new soundfont+sidecar the same way as FluidR3_GM.sf2.
+
+[x] E12 Position announcer ("talking metronome") - Ref 28, new requirement
+        added 2026-08-12 (see the PDD's own Ref 28 row and Discussion
+        Points entry for the full AC list and worked examples).
+        > DONE 2026-08-12. New audio/position_announcer.py (mirrors
+          audio/metronome.py exactly): spoken_word_for_beat_position()
+          splits a ts-relative beat_position into whole part (1-7 -> word,
+          AC3) and rounded fractional remainder (25/33/50/66/75% -> e/and/
+          and/a/a, AC4) - verified against all three of the user's own
+          worked examples (4 semiquavers from bar start -> one/e/and/a; 3
+          quavers in 6/8 -> one/two/three; a triplet from beat 2 -> two/
+          and/a). announcement_event_for_beat() wraps that into a (channel,
+          bank, program, pitch, velocity) tuple, same shape as
+          click_event_for_beat(). Hookup mirrors the click exactly:
+          Sequencer._sound_current_step and MainWindow.
+          _play_selected_region_3_notes both call it independently of the
+          metronome (AC1), MusicData.position_announcer_enabled gates it
+          with no timeline_slices rebuild at all (unlike
+          set_metronome_enabled) - AC5 means it can never create its own
+          events, so nothing needs splicing in/out. Ctrl+P / Options menu
+          checkable action / 7th status bar field, all mirroring Ctrl+M's
+          own three.
+          Real design problem, not just wiring: tools/config.ini's
+          talking_metronome_default preset (notes 60-69) and click_default
+          (notes 60-61) overlap at 60/61. AC2 requires both to sound
+          together (e.g. beat 1's accent click + "one"), and FluidSynth's
+          noteoff(channel, key) releases every voice matching that pair
+          regardless of which preset/program started it - so a shared
+          channel would let one sample's note-off silence the other
+          whenever they land on the same beat. Fixed by giving the
+          announcer its own reserved MIDI channel (audio/
+          position_announcer.py's POSITION_ANNOUNCER_CHANNEL = 8) alongside
+          the click's existing channel 9, both skipped by MusicData.
+          get_channel_for_part when allocating real instrument parts
+          (RESERVED_CHANNELS, generalised from the old single-channel
+          PERCUSSION_CHANNEL skip) - considered and rejected the
+          alternative of asking the user to renumber the word notes to a
+          disjoint range and rebuild their soundfont instead, since a
+          reserved channel is a systemic guarantee that holds for any
+          future click/word preset pair, not a numbering convention that
+          has to be remembered every time. SynthEngine.play_word() is a
+          near-duplicate of play_click() with its own active-note/QTimer
+          slot for exactly that reason, sharing the same _click_sfid (one
+          soundfont, loaded once, covers both presets already) and the
+          same sidecar-duration lookup. Caught mid-implementation: a
+          class-body list comprehension can't see another class attribute
+          except in its own outermost iterable (RESERVED_CHANNELS raised
+          NameError when referenced inside the comprehension's condition)
+          - fixed by computing the usable-channel list inside
+          get_channel_for_part() at call time instead of caching it as a
+          class attribute.
+        > FIX 2026-08-12. Two user follow-ups after live-testing (piano
+          silence in a separate test file turned out unrelated to this
+          task - traced via a temporary regression test copying the file
+          through MainWindow's real load path with a recording synth
+          stand-in, confirmed channel/program/pitch/duration dispatch was
+          all correct, left as "not something I did wrong", nothing
+          changed here):
+          (1) "why does the soundfont need a json file? can't we make one
+          that doesn't need it?" - turned out the sidecar (bank, program,
+          pitch) -> duration_ms lookup this task built was never actually
+          necessary. Verified against real FluidSynth (get_samples(), no
+          audio device needed): rendering a one-shot SampleModes=0 zone
+          with NO note-off sent at all reproduced its full natural length
+          with no hang, because FluidSynth deactivates such a voice on its
+          own once the sample data is exhausted regardless of note-on/off
+          state - only an EARLY note-off (before the sample naturally
+          finishes) triggers the soundfont's default near-instant release
+          envelope and audibly truncates it, which is the one thing that
+          actually needed avoiding. Removed self._click_durations_ms, the
+          per-click/word QTimer scheduling, and DEFAULT_CLICK_DURATION_MS
+          from SynthEngine entirely - play_click/play_word just noteon and
+          let the sample finish on its own; _stop_click/_stop_announcement
+          (still called from stop_all_notes and from a retriggering
+          play_click/play_word) remain the deliberate-interrupt path, just
+          no longer timer-scheduled. tools/wav_to_sf2.py no longer writes
+          a .sf2.json sidecar at all (build_metadata() and SampleZone.
+          duration_ms removed as dead code); soundfonts/recall_score_
+          sounds.sf2.json deleted (was never git-tracked) and its
+          .gitignore/RecallScore.spec entries removed.
+          (2) "can the talking metronome be panned full left, and the
+          click full right, to help separate them from the music?" - made
+          easy by (1)'s own channel reservation: SynthEngine.
+          _load_click_soundfont now sends MIDI CC10 (pan) once per
+          reserved channel at load time - POSITION_ANNOUNCER_CHANNEL full
+          left (0), METRONOME_CHANNEL full right (127) - rather than
+          per-call, since a channel's pan persists until changed and both
+          channels are permanently dedicated (never reused for a real
+          part, MusicData.RESERVED_CHANNELS). Verified against real
+          FluidSynth: CC10=0 produced silence on the right channel,
+          CC10=127 silence on the left.
 
 
 ###
@@ -1398,8 +1529,8 @@ COVERAGE CHECK - every requirement appears at least once
   Ref  3 C2,D3     Ref 10 E5        Ref 17 A3        Ref 24 K2
   Ref  4 C1        Ref 11 E6        Ref 18 A2,A6,A9  Ref 25 I1,J1,J2,J3
   Ref  5 C3,D3     Ref 12 E1,E2,E3  Ref 19 L1,L2,L3  Ref 26 J4,J5,J6
-  Ref  6 C4,D3     Ref 13 E7        Ref 20 H1        Ref 27 G1,G2
-  Ref  7 B1-B5     Ref 14 E8,E9,E11 Ref 21 H2
+  Ref  6 C4,D3     Ref 13 E7        Ref 20 H1        Ref 27 G1,G2,E12
+  Ref  7 B1-B5     Ref 14 E8,E9,E11 Ref 21 H2        Ref 28 E12
 
   NFR-01 M1     NFR-02 M2,M3     NFR-03 A1,A2,A10    NFR-04 E10
   NFR-05 D4     NFR-06 I1,I2     NFR-07 M4

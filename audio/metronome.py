@@ -11,39 +11,41 @@ contexts trigger identical clicks off one definition.
 """
 from typing import Optional, Tuple
 
-# GM percussion channel - live-tested feedback: a synthesized sawtooth lead
-# "was awful" as a click sound. Claves (below) is a GM PERCUSSION voice,
-# which General MIDI only maps correctly on channel 10 (0-indexed 9) - the
-# same channel MusicData.PERCUSSION_CHANNEL reserves for a score's own
-# percussion part (D-5). That's not a collision: multiple percussion note
-# numbers (a drum kit's kick/snare/hihat, or this click) can sound
-# simultaneously on channel 10 same as real drum kit voicing - each note
-# number is its own independent drum voice.
-METRONOME_CHANNEL = 9
-
-# "Standard Kit" - channel 10 in a GM-conformant soundfont is hardwired to
-# the percussion bank regardless of program, but selecting the standard kit
-# explicitly keeps this from depending on that convention silently holding.
-METRONOME_GM_PROGRAM = 0
-
-# GM percussion key map note 75 - Claves. A fixed-pitch percussion voice
-# (unlike a melodic instrument, GM percussion notes select a specific drum
-# sound, not a pitch), so beat 1's accent (Ref 14 AC2) is distinguished by
-# velocity (louder), not a different note number.
-METRONOME_CLAVES_PITCH = 75
-METRONOME_ACCENT_VELOCITY = 127  # beat 1 of every bar
-METRONOME_CLICK_VELOCITY = 100  # every other beat
-
-METRONOME_DURATION_MS = 40  # short and fixed, independent of note/score tempo
+# tasks.txt E11/D-14: the built-in click sound went through two rejected
+# attempts (a synthesized sawtooth lead, then GM percussion Claves with
+# velocity distinguishing the accent) before landing here - a small
+# project-authored soundfont (tools/wav_to_sf2.py, built from
+# tools/config.ini, checked into soundfonts/recall_score_sounds.sf2/.json
+# despite soundfonts/ otherwise being gitignored - see .gitignore's own
+# comment). SynthEngine loads it as a SECOND soundfont alongside
+# FluidR3_GM and selects it explicitly via program_select on
+# METRONOME_CHANNEL, so accent vs regular is now which SAMPLE plays (two
+# distinct recorded sounds), not a velocity difference on one fixed voice
+# - unlike the old Claves approach, where only velocity distinguished
+# beat 1.
+METRONOME_CHANNEL = 9  # same reservation as before - MusicData skips this
+                        # channel when assigning real parts (D-5); no
+                        # longer relying on channel 10's GM-percussion
+                        # bank behaviour, just kept for the same
+                        # collision-avoidance reason.
+METRONOME_BANK = 0
+METRONOME_PROGRAM = 1  # [preset:click_default] in tools/config.ini
+METRONOME_ACCENT_NOTE = 60  # "accent" sample - beat 1 of every bar
+METRONOME_OFFBEAT_NOTE = 61  # "offbeat" sample - every other beat
+METRONOME_VELOCITY = 100  # constant now the accent is a different sample,
+                           # not a louder one
 
 
 def click_event_for_beat(beat_position: float) -> Optional[Tuple[int, int, int, int, int]]:
-    """(channel, program, pitch, velocity, duration_ms) for a click at this
-    beat position, or None if beat_position isn't a whole beat - main beats
-    are always whole numbers in the score's own ts-relative units (Ref 18),
-    so this is the same test for "is this a beat" everywhere it's needed.
-    Accented (louder) on beat 1 of the bar (Ref 14 AC2)."""
+    """(channel, bank, program, pitch, velocity) for a click at this beat
+    position, or None if beat_position isn't a whole beat - main beats are
+    always whole numbers in the score's own ts-relative units (Ref 18), so
+    this is the same test for "is this a beat" everywhere it's needed.
+    Duration isn't decided here: SynthEngine.play_click looks each
+    sample's own natural duration up from the sidecar
+    soundfonts/recall_score_sounds.sf2.json this module has no need to
+    know about (keeps this function a pure lookup, no file I/O)."""
     if not float(beat_position).is_integer():
         return None
-    velocity = METRONOME_ACCENT_VELOCITY if beat_position == 1 else METRONOME_CLICK_VELOCITY
-    return METRONOME_CHANNEL, METRONOME_GM_PROGRAM, METRONOME_CLAVES_PITCH, velocity, METRONOME_DURATION_MS
+    pitch = METRONOME_ACCENT_NOTE if beat_position == 1 else METRONOME_OFFBEAT_NOTE
+    return METRONOME_CHANNEL, METRONOME_BANK, METRONOME_PROGRAM, pitch, METRONOME_VELOCITY

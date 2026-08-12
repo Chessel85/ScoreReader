@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from audio.metronome import click_event_for_beat
+from audio.position_announcer import announcement_event_for_beat
 from audio.sequencer import Sequencer
 from audio.synth_engine import SynthEngine
 from models.music_data import MusicData
@@ -381,6 +382,15 @@ class MainWindow(QMainWindow):
         self.metronome_action.setShortcut(QKeySequence("Ctrl+M"))
         self.metronome_action.triggered.connect(self.toggle_metronome)
         options_menu.addAction(self.metronome_action)
+
+        # Ref 28: same checkable-action pattern as metronome_action just
+        # above, and independently toggleable from it (AC1/AC2) - both
+        # actions exist side by side, neither disables the other.
+        self.position_announcer_action = QAction("Toggle &Position Announcer", self)
+        self.position_announcer_action.setCheckable(True)
+        self.position_announcer_action.setShortcut(QKeySequence("Ctrl+P"))
+        self.position_announcer_action.triggered.connect(self.toggle_position_announcer)
+        options_menu.addAction(self.position_announcer_action)
 
         # F2/Ref 15 AC4: the ordering half of the attribute-display system -
         # scope/add-remove shipped earlier as Region 4's right-click menu
@@ -823,6 +833,18 @@ class MainWindow(QMainWindow):
         self.metronome_action.setChecked(self._music_data.metronome_enabled)
         self._update_status_bar()
 
+    def toggle_position_announcer(self):
+        """Ctrl+P (Ref 28): flips MusicData.position_announcer_enabled,
+        keeps the Options menu's checkable action and the status bar's
+        field in sync - mirrors toggle_metronome exactly, but with no
+        timeline rebuild needed (see MusicData.position_announcer_enabled's
+        own comment)."""
+        if not self._music_data:
+            return
+        self._music_data.toggle_position_announcer()
+        self.position_announcer_action.setChecked(self._music_data.position_announcer_enabled)
+        self._update_status_bar()
+
     def _select_uk_terms(self, checked: bool = False):
         self.set_uk_terms(True)
 
@@ -1025,6 +1047,16 @@ class MainWindow(QMainWindow):
                 if click is not None:
                     self.synth.play_click(*click)
 
+        # Ref 28 AC1/AC2: independent of the click above, same "fires even
+        # with no notes at this position" reasoning (a metronome-only beat
+        # marker still has a beat_position to announce).
+        if self._music_data.position_announcer_enabled:
+            current = self._music_data.get_current_slice()
+            if current is not None:
+                announcement = announcement_event_for_beat(current.beat_position)
+                if announcement is not None:
+                    self.synth.play_word(*announcement)
+
     def _update_timeline_views(self, play_all: bool = True):
         if not self._music_data:
             return
@@ -1092,6 +1124,7 @@ class MainWindow(QMainWindow):
         fields = self._music_data.get_status_bar_fields()
         fields.append(self._playback_status_text())
         fields.append(self._metronome_status_text())
+        fields.append(self._position_announcer_status_text())
         self.status_bar.set_fields(fields)
 
     def _metronome_status_text(self) -> str:
@@ -1101,6 +1134,13 @@ class MainWindow(QMainWindow):
         if self._music_data and self._music_data.metronome_enabled:
             return "Metronome: On"
         return "Metronome: Off"
+
+    def _position_announcer_status_text(self) -> str:
+        """7th status bar field (Ref 28): same discoverability reasoning as
+        the metronome's own 6th field just above."""
+        if self._music_data and self._music_data.position_announcer_enabled:
+            return "Position Announcer: On"
+        return "Position Announcer: Off"
 
     def _playback_status_text(self) -> str:
         """5th status bar field (Ref 10, requested): Playing/Paused/Stopped,
@@ -1166,6 +1206,7 @@ class MainWindow(QMainWindow):
         self._populate_table(self.region_1, self._music_data.get_region_1_data())
         self.region_2.load_score_structure(self._music_data.get_score_structure())
         self.metronome_action.setChecked(self._music_data.metronome_enabled)
+        self.position_announcer_action.setChecked(self._music_data.position_announcer_enabled)
         self._update_timeline_views(play_all=play_all)
 
     def _on_focus_changed(self, old, now):

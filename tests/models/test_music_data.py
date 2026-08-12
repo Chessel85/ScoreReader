@@ -606,14 +606,19 @@ def test_get_channel_for_part_assigns_one_channel_per_part_in_order():
     assert md.get_channel_for_part("P2") == 1
 
 
-def test_get_channel_for_part_skips_the_percussion_channel():
-    """MIDI channel 10 (0-indexed 9) is reserved for percussion (D-5)."""
+def test_get_channel_for_part_skips_the_percussion_and_announcer_channels():
+    """MIDI channel 10 (0-indexed 9) is reserved for percussion (D-5);
+    channel 9 (0-indexed 8) is reserved for the position announcer
+    (Ref 28) - see MusicData.RESERVED_CHANNELS. 11 parts (idx 0-10) walk
+    straight through the 8 usable channels below the reservations, then
+    resume past both of them."""
     parts = [PartStructureInfo(part_id=f"P{i}", gmidi_program=1) for i in range(1, 12)]
     md = MusicData(parts_info=parts)
 
-    assert md.get_channel_for_part("P9") == 8
-    assert md.get_channel_for_part("P10") == 10, "channel index 9 is skipped"
-    assert md.get_channel_for_part("P11") == 11
+    assert md.get_channel_for_part("P8") == 7, "last channel before both reservations"
+    assert md.get_channel_for_part("P9") == 10, "channel indices 8 and 9 are both skipped"
+    assert md.get_channel_for_part("P10") == 11
+    assert md.get_channel_for_part("P11") == 12
 
 
 def test_get_channel_for_part_returns_zero_for_an_unknown_part():
@@ -1123,6 +1128,7 @@ def test_export_config_defaults_to_an_all_visible_empty_config(timeline, minimal
 
     assert config.voices_off == set()
     assert config.metronome_enabled is False
+    assert config.position_announcer_enabled is False
     assert config.voice_display_attributes == {}
     assert config.attribute_order == md.DISPLAY_ATTRIBUTE_ORDER
 
@@ -1135,6 +1141,7 @@ def test_export_then_apply_config_round_trips_full_state(
     md.voice_display_attributes[("P2", 1, 1)] = {"step", "octave"}
     md.move_attribute_order("octave", up=True)
     md.toggle_metronome()
+    md.toggle_position_announcer()
 
     config = md.export_config()
 
@@ -1145,6 +1152,7 @@ def test_export_then_apply_config_round_trips_full_state(
     assert fresh.voice_display_attributes == {("P2", 1, 1): {"step", "octave"}}
     assert fresh.attribute_order == md.attribute_order
     assert fresh.metronome_enabled is True
+    assert fresh.position_announcer_enabled is True
 
 
 def test_apply_config_is_best_effort_against_a_mismatched_score(timeline, minimal_score):
@@ -1160,6 +1168,7 @@ def test_apply_config_is_best_effort_against_a_mismatched_score(timeline, minima
         # is simply absent from the current score.
         voices_off={("Classical Guitar", 1, 1)},
         metronome_enabled=True,
+        position_announcer_enabled=True,
         voice_display_attributes={("Classical Guitar", 1, 1): {"step", "octave"}},
         attribute_order=["not-a-real-attribute", "octave", "step"],
     )
@@ -1181,3 +1190,21 @@ def test_apply_config_is_best_effort_against_a_mismatched_score(timeline, minima
     # metronome_enabled has no notion of "matching the score", so it always
     # applies as-is.
     assert target.metronome_enabled is True
+    assert target.position_announcer_enabled is True
+
+
+def test_toggle_position_announcer_flips_state_without_touching_timeline(timeline, minimal_score):
+    """Ref 28: unlike toggle_metronome, this must NOT change timeline_slices
+    at all - AC5 says the position announcer never creates its own events."""
+    md = timeline(minimal_score)
+    original_slices = md.timeline_slices
+
+    assert md.position_announcer_enabled is False
+
+    md.toggle_position_announcer()
+    assert md.position_announcer_enabled is True
+    assert md.timeline_slices is original_slices
+
+    md.toggle_position_announcer()
+    assert md.position_announcer_enabled is False
+    assert md.timeline_slices is original_slices

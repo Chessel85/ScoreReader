@@ -5,7 +5,29 @@ __pycache__/
 .coverage
 htmlcov/
 bin/
-soundfonts/
+# soundfonts/* (not soundfonts/) - a bare directory-name rule makes git
+# treat the whole directory as opaquely ignored and never look inside it
+# even for a later negation, so the exception below would silently not
+# apply; soundfonts/* ignores its CONTENTS instead, which negation can
+# still see through.
+soundfonts/*
+# Exception: recall_score_sounds.sf2 is a small, project-authored soundfont
+# built by tools/wav_to_sf2.py (click metronome/position announcer sounds,
+# Ref 14/28) - unlike FluidR3_GM.sf2 above (~148 MB, third-party,
+# load-bearing gitignore per CLAUDE.md's "Local binaries" section), this one
+# is only a few hundred KB and belongs in git like any other project asset.
+# Regenerate it with the tool rather than editing it directly if the source
+# WAVs (tools/*.wav, tools/config.ini) change. No .sf2.json sidecar
+# anymore - the tool used to also write one (per-sample duration, for
+# SynthEngine to hold a one-shot note on for at least that long), but that
+# turned out to be unnecessary once SynthEngine stopped scheduling an early
+# note-off at all - see audio/synth_engine.py's play_click() comment.
+!soundfonts/recall_score_sounds.sf2
+# tools/wav_to_sf2.py's own config (tools/config.ini) writes its .sf2
+# output into tools/ itself (output paths are relative to the config
+# file's own location) - a disposable build byproduct duplicating the
+# real, committed copy above, not source itself.
+tools/*.sf2
 output.txt
 Product Definition Document.html
 *.png

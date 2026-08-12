@@ -8,6 +8,7 @@ from PySide6.QtCore import QLocale, Qt
 from PySide6.QtGui import QKeySequence, QValidator
 from PySide6.QtWidgets import QApplication, QDialog, QLabel, QTableWidget
 
+from audio.metronome import METRONOME_OFFBEAT_NOTE
 from main_window import MainWindow, detect_default_uk_terms
 from widgets.about_dialog import AboutDialog
 from widgets.attribute_order_dialog import AttributeOrderDialog
@@ -389,7 +390,7 @@ def test_status_bar_updates_on_load_and_navigation(window, qtbot, null_synth, ts
     assert [f.text() for f in fields] == [
         "Measure 1 beat 1", "Key: C major / A minor", "Time: 4/4",
         "Playback tempo: 120 quarter notes per minute (score default)", "Playback: Stopped",
-        "Metronome: Off",
+        "Metronome: Off", "Position Announcer: Off",
     ]
 
     qtbot.keyClick(window.region_3, Qt.Key.Key_Right, Qt.KeyboardModifier.ControlModifier)
@@ -397,7 +398,7 @@ def test_status_bar_updates_on_load_and_navigation(window, qtbot, null_synth, ts
     assert [f.text() for f in fields] == [
         "Measure 2 beat 1", "Key: C major / A minor", "Time: 6/8",
         "Playback tempo: 120 quarter notes per minute (score default)", "Playback: Stopped",
-        "Metronome: Off",
+        "Metronome: Off", "Position Announcer: Off",
     ]
 
 
@@ -1247,6 +1248,75 @@ def test_metronome_starts_off_for_a_file_with_no_saved_config(window, qtbot, min
     assert window.metronome_action.isChecked() is False
 
 
+# --- Ref 28: position announcer -------------------------------------------
+
+def test_toggle_position_announcer_updates_music_data_menu_and_status_bar(
+    window, qtbot, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    assert window.position_announcer_action.isChecked() is False
+    assert window.status_bar._fields[6].text() == "Position Announcer: Off"
+
+    window.toggle_position_announcer()
+
+    assert window._music_data.position_announcer_enabled is True
+    assert window.position_announcer_action.isChecked() is True
+    assert window.status_bar._fields[6].text() == "Position Announcer: On"
+
+    window.toggle_position_announcer()
+
+    assert window._music_data.position_announcer_enabled is False
+    assert window.position_announcer_action.isChecked() is False
+    assert window.status_bar._fields[6].text() == "Position Announcer: Off"
+
+
+def test_ctrl_p_shortcut_toggles_the_position_announcer(window, qtbot, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+    _focus(window.region_1)
+
+    qtbot.keyClick(window, Qt.Key.Key_P, Qt.KeyboardModifier.ControlModifier)
+
+    assert window._music_data.position_announcer_enabled is True
+
+
+def test_position_announcer_state_persists_across_reload_of_same_file(window, qtbot, minimal_score):
+    """Ref 27 AC1: same per-file persistence as the metronome."""
+    load_and_wait(window, qtbot, minimal_score)
+    window.toggle_position_announcer()
+    assert window.position_announcer_action.isChecked() is True
+
+    load_and_wait(window, qtbot, minimal_score)
+
+    assert window._music_data.position_announcer_enabled is True
+    assert window.position_announcer_action.isChecked() is True
+
+
+def test_toggling_position_announcer_does_not_affect_the_metronome(window, qtbot, minimal_score):
+    """Ref 28 AC1: the two toggles are independent of each other."""
+    load_and_wait(window, qtbot, minimal_score)
+
+    window.toggle_position_announcer()
+
+    assert window._music_data.position_announcer_enabled is True
+    assert window._music_data.metronome_enabled is False
+    assert window.metronome_action.isChecked() is False
+
+
+def test_position_announcer_word_plays_on_region_3_navigation(
+    window, qtbot, null_synth, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    window.toggle_position_announcer()
+    assert null_synth.words == [], "toggling alone doesn't re-audition - only navigation does"
+    _show(window, qtbot)
+    _focus(window.region_3)
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Right)
+
+    assert len(null_synth.words) == 1
+
+
 # --- F4/D-6: UK/US terminology toggle -------------------------------------
 
 def test_detect_default_uk_terms_true_for_a_non_us_locale():
@@ -1364,7 +1434,7 @@ def test_navigating_onto_a_beat_plays_a_click_alongside_the_note(
 
     assert null_synth.played[-1]["midi_notes"] == [62]  # D4
     assert len(null_synth.clicks) == 1
-    assert null_synth.clicks[0]["velocity"] == 100  # not beat 1 - regular click
+    assert null_synth.clicks[0]["pitch"] == METRONOME_OFFBEAT_NOTE  # not beat 1 - regular click
 
 
 def test_no_click_on_navigation_when_metronome_is_off(
@@ -1698,3 +1768,4 @@ def test_a_sub_staffs_own_toggle_survives_reload_under_an_off_part(
     assert window.region_2._current_visible_nodes[node_row("staff_P1_2")].enabled is False, (
         "staff 2 was individually off before the part was toggled off - must stay off"
     )
+

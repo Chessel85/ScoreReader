@@ -4,6 +4,7 @@ from typing import Optional
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from audio.metronome import click_event_for_beat
+from audio.position_announcer import announcement_event_for_beat
 
 
 class Sequencer(QObject):
@@ -156,6 +157,18 @@ class Sequencer(QObject):
             click = click_event_for_beat(current_slice.beat_position)
             if click is not None:
                 self.synth.play_click(*click)
+
+        # Ref 28 AC1/AC2: independent of the click above - can fire whether
+        # or not the metronome is on, and on its own channel so the two
+        # never fight each other when they land on the same beat (see
+        # audio/position_announcer.py). Reads the same current_slice
+        # already fetched above when the metronome branch ran; fetch it
+        # again here if that branch was skipped.
+        if self.music_data.position_announcer_enabled:
+            current_slice = self.music_data.timeline_slices[self._current_index]
+            announcement = announcement_event_for_beat(current_slice.beat_position)
+            if announcement is not None:
+                self.synth.play_word(*announcement)
 
         self.step_played.emit(self._current_index)
 

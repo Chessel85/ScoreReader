@@ -2,6 +2,8 @@
 """E4: Sequencer scheduling, driven entirely with FakeTimer/NullSynth so no
 real wall-clock wait or audio device is ever involved (mirrors D-7's
 constructor-injection pattern, extended to the timer)."""
+from audio.metronome import METRONOME_ACCENT_NOTE, METRONOME_OFFBEAT_NOTE
+from audio.position_announcer import WORD_NOTES
 from audio.sequencer import Sequencer
 from tests.support.fake_timer import FakeTimer
 
@@ -249,12 +251,12 @@ def test_metronome_click_layers_on_top_of_notes_when_enabled(
     seq.play_from(0)  # beat 1 - C
 
     assert len(null_synth.clicks) == 1
-    assert null_synth.clicks[0]["velocity"] == 127, "beat 1 is accented"
+    assert null_synth.clicks[0]["pitch"] == METRONOME_ACCENT_NOTE, "beat 1 is accented"
 
     timer.fire()  # beat 2 - D
 
     assert len(null_synth.clicks) == 2
-    assert null_synth.clicks[1]["velocity"] == 100, "not beat 1 - regular click"
+    assert null_synth.clicks[1]["pitch"] == METRONOME_OFFBEAT_NOTE, "not beat 1 - regular click"
     assert null_synth.played[-1]["midi_notes"] == [62], "the note still sounds alongside the click"
 
 
@@ -276,7 +278,7 @@ def test_sequencer_visits_a_silent_beat_marker_and_clicks_there(
     timer.fire()  # beat 2 marker - click only
     assert len(null_synth.played) == 1, "no note to play at a silent beat"
     assert len(null_synth.clicks) == 2
-    assert null_synth.clicks[-1]["velocity"] == 100
+    assert null_synth.clicks[-1]["pitch"] == METRONOME_OFFBEAT_NOTE
 
 
 def test_no_click_when_metronome_disabled(timeline, null_synth, minimal_score):
@@ -286,6 +288,50 @@ def test_no_click_when_metronome_disabled(timeline, null_synth, minimal_score):
     seq.play_from(0)
 
     assert null_synth.clicks == []
+
+
+def test_position_announcer_speaks_beats_alongside_notes(timeline, null_synth, minimal_score):
+    """Ref 28 AC1: works independently of the metronome - minimal_score's
+    four quarter notes land on beats 1-4, each speaking its own number."""
+    md = timeline(minimal_score, tempo_bpm=120)
+    md.set_position_announcer_enabled(True)
+    seq, timer = _build(md, null_synth)
+
+    seq.play_from(0)  # beat 1 - C
+    assert len(null_synth.words) == 1
+    assert null_synth.words[0]["pitch"] == WORD_NOTES["one"]
+    assert null_synth.played[-1]["midi_notes"] == [60], "the note still sounds alongside the word"
+
+    timer.fire()  # beat 2 - D
+    assert len(null_synth.words) == 2
+    assert null_synth.words[1]["pitch"] == WORD_NOTES["two"]
+
+
+def test_click_and_position_announcer_both_fire_on_the_same_beat(
+    timeline, null_synth, minimal_score
+):
+    """Ref 28 AC2: both can be on at once and must both actually sound -
+    the whole reason play_word/play_click use separate channels/timers."""
+    md = timeline(minimal_score, tempo_bpm=120)
+    md.set_metronome_enabled(True)
+    md.set_position_announcer_enabled(True)
+    seq, timer = _build(md, null_synth)
+
+    seq.play_from(0)  # beat 1 - accented click + "one"
+
+    assert len(null_synth.clicks) == 1
+    assert null_synth.clicks[0]["pitch"] == METRONOME_ACCENT_NOTE
+    assert len(null_synth.words) == 1
+    assert null_synth.words[0]["pitch"] == WORD_NOTES["one"]
+
+
+def test_no_announcement_when_position_announcer_disabled(timeline, null_synth, minimal_score):
+    md = timeline(minimal_score, tempo_bpm=120)
+    seq, timer = _build(md, null_synth)
+
+    seq.play_from(0)
+
+    assert null_synth.words == []
 
 
 def test_restarting_playback_while_already_playing_replaces_the_previous_run(

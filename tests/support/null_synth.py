@@ -16,6 +16,7 @@ class NullSynth:
         self.stop_count: int = 0
         self.closed: bool = False
         self.clicks: List[Dict[str, Any]] = []
+        self.words: List[Dict[str, Any]] = []
 
     def set_program(self, channel: int, program: int) -> None:
         self.program_changes.append((channel, program))
@@ -73,17 +74,36 @@ class NullSynth:
                 }
             )
 
-    def play_click(self, channel: int, program: int, pitch: int, velocity: int, duration_ms: int) -> None:
+    def play_click(self, channel: int, bank: int, program: int, pitch: int, velocity: int) -> None:
         """E8: mirrors SynthEngine.play_click - recorded separately from
         `played` (real notes), and deliberately does NOT call
-        stop_all_notes(), matching the real engine's independent click path."""
+        stop_all_notes(), matching the real engine's independent click path.
+        No duration_ms here (unlike the old signature): the real engine now
+        looks each click's own duration up internally from a sidecar file
+        NullSynth has no equivalent of - tests that care about a specific
+        click sound assert on `pitch` (which sample) instead."""
         self.clicks.append(
             {
                 "channel": channel,
+                "bank": bank,
                 "program": program,
                 "pitch": pitch,
                 "velocity": velocity,
-                "duration_ms": duration_ms,
+            }
+        )
+
+    def play_word(self, channel: int, bank: int, program: int, pitch: int, velocity: int) -> None:
+        """Ref 28: mirrors SynthEngine.play_word - recorded separately from
+        both `played` and `clicks` so a test can assert the position
+        announcer fired independently of (and simultaneously with) a click,
+        the whole point of giving it its own channel."""
+        self.words.append(
+            {
+                "channel": channel,
+                "bank": bank,
+                "program": program,
+                "pitch": pitch,
+                "velocity": velocity,
             }
         )
 

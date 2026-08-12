@@ -3,29 +3,29 @@
 (playback) and MainWindow (navigation) use to decide whether/how a beat
 position clicks - pure function, tested in isolation."""
 from audio.metronome import (
-    METRONOME_ACCENT_VELOCITY,
+    METRONOME_ACCENT_NOTE,
+    METRONOME_BANK,
     METRONOME_CHANNEL,
-    METRONOME_CLAVES_PITCH,
-    METRONOME_CLICK_VELOCITY,
-    METRONOME_DURATION_MS,
-    METRONOME_GM_PROGRAM,
+    METRONOME_OFFBEAT_NOTE,
+    METRONOME_PROGRAM,
+    METRONOME_VELOCITY,
     click_event_for_beat,
 )
 
 
 def test_beat_one_is_accented():
-    channel, program, pitch, velocity, duration_ms = click_event_for_beat(1.0)
+    channel, bank, program, pitch, velocity = click_event_for_beat(1.0)
     assert channel == METRONOME_CHANNEL
-    assert program == METRONOME_GM_PROGRAM
-    assert pitch == METRONOME_CLAVES_PITCH
-    assert velocity == METRONOME_ACCENT_VELOCITY
-    assert duration_ms == METRONOME_DURATION_MS
+    assert bank == METRONOME_BANK
+    assert program == METRONOME_PROGRAM
+    assert pitch == METRONOME_ACCENT_NOTE
+    assert velocity == METRONOME_VELOCITY
 
 
 def test_other_whole_beats_are_not_accented():
-    _, _, pitch, velocity, _ = click_event_for_beat(3.0)
-    assert pitch == METRONOME_CLAVES_PITCH, "same claves voice - only velocity distinguishes the accent"
-    assert velocity == METRONOME_CLICK_VELOCITY
+    _, _, _, pitch, velocity = click_event_for_beat(3.0)
+    assert pitch == METRONOME_OFFBEAT_NOTE, "a different sample distinguishes the accent, not velocity"
+    assert velocity == METRONOME_VELOCITY
 
 
 def test_non_whole_beat_position_is_not_a_click():

@@ -33,10 +33,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "windows")
 from PySide6.QtCore import QCoreApplication, QEventLoop, QTimer
 
 from audio.metronome import (
-    METRONOME_ACCENT_VELOCITY,
+    METRONOME_ACCENT_NOTE,
+    METRONOME_BANK,
     METRONOME_CHANNEL,
-    METRONOME_CLAVES_PITCH,
-    METRONOME_GM_PROGRAM,
+    METRONOME_PROGRAM,
+    METRONOME_VELOCITY,
 )
 from audio.sequencer import Sequencer
 from audio.synth_engine import SynthEngine
@@ -64,7 +65,7 @@ def measure_dispatch_latency(synth: SynthEngine) -> None:
     click_times = []
     for _ in range(ITERATIONS):
         t0 = time.perf_counter()
-        synth.play_click(METRONOME_CHANNEL, METRONOME_GM_PROGRAM, METRONOME_CLAVES_PITCH, METRONOME_ACCENT_VELOCITY, 40)
+        synth.play_click(METRONOME_CHANNEL, METRONOME_BANK, METRONOME_PROGRAM, METRONOME_ACCENT_NOTE, METRONOME_VELOCITY)
         click_times.append(_ms(time.perf_counter() - t0))
 
     for label, times in (("play_notes", note_times), ("play_click", click_times)):

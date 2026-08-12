@@ -82,6 +82,15 @@ class MusicData:
     # (_slice_is_navigable, Ref 14 AC4).
     metronome_enabled: bool = False
 
+    # Ref 28: off by default, same reasoning as metronome_enabled above.
+    # Unlike metronome_enabled, toggling this never touches timeline_slices
+    # - AC5 requires the position announcer to only ever speak at positions
+    # that already have an event (a real note/rest, or one of the
+    # metronome's own beat markers when that's on too) and never create
+    # further events of its own, so no synthetic-marker splicing is needed
+    # here at all.
+    position_announcer_enabled: bool = False
+
     # F4/D-6: UK vs US music terminology (bar/measure, duration names,
     # stave/staff). Off (US-leaning defaults) is required here, not
     # arbitrary - it preserves every existing test's current English-text
@@ -201,6 +210,15 @@ class MusicData:
 
     def toggle_metronome(self) -> None:
         self.set_metronome_enabled(not self.metronome_enabled)
+
+    def set_position_announcer_enabled(self, enabled: bool) -> None:
+        """Ref 28 toggle. No timeline rebuild/cursor relocation needed,
+        unlike set_metronome_enabled - see position_announcer_enabled's own
+        comment for why."""
+        self.position_announcer_enabled = enabled
+
+    def toggle_position_announcer(self) -> None:
+        self.set_position_announcer_enabled(not self.position_announcer_enabled)
 
     def _slice_is_navigable(self, index: int) -> bool:
         """Ref 14 AC4: with the metronome on, a beat position counts as a
@@ -788,6 +806,7 @@ class MusicData:
         return ScoreConfig(
             voices_off=voices_off,
             metronome_enabled=self.metronome_enabled,
+            position_announcer_enabled=self.position_announcer_enabled,
             voice_display_attributes={
                 k: set(v) for k, v in self.voice_display_attributes.items()
             },
@@ -817,6 +836,7 @@ class MusicData:
         self.attribute_order = ordered
 
         self.set_metronome_enabled(config.metronome_enabled)
+        self.set_position_announcer_enabled(config.position_announcer_enabled)
 
     def get_midi_notes_for_indices(self, selected_indices: List[int]) -> List[int]:
         notes = self._visible_notes()
@@ -909,18 +929,37 @@ class MusicData:
     # MIDI channel 10 (0-indexed 9) is reserved for percussion and must be
     # skipped when allocating one channel per part (D-5).
     PERCUSSION_CHANNEL = 9
+    # Ref 28: also reserved, for the position announcer - same number as
+    # audio/position_announcer.py's POSITION_ANNOUNCER_CHANNEL, duplicated
+    # rather than imported (models/ doesn't depend on audio/, same as
+    # PERCUSSION_CHANNEL's own relationship to audio/metronome.py's
+    # METRONOME_CHANNEL). Needed so a real instrument part can never land on
+    # the channel SynthEngine.play_word() uses, the same guarantee
+    # PERCUSSION_CHANNEL already gives the click.
+    POSITION_ANNOUNCER_CHANNEL = 8
+    RESERVED_CHANNELS = {POSITION_ANNOUNCER_CHANNEL, PERCUSSION_CHANNEL}
     MAX_MIDI_CHANNELS = 16
 
     def get_channel_for_part(self, part_id: str) -> int:
-        """One MIDI channel per part, in part-list order, skipping percussion.
+        """One MIDI channel per part, in part-list order, skipping the
+        reserved channels above.
 
-        Wraps past the percussion channel if a score has more than 15
-        melodic parts - the hard ceiling is 16 channels (D-5).
+        Wraps past the end of the usable-channel list if a score has more
+        melodic parts than it has room for - the hard ceiling is 16
+        channels minus the two reservations (D-5, Ref 28). Computed fresh
+        each call rather than cached: a class-body comprehension can't see
+        RESERVED_CHANNELS (only a comprehension's outermost iterable is
+        evaluated in the enclosing class scope, not its condition - the
+        two constants above would each raise NameError if this were built
+        at class-definition time instead), and this is far too cheap
+        (16 elements) to be worth a real cache.
         """
+        usable_channels = [
+            c for c in range(self.MAX_MIDI_CHANNELS) if c not in self.RESERVED_CHANNELS
+        ]
         for idx, p in enumerate(self.parts_info):
             if p.part_id == part_id:
-                channel = idx if idx < self.PERCUSSION_CHANNEL else idx + 1
-                return channel % self.MAX_MIDI_CHANNELS
+                return usable_channels[idx % len(usable_channels)]
         return 0
 
     def get_gmidi_program_for_part(self, part_id: str) -> int:

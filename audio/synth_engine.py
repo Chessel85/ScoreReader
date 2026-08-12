@@ -4,6 +4,9 @@ import ctypes
 from typing import List, Optional, Tuple
 from PySide6.QtCore import QTimer
 
+from audio.metronome import METRONOME_CHANNEL
+from audio.position_announcer import POSITION_ANNOUNCER_CHANNEL
+
 # --- DLL RESOLUTION FROM SUBFOLDER ---
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN_DIR = os.path.join(PROJECT_ROOT, "bin")
@@ -42,6 +45,7 @@ class SynthEngine:
     def __init__(self, soundfont_path: Optional[str] = None):
         self._fs = None
         self._sfid = None
+        self._click_sfid: Optional[int] = None
         self._active_notes: List[Tuple[int, int]] = []  # (channel, note) pairs
 
         # One QTimer per sounding group (Ref 9 AC2/Ref 13 AC2: each part
@@ -52,15 +56,25 @@ class SynthEngine:
         self._group_off_timers: List[QTimer] = []
 
         # E8: the metronome click gets its own tiny parallel state, entirely
-        # separate from _active_notes/_group_off_timers above. A click must not cut
-        # off a note sounding at the same beat (play_chord's stop_all_notes()
-        # would do exactly that if the click went through the same path),
-        # and it rings for its own short fixed duration independent of
-        # whatever duration_ms a note at that beat is using.
+        # separate from _active_notes/_group_off_timers above - a click must
+        # not cut off a note sounding at the same beat (play_chord's
+        # stop_all_notes() would do exactly that if the click went through
+        # the same path). No timer here (see play_click's own comment for
+        # why not) - just enough bookkeeping to silence an in-progress click
+        # early if something needs to interrupt it (stop_all_notes, or a
+        # new click retriggering before the old one has finished).
         self._active_click: Optional[Tuple[int, int]] = None  # (channel, note)
-        self._click_off_timer = QTimer()
-        self._click_off_timer.setSingleShot(True)
-        self._click_off_timer.timeout.connect(self._stop_click)
+
+        # Ref 28: the position announcer gets its own parallel slot, entirely
+        # separate from _active_click above despite sharing the same click
+        # soundfont/sfid - it plays on its own dedicated channel
+        # (audio/position_announcer.py's POSITION_ANNOUNCER_CHANNEL)
+        # specifically so a click and a spoken word landing on the same beat
+        # (AC2: both can be on at once) don't fight over one shared
+        # active-note slot the way they would on a single channel - see
+        # that module's own comment for why a shared channel can't work
+        # here (FluidSynth releases by channel+key, not by preset).
+        self._active_announcement: Optional[Tuple[int, int]] = None  # (channel, note)
 
         if not FLUIDSYNTH_AVAILABLE:
             print("[WARN] pyfluidsynth or DLLs missing. Sound engine disabled.")
@@ -104,9 +118,50 @@ class SynthEngine:
             else:
                 print(f"[WARN] SoundFont not found: {soundfont_path}")
 
+            self._load_click_soundfont()
+
         except Exception as e:
             print(f"[ERROR] Failed to initialize FluidSynth: {e}")
             self._fs = None
+
+    def _load_click_soundfont(self):
+        """E8/Ref 14, tasks.txt E11/D-14/E12: a second, small,
+        project-authored soundfont (tools/wav_to_sf2.py) for the click
+        metronome and the Ref 28 position announcer - loaded alongside the
+        main GM soundfont, not instead of it, on its own sfid so
+        play_click/play_word can select it explicitly via program_select
+        without disturbing whatever's program_select'd on any other
+        channel. Missing/failing to load is non-fatal - matches
+        FluidR3_GM's own "warn and become a no-op" handling above - since a
+        fresh checkout that hasn't run the tool yet should still run, just
+        without a click/announcer sound.
+
+        No per-note duration lookup needed here (there used to be one, read
+        from a sidecar .sf2.json) - see play_click's own comment for why a
+        one-shot sample doesn't need its duration known in code at all.
+
+        Ref 28 (user-requested): pans the click and the position announcer
+        to opposite sides so they're easier to tell apart from the music
+        and from each other - the announcer full left, the click full
+        right. Set once here rather than per-call in play_click/play_word,
+        since each has a permanently dedicated channel (MusicData.
+        RESERVED_CHANNELS keeps real instrument parts off both) - a MIDI
+        pan (CC10) setting persists on a channel until changed, so there's
+        nothing to re-apply on every note. Verified against real
+        FluidSynth (fluidsynth.Synth.get_samples(), no audio device
+        needed): CC10=0 produced silence on the right channel, CC10=127
+        silence on the left, confirming real hard-left/hard-right
+        separation rather than a partial/no-op pan."""
+        click_sf_path = os.path.join(PROJECT_ROOT, "soundfonts", "recall_score_sounds.sf2")
+        if not os.path.exists(click_sf_path):
+            print(f"[WARN] Click/announcer SoundFont not found: {click_sf_path}")
+            return
+        self._click_sfid = self._fs.sfload(click_sf_path)
+
+        PAN_FULL_LEFT = 0
+        PAN_FULL_RIGHT = 127
+        self._fs.cc(POSITION_ANNOUNCER_CHANNEL, 10, PAN_FULL_LEFT)
+        self._fs.cc(METRONOME_CHANNEL, 10, PAN_FULL_RIGHT)
 
     def set_program(self, channel: int, program: int):
         if self._fs is None or self._sfid is None:
@@ -126,40 +181,93 @@ class SynthEngine:
         self._active_notes.clear()
 
         self._stop_click()
+        self._stop_announcement()
 
     def _stop_click(self):
         """Silences a still-ringing metronome click, if any (E8). Separate
         from the main note-off path above - see _active_click's own comment
         - but folded into stop_all_notes() too, so pause/stop (Ref 10 AC3/
-        AC5) leave nothing orphaned."""
+        AC5) leave nothing orphaned. Also called from play_click() itself
+        before a new click, so a fast run of clicks cuts the previous one
+        short rather than overlapping."""
         if self._fs is None or self._active_click is None:
             return
-        self._click_off_timer.stop()
         channel, note = self._active_click
         self._fs.noteoff(channel, note)
         self._active_click = None
 
-    def play_click(self, channel: int, program: int, pitch: int, velocity: int, duration_ms: int):
+    def _stop_announcement(self):
+        """Silences a still-ringing position-announcer word, if any (Ref
+        28) - the announcement counterpart of _stop_click above, on its own
+        channel/active-note slot so it can't cancel (or be cancelled by) a
+        click sounding at the same instant."""
+        if self._fs is None or self._active_announcement is None:
+            return
+        channel, note = self._active_announcement
+        self._fs.noteoff(channel, note)
+        self._active_announcement = None
+
+    def play_click(self, channel: int, bank: int, program: int, pitch: int, velocity: int):
         """E8/Ref 14: sounds a metronome click on its own dedicated channel,
         independent of the melodic note pipeline above - does not call
         stop_all_notes() (so it doesn't cut off notes sounding at the same
-        beat) and is not touched by a later play_chord() call (so a click
-        rings for its own short duration_ms regardless of the next note's
-        own timing). velocity (not pitch) distinguishes the accented beat -
-        the click is a GM percussion voice (Claves), which has a fixed
-        pitch per note number rather than a tunable one."""
-        if self._fs is None:
+        beat) and is not touched by a later play_chord() call. Which SAMPLE
+        plays (via program_select's explicit bank on the dedicated click
+        soundfont, self._click_sfid - see _load_click_soundfont) now
+        distinguishes the accented beat, not velocity - tasks.txt E11/D-14's
+        Claves attempt used one fixed percussion voice with velocity as the
+        only accent signal; this plays two different recorded sounds
+        instead.
+
+        No explicit note-off scheduling (there used to be one, timed from a
+        per-sample duration read from a sidecar .sf2.json): each click zone
+        in soundfonts/recall_score_sounds.sf2 is a one-shot, non-looping
+        sample (SampleModes=0, tools/wav_to_sf2.py), and FluidSynth
+        deactivates a voice on its own once such a sample's data is
+        exhausted, regardless of whether a note-off was ever sent - holding
+        the note "on" and simply never releasing it early is enough to let
+        it play to its natural end. Verified against real FluidSynth
+        (fluidsynth.Synth.get_samples(), no audio device needed): rendering
+        with no note-off at all reproduced the sample's full natural
+        length with no hang and no glitch; rendering with an early
+        note-off reproduced the original problem (abrupt cutoff via the
+        soundfont's default near-instant release envelope) - confirming
+        both that letting a one-shot finish untouched is safe and why an
+        early note-off must still be avoided. _stop_click() (called just
+        below, and from stop_all_notes()) remains the deliberate-interrupt
+        path - a fast run of clicks or an explicit stop still cuts a
+        still-ringing one short, which is the wanted behaviour there."""
+        if self._fs is None or self._click_sfid is None:
             return
 
         self._stop_click()
 
         ch = channel & 0x0F
-        self.set_program(ch, program)
+        self._fs.program_select(ch, self._click_sfid, bank, program)
         self._fs.noteon(ch, pitch, velocity)
         self._active_click = (ch, pitch)
 
-        if duration_ms > 0:
-            self._click_off_timer.start(int(duration_ms))
+    def play_word(self, channel: int, bank: int, program: int, pitch: int, velocity: int):
+        """Ref 28: sounds a position-announcer spoken-word sample - the
+        word counterpart of play_click above, same soundfont (self.
+        _click_sfid loads every preset in soundfonts/recall_score_sounds.sf2,
+        talking_metronome_default included, not just click_default) and the
+        same "let a one-shot finish on its own, never schedule an early
+        note-off" reasoning - see play_click's own comment. Its own
+        channel/active-note bookkeeping (_active_announcement) so a click
+        and a word landing on the same beat (Ref 28 AC2) sound together
+        instead of one cancelling the other - see
+        audio/position_announcer.py's POSITION_ANNOUNCER_CHANNEL comment
+        for why they can't share a channel."""
+        if self._fs is None or self._click_sfid is None:
+            return
+
+        self._stop_announcement()
+
+        ch = channel & 0x0F
+        self._fs.program_select(ch, self._click_sfid, bank, program)
+        self._fs.noteon(ch, pitch, velocity)
+        self._active_announcement = (ch, pitch)
 
     def play_notes(
         self,

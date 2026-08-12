@@ -32,6 +32,7 @@ def test_save_then_load_round_trips_all_fields():
         staves_off={("P1", 2)},
         voices_off={("P2", 1, 1)},
         metronome_enabled=True,
+        position_announcer_enabled=True,
         voice_display_attributes={("P1", 1, 1): {"step", "string", "fret"}},
         attribute_order=["step", "string", "fret", "octave"],
     )
@@ -42,6 +43,7 @@ def test_save_then_load_round_trips_all_fields():
     assert loaded.staves_off == {("P1", 2)}
     assert loaded.voices_off == {("P2", 1, 1)}
     assert loaded.metronome_enabled is True
+    assert loaded.position_announcer_enabled is True
     assert loaded.voice_display_attributes == {("P1", 1, 1): {"step", "string", "fret"}}
     assert loaded.attribute_order == ["step", "string", "fret", "octave"]
 
@@ -63,6 +65,24 @@ def test_load_for_a_file_saved_before_parts_off_staves_off_existed():
     assert loaded.parts_off == set()
     assert loaded.staves_off == set()
     assert loaded.voices_off == {("P2", 1, 1)}
+
+
+def test_load_for_a_file_saved_before_position_announcer_existed():
+    """Same backward-compatibility guarantee (Ref 28 added this key after
+    metronome_enabled already existed): missing "position_announcer_enabled"
+    defaults to False rather than erroring."""
+    path = score_config.path_for("Chessel Duet.mxl")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        '{"schema_version": 1, "voices_off": [], "metronome_enabled": true, '
+        '"voice_display_attributes": {}, "attribute_order": []}',
+        encoding="utf-8",
+    )
+
+    loaded = score_config.load_for("Chessel Duet.mxl")
+
+    assert loaded.metronome_enabled is True
+    assert loaded.position_announcer_enabled is False
 
 
 def test_delete_for_removes_the_file_and_is_safe_when_missing():
