@@ -942,12 +942,22 @@ class MusicData:
 
     def get_playback_events_for_indices(
         self, selected_indices: List[int], index: Optional[int] = None
-    ) -> List[Tuple[int, int, List[int]]]:
+    ) -> List[Tuple[int, Optional[int], List[int], int]]:
         """Group selected notes by part for simultaneous multi-instrument playback.
 
-        Each group is (channel, zero-indexed GM program, midi pitches) so a
-        chord spanning two parts sounds both instruments together instead
-        of collapsing onto parts_info[0]'s instrument (Ref 8, Ref 9 AC2).
+        Each group is (channel, zero-indexed GM program, midi pitches,
+        duration_ms) so a chord spanning two parts sounds both instruments
+        together instead of collapsing onto parts_info[0]'s instrument (Ref
+        8, Ref 9 AC2), AND each part rings for its own notated length
+        instead of every part being clamped to whichever part happens to
+        have the shortest note at this instant (Ref 9 AC2 "matches note
+        duration", Ref 13 AC2 "hold for their marked length" - reported
+        bug: Pachelbel's Canon cello minims were being cut short to match
+        faster-moving upper parts sounding at the same beat). duration_ms
+        is the MAX quarter_length within that part's own notes here (not
+        an average/min) so a same-voice chord with slightly inconsistent
+        source data still rings for its longest member rather than cutting
+        early.
 
         index: an explicit timeline slice to read from instead of the
         current cursor (see _visible_notes) - used by
@@ -958,6 +968,7 @@ class MusicData:
             return []
 
         notes_by_part: Dict[str, List[int]] = {}
+        quarter_length_by_part: Dict[str, float] = {}
         part_order: List[str] = []
         for i in selected_indices:
             if not (0 <= i < len(notes)):
@@ -967,14 +978,19 @@ class MusicData:
                 continue
             if note.part_id not in notes_by_part:
                 notes_by_part[note.part_id] = []
+                quarter_length_by_part[note.part_id] = 0.0
                 part_order.append(note.part_id)
             notes_by_part[note.part_id].append(note.midi_pitch)
+            quarter_length_by_part[note.part_id] = max(
+                quarter_length_by_part[note.part_id], note.quarter_length
+            )
 
         events = []
         for part_id in part_order:
             channel = self.get_channel_for_part(part_id)
             program = max(0, self.get_gmidi_program_for_part(part_id) - 1)
-            events.append((channel, program, notes_by_part[part_id]))
+            duration_ms = self._quarters_to_ms(quarter_length_by_part[part_id], index)
+            events.append((channel, program, notes_by_part[part_id], duration_ms))
         return events
 
     def get_current_duration_ms(self) -> int:
@@ -982,14 +998,20 @@ class MusicData:
 
     def get_duration_ms_for_index(self, index: int) -> int:
         """Like get_current_duration_ms, but for an arbitrary timeline index
-        rather than the cursor - used by the Sequencer (E4)."""
+        rather than the cursor - used by the Sequencer (E4) to know how long
+        to keep is_playing True after the last step's longest note (see
+        get_playback_events_for_indices for actual per-note note-off
+        timing, which no longer reads this slice-wide scalar)."""
         if not (0 <= index < len(self.timeline_slices)):
             return 500
         quarter_length = self.timeline_slices[index].quarter_length
+        return self._quarters_to_ms(quarter_length, index)
+
+    def _quarters_to_ms(self, quarter_length: float, index: Optional[int]) -> int:
         ms = (quarter_length * 60000.0) / float(self.effective_tempo_bpm(index))
         return max(100, int(ms))
 
-    def get_playback_events_at_index(self, index: int) -> List[Tuple[int, int, List[int]]]:
+    def get_playback_events_at_index(self, index: int) -> List[Tuple[int, Optional[int], List[int], int]]:
         """All visible notes at timeline index `index`, grouped by part
         (Ref 8) - the Sequencer (E4) equivalent of
         get_playback_events_for_indices for Region 3's selection, playing a

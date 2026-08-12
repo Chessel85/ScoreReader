@@ -10,3 +10,11 @@ Perhaps have add and remove buttons in the reorder dialogue, or perhaps a find n
 * Notes are always sorted highest pitch to lowest pitch for a voice.
 * Notes need to account for staff symbol e.g. a piano bass stave (without a treble) seems to play too high
 * Not sure notes are sounding for their stated duration e.g. Piano in Pashelbels Canon are all minims but sound like crotchets.
+* Want an audio indicator of crossing a barline. Or does the metronome already do that?
+* Want to know about repeat barlines and codas.  goes into the summary report maybe as well as some audio indicators.
+* Need to find out more about guitar pictures, chords and lyrics and how these can be catered for.
+* When I looked at the about dialogue on my virtual machine, it said the version was January 12th 2026. It got this from 2026.1.12.
+* The build number is not being incremented every time there is a change to a py file.
+* Should we have a licence agreement?  Basically very happy for this to be open source for anyone to contribute to and to distribute.  Standard GNU or MIT licence I think as long as I'm not liable for anything.
+* when metronome is on, but moving up and down a chord, do not sound the metronome click.
+* Need to check pitches are correct. compare with reasynth in reaper.

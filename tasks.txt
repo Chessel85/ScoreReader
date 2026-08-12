@@ -592,6 +592,47 @@ playback and phrase audition (E6), same code path.
           0.341ms, play_click mean 0.012ms/max 0.018ms (both far under the
           25ms budget); Sequencer jitter -3.4ms to +0.6ms at 240bpm.
 
+BUG FIX 2026-08-12 (reported by the user, live-tested against
+"pachelbels-canon-in-d-string-quartet.mxl" - examples/, real playback,
+not a fixture): two separate note-off bugs, both traced to A8's
+play_chord(events, duration_ms) treating duration/silencing as a single
+value shared across an entire call, rather than per group:
+  1. EventSlice.quarter_length (parsers/timeline_builder.py) is min() across
+     EVERY note bucketed into a slice - i.e. across every part sounding at
+     that instant, not just one chord. get_duration_ms_for_index/
+     get_current_duration_ms converted that single clamped value to note-off
+     timing for the WHOLE chord, so the cello's minims in the Canon were
+     truncated to whatever the fastest-moving upper part's note value was at
+     that beat. FIX: MusicData.get_playback_events_for_indices/
+     get_playback_events_at_index now return (channel, program, midi_notes,
+     duration_ms) 4-tuples, duration_ms computed per PART from that part's
+     own notes' quarter_length (max, not min/average, so a same-voice chord
+     with slightly inconsistent data still rings for its longest member).
+     SynthEngine.play_chord/NullSynth.play_chord schedule one independent
+     QTimer per group instead of one shared timer. EventSlice.quarter_length
+     itself is untouched (still needed for the Sequencer's end-of-run
+     ring-out wait when there are no events, and one characterisation test);
+     nothing in production playback reads it as a note's own duration
+     anymore.
+  2. Once (1) was fixed, a second bug surfaced: turning on Violin I (enters
+     on beats 2/4) caused Violin II/Viola/Cello's beat-1 minims to cut short
+     to one beat the moment Violin I's note started - "like Violin I was
+     sending a MIDI off to the other parts" (the user's own diagnosis,
+     exactly correct). ROOT CAUSE: SynthEngine.play_chord unconditionally
+     called stop_all_notes() before every call, correct for discrete
+     audition (Ref 8 AC2 - Region 3 navigation/chord audition should present
+     a clean slate on every move) but wrong for the Sequencer's real
+     step-to-step playback advance, which went through the exact same
+     method. FIX: play_chord(events, duration_ms=250, retrigger=True) -
+     Sequencer._sound_current_step now passes retrigger=False for its
+     natural advance, so a new part's attack no longer silences other parts'
+     still-ringing notes; Sequencer.play_from() now calls
+     synth.stop_all_notes() itself before sounding the new position, so an
+     explicit reposition (not a natural advance) still clears the deck.
+     New fixture tests/fixtures/staggered_two_part_entry.musicxml (one
+     part sustaining across another part's later, unrelated entry)
+     regression-tests this directly.
+
 [ ] E11 Metronome click sound quality - functional debt, not a missing
         feature (Ref 14 AC1-AC3 are all functionally met by E8) - see D-14.
         > OPENED 2026-08-07. Two synthesis attempts, both live-tested by the
@@ -882,6 +923,38 @@ PHASE G - PER-SCORE PERSISTENCE                           (5 tasks)   Ref 27
           before swapping in a new one; closeEvent saves on shutdown; both
           call _save_current_score_config. _on_score_loaded loads and
           applies the incoming file's config.
+        > FIX 2026-08-12 (reported by the user, live-tested): switching a
+          part off with a sub-staff/voice still individually ON, closing,
+          then reopening the score correctly showed the part off - but
+          switching the part back on revealed its sub-elements had ALSO
+          gone off, losing their real prior state. ROOT CAUSE: the only
+          thing ever persisted was voices_off, the complement of
+          active_voice_filter - itself computed by
+          Region2HierarchyModel.get_active_voice_tuples(), which gates a
+          voice's "active" status on its PART and STAFF also being enabled.
+          So a part being off collapsed every voice under it into "off" in
+          the saved file - the fact that a voice was individually still on
+          underneath was nowhere recorded, and restore
+          (set_active_voice_tuples) could only INFER a node's own state from
+          whether every leaf below it was inactive, which can't tell "the
+          user toggled the part off" apart from "every voice under it
+          happened to end up off" (that inference was already documented as
+          a known limitation in its own docstring). FIX: ScoreConfig gained
+          parts_off/staves_off alongside voices_off - all three now mean
+          that node's OWN toggle state, independent of ancestors, not a
+          derived "effectively active" set. Region2HierarchyModel gained
+          get_off_node_keys()/apply_off_node_keys() - an ungated,
+          lossless read/write of every node's own .enabled at all three
+          levels - replacing set_active_voice_tuples entirely.
+          MainWindow._save_current_score_config now overwrites
+          export_config()'s own best-effort voices_off with the real
+          per-node sets from region_2.model_manager.get_off_node_keys();
+          _on_score_loaded restores them straight into Region 2 via
+          apply_off_node_keys, which also let the old "snapshot the filter
+          before Region 2's rebuild wipes it" workaround in _on_score_loaded
+          be removed - Region 2 is now restored directly from the saved
+          per-node sets rather than round-tripped through MusicData's flat
+          active_voice_filter.
 [x] G2  Persist note display configuration per scope - Ref 27 AC2
         > DONE 2026-08-11, same change as G1 (voice_display_attributes is
           one of ScoreConfig's fields). attribute_order (F2's ordering, not

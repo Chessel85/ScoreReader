@@ -47,7 +47,6 @@ def _app_icon_path():
 
 def main():
     app = QApplication(sys.argv)
-    app.setOrganizationName("Recall Score")
     app.setApplicationName("Recall Score")
     icon_path = _app_icon_path()
     if icon_path:

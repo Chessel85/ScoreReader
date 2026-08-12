@@ -44,13 +44,15 @@ class SynthEngine:
         self._sfid = None
         self._active_notes: List[Tuple[int, int]] = []  # (channel, note) pairs
 
-        # Off timer for scheduling note stops
-        self._off_timer = QTimer()
-        self._off_timer.setSingleShot(True)
-        self._off_timer.timeout.connect(self.stop_all_notes)
+        # One QTimer per sounding group (Ref 9 AC2/Ref 13 AC2: each part
+        # rings for its own notated duration, not the shortest duration of
+        # any part sounding at the same instant - see play_chord). Tracked
+        # here so stop_all_notes()/a retriggering play_chord() can cancel
+        # every pending one, not just the most recent.
+        self._group_off_timers: List[QTimer] = []
 
         # E8: the metronome click gets its own tiny parallel state, entirely
-        # separate from _active_notes/_off_timer above. A click must not cut
+        # separate from _active_notes/_group_off_timers above. A click must not cut
         # off a note sounding at the same beat (play_chord's stop_all_notes()
         # would do exactly that if the click went through the same path),
         # and it rings for its own short fixed duration independent of
@@ -99,7 +101,9 @@ class SynthEngine:
         if self._fs is None:
             return
 
-        self._off_timer.stop()
+        for timer in self._group_off_timers:
+            timer.stop()
+        self._group_off_timers.clear()
 
         for channel, note in self._active_notes:
             self._fs.noteoff(channel, note)
@@ -157,21 +161,48 @@ class SynthEngine:
 
     def play_chord(
         self,
-        events: List[Tuple[int, Optional[int], List[int]]],
+        events: List[Tuple],
         duration_ms: int = 250,
+        retrigger: bool = True,
     ):
-        """Play several (channel, program, midi_notes) groups together.
+        """Play several (channel, program, midi_notes[, duration_ms]) groups
+        together.
 
         Each part gets its own channel and GM program, so a slice with
         notes from two parts sounds both instruments at once instead of
-        one group cutting the other off (Ref 8, Ref 9 AC2, D-5).
+        one group cutting the other off (Ref 8, Ref 9 AC2, D-5). Each
+        group's own trailing duration_ms (when present - MusicData supplies
+        it; play_notes()'s single-group callers don't) governs its own
+        note-off timer independently, so one part isn't clamped to another
+        part's shorter note sounding at the same instant (Ref 9 AC2, Ref 13
+        AC2 - reported bug: Pachelbel's Canon cello minims cut short to
+        match faster upper parts). Falls back to the outer duration_ms for
+        any group that omits its own.
+
+        retrigger=True (the default) silences everything currently sounding
+        first - correct for discrete audition (Ref 8 AC2's "moving through
+        the timeline stops all notes currently sounding before playing new
+        notes", used by Region 3 navigation and chord audition). The
+        Sequencer (E4/Ref 10) passes retrigger=False for its natural
+        step-to-step advance during real playback: a new part's note
+        starting (e.g. Violin I entering on beat 2 while Violin II/Viola/
+        Cello are mid-minim from beat 1) must NOT cut off other parts'
+        still-ringing, unrelated notes - reported bug, live-tested, second
+        occurrence of the same underlying "one group's timing clobbers
+        another's" class of bug this method already had for duration.
+        Sequencer.play_from()/resume() still call stop_all_notes() directly
+        first, so an explicit reposition (not a natural advance) does clear
+        the deck.
         """
         if self._fs is None:
             return
 
-        self.stop_all_notes()
+        if retrigger:
+            self.stop_all_notes()
 
-        for channel, program, midi_notes in events:
+        for event in events:
+            channel, program, midi_notes = event[0], event[1], event[2]
+            group_duration_ms = event[3] if len(event) > 3 else duration_ms
             if not midi_notes:
                 continue
 
@@ -179,13 +210,30 @@ class SynthEngine:
             if program is not None:
                 self.set_program(ch, program)
 
+            group_notes: List[Tuple[int, int]] = []
             for note in midi_notes:
                 self._fs.noteon(ch, note, 90)
-                self._active_notes.append((ch, note))
+                group_notes.append((ch, note))
+            self._active_notes.extend(group_notes)
 
-        # Schedule Note Off after duration_ms
-        if self._active_notes and duration_ms > 0:
-            self._off_timer.start(int(duration_ms))
+            if group_notes and group_duration_ms > 0:
+                self._schedule_group_off(group_notes, group_duration_ms)
+
+    def _schedule_group_off(self, group_notes: List[Tuple[int, int]], duration_ms: int):
+        timer = QTimer()
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda: self._stop_group(group_notes, timer))
+        self._group_off_timers.append(timer)
+        timer.start(int(duration_ms))
+
+    def _stop_group(self, group_notes: List[Tuple[int, int]], timer: QTimer):
+        if self._fs is not None:
+            for ch, note in group_notes:
+                if (ch, note) in self._active_notes:
+                    self._fs.noteoff(ch, note)
+                    self._active_notes.remove((ch, note))
+        if timer in self._group_off_timers:
+            self._group_off_timers.remove(timer)
 
     def close(self):
         if self._fs:

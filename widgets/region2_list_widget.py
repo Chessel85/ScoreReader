@@ -41,14 +41,15 @@ class Region2ListWidget(QListWidget):
         self.model_manager.build_from_score(parts_data)
         self.refresh_list()
 
-    def apply_active_voice_tuples(self, active_tuples: set):
-        """Ref 27: restores on/off state from a saved ScoreConfig, after
-        load_score_structure has already reset every node to its default
-        enabled=True. refresh_list()'s filter_changed emission at the end is
-        what actually propagates the restored state back to MusicData and
-        Region 3 (MainWindow._on_region_2_filter_changed) - the same signal
-        path a live toggle already uses, not a separate one."""
-        self.model_manager.set_active_voice_tuples(active_tuples)
+    def apply_off_node_keys(self, parts_off: set, staves_off: set, voices_off: set):
+        """Ref 27: restores each node's own on/off state from a saved
+        ScoreConfig, after load_score_structure has already reset every node
+        to its default enabled=True. refresh_list()'s filter_changed
+        emission at the end is what actually propagates the restored state
+        back to MusicData and Region 3 (MainWindow._on_region_2_filter_changed)
+        - the same signal path a live toggle already uses, not a separate
+        one."""
+        self.model_manager.apply_off_node_keys(parts_off, staves_off, voices_off)
         self.refresh_list()
 
     def refresh_list(self, preferred_node_id: str = None):

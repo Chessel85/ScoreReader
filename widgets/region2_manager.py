@@ -121,22 +121,56 @@ class Region2HierarchyModel:
 
         return visible
 
-    def set_active_voice_tuples(self, active_tuples: Set[Tuple[str, int, int]]) -> None:
-        """Restores on/off state for every node from a flat set of active
-        (part_id, staff_id, voice_id) tuples (Ref 27) - e.g. a saved
-        ScoreConfig applied after build_from_score has reset every node back
-        to its default enabled=True. The flat set alone can't distinguish
-        "the user toggled the whole part off" from "every individual voice
-        under it happened to end up off", so this infers the former
-        whenever every leaf under a node is inactive, collapsing that node
-        the same way the user's original toggle would have (and leaving it
-        enabled, with only specific voice rows off, otherwise)."""
+    def get_off_node_keys(
+        self,
+    ) -> Tuple[Set[str], Set[Tuple[str, int]], Set[Tuple[str, int, int]]]:
+        """Every node's OWN enabled state (Ref 27 AC1: part, stave and voice
+        toggles are each independently persistent), as three OFF-sets -
+        (parts_off, staves_off, voices_off) - for ScoreConfig. Deliberately
+        NOT gated by ancestors (unlike get_active_voice_tuples, which is
+        Ref 7's playback/display filter): a voice that's individually on
+        but merely hidden because its part is off must still come back as
+        on once the part is switched on again, and only this ungated read
+        can tell that apart from a voice that was individually switched off
+        (reported bug, live-tested: the old save path only had the gated
+        set, so it couldn't)."""
+        parts_off: Set[str] = set()
+        staves_off: Set[Tuple[str, int]] = set()
+        voices_off: Set[Tuple[str, int, int]] = set()
         for part in self.roots:
+            if not part.enabled:
+                parts_off.add(part.part_id)
             for staff in part.children:
+                if not staff.enabled:
+                    staves_off.add((staff.part_id, staff.staff_id))
                 for voice in staff.children:
-                    voice.enabled = (voice.part_id, voice.staff_id, voice.voice_id) in active_tuples
-                staff.enabled = any(v.enabled for v in staff.children) if staff.children else True
-            part.enabled = any(s.enabled for s in part.children) if part.children else True
+                    if not voice.enabled:
+                        voices_off.add((voice.part_id, voice.staff_id, voice.voice_id))
+        return parts_off, staves_off, voices_off
+
+    def apply_off_node_keys(
+        self,
+        parts_off: Set[str],
+        staves_off: Set[Tuple[str, int]],
+        voices_off: Set[Tuple[str, int, int]],
+    ) -> None:
+        """Restores every node's OWN enabled state from a saved ScoreConfig
+        (the counterpart to get_off_node_keys) - e.g. after build_from_score
+        has reset every node back to its default enabled=True. A lossless
+        round trip: unlike the old set_active_voice_tuples inference, a part
+        being off and a sub-voice being individually on are stored (and
+        restored) as the independent facts they are, not collapsed into
+        one. Best-effort against a changed score: a saved key with no
+        matching node here (in either set) simply has no node to apply to
+        and is silently skipped."""
+        for part in self.roots:
+            part.enabled = part.part_id not in parts_off
+            for staff in part.children:
+                staff.enabled = (staff.part_id, staff.staff_id) not in staves_off
+                for voice in staff.children:
+                    voice.enabled = (
+                        voice.part_id, voice.staff_id, voice.voice_id
+                    ) not in voices_off
 
     def get_active_voice_tuples(self) -> Set[Tuple[str, int, int]]:
         """

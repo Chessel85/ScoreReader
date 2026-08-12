@@ -1614,9 +1614,9 @@ def test_voice_filter_persists_across_reload_of_same_file(
     default enabled=True and - through the very same filter_changed signal
     a live toggle uses - silently overwrote the active_voice_filter
     MusicData.apply_config had just restored, so a saved "voice off" toggle
-    came back on after every reload. _on_score_loaded must hand the restored
-    filter to Region 2 (apply_active_voice_tuples) after that rebuild, not
-    rely on apply_config's write to MusicData surviving it."""
+    came back on after every reload. _on_score_loaded must hand the saved
+    per-node toggles to Region 2 (apply_off_node_keys) after that rebuild,
+    not rely on apply_config's write to MusicData surviving it."""
     load_and_wait(window, qtbot, flute_crotchets_viola_semibreves_score)
 
     viola_row = next(
@@ -1657,3 +1657,44 @@ def test_initial_audition_on_reload_respects_the_restored_voice_filter(
 
     assert len(null_synth.played) == 1, "must not audition twice (once wrong, once corrected)"
     assert null_synth.played[0]["midi_notes"] == [72]  # flute's C5 only, not the viola too
+
+
+def test_a_sub_staffs_own_toggle_survives_reload_under_an_off_part(
+    window, qtbot, dynamics_articulation_fingering_score
+):
+    """Reported bug, live-tested: toggling a part off with a sub-element
+    still individually on, closing, then reopening the score showed the
+    part correctly off - but switching the part back on revealed its
+    sub-elements had also silently gone off, losing their original state.
+    dynamics_articulation_fingering_score's Piano (P1) has two staves;
+    switch staff 2 off individually, then the whole Piano part off (staff 1
+    stays individually on underneath), reload, and switch Piano back on -
+    staff 1 must come back on and staff 2 must still be off, exactly as
+    they were before the part was toggled."""
+    load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
+
+    def node_row(node_id):
+        return next(
+            i for i, n in enumerate(window.region_2._current_visible_nodes)
+            if n.node_id == node_id
+        )
+
+    window.region_2.setCurrentRow(node_row("staff_P1_2"))
+    qtbot.keyClick(window.region_2, Qt.Key.Key_O)  # staff 2 off, staff 1 stays on
+
+    window.region_2.setCurrentRow(node_row("part_P1"))
+    qtbot.keyClick(window.region_2, Qt.Key.Key_O)  # whole Piano part off
+
+    load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
+
+    assert window.region_2._current_visible_nodes[node_row("part_P1")].enabled is False
+
+    window.region_2.setCurrentRow(node_row("part_P1"))
+    qtbot.keyClick(window.region_2, Qt.Key.Key_O)  # Piano back on
+
+    assert window.region_2._current_visible_nodes[node_row("staff_P1_1")].enabled is True, (
+        "staff 1 was individually on before the part was toggled off - must come back on"
+    )
+    assert window.region_2._current_visible_nodes[node_row("staff_P1_2")].enabled is False, (
+        "staff 2 was individually off before the part was toggled off - must stay off"
+    )

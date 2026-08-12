@@ -235,10 +235,11 @@ class MainWindow(QMainWindow):
         # E7 (Ref 13): re-trigger the chord at the cursor on demand,
         # independent of navigation. No held-key tracking needed - AC2's
         # "hold for the marked length" is already satisfied by each note's
-        # own duration (get_current_duration_ms, E1's effective tempo flows
-        # through automatically), and "or pressed again" is just a plain
-        # retrigger - SynthEngine.play_chord already stops previously
-        # sounding notes before starting new ones (A8).
+        # own duration (get_playback_events_for_indices's per-part
+        # duration_ms, E1's effective tempo flows through automatically),
+        # and "or pressed again" is just a plain retrigger -
+        # SynthEngine.play_chord already stops previously sounding notes
+        # before starting new ones (A8).
         self.chord_audition_shortcut = QShortcut(QKeySequence("Shift+Space"), self)
         self.chord_audition_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
         self.chord_audition_shortcut.activated.connect(self._play_selected_region_3_notes)
@@ -580,36 +581,33 @@ class MainWindow(QMainWindow):
         # Ref 27: restore whatever this file's own part/staff/voice toggles,
         # shown attributes, attribute order and metronome state were last
         # left as - best-effort against the freshly-parsed score, see
-        # MusicData.apply_config.
+        # MusicData.apply_config. The part/staff/voice toggles themselves
+        # are restored below straight into Region 2 (apply_off_node_keys),
+        # the actual source of truth for each node's OWN on/off state
+        # independent of its ancestors - apply_config's own
+        # active_voice_filter write here is a harmless, temporary
+        # approximation that Region 2's rebuild below supersedes, same as
+        # it always has.
         saved_config = score_config.load_for(music_data.file_path)
-        restored_active_voice_filter = None
         if saved_config is not None:
             self._music_data.apply_config(saved_config)
-            # _update_ui_regions (below) rebuilds Region 2 from scratch via
-            # load_score_structure, which resets every node to its default
-            # enabled=True and - through the same filter_changed signal a
-            # live toggle uses - overwrites the active_voice_filter
-            # apply_config just set back to "everything on" (live-tested
-            # regression: a saved voice-off toggle silently came back on
-            # after reload). Snapshot the restored filter now, before that
-            # happens, so it can be handed to Region 2 afterward instead.
-            restored_active_voice_filter = set(self._music_data.active_voice_filter)
         self._refresh_clear_preferences_action()
         self.sequencer = Sequencer(music_data, self.synth, parent=self)
         self.sequencer.step_played.connect(self._on_sequencer_step)
         self.sequencer.finished.connect(self._on_sequencer_finished)
         # Live-tested regression: _update_ui_regions's own initial audition
-        # (play_all=True) used to fire before the saved voice filter was
-        # handed to Region 2 below, so a file with e.g. the viola saved off
-        # was still heard playing both flute and viola the instant it
-        # loaded, even though Region 2 immediately showed the correct
-        # on/off state and every subsequent move correctly excluded it.
-        # Suppress that first audition when there's a filter to restore, and
-        # fire it ourselves once Region 2's restored state is actually in
-        # effect.
-        self._update_ui_regions(play_all=restored_active_voice_filter is None)
-        if restored_active_voice_filter is not None:
-            self.region_2.apply_active_voice_tuples(restored_active_voice_filter)
+        # (play_all=True) used to fire before the saved toggles were handed
+        # to Region 2 below, so a file with e.g. the viola saved off was
+        # still heard playing both flute and viola the instant it loaded,
+        # even though Region 2 immediately showed the correct on/off state
+        # and every subsequent move correctly excluded it. Suppress that
+        # first audition when there's a config to restore, and fire it
+        # ourselves once Region 2's restored state is actually in effect.
+        self._update_ui_regions(play_all=saved_config is None)
+        if saved_config is not None:
+            self.region_2.apply_off_node_keys(
+                saved_config.parts_off, saved_config.staves_off, saved_config.voices_off
+            )
             self._play_selected_region_3_notes()
 
     def _on_score_load_failed(self, error_text: str):
@@ -1011,8 +1009,10 @@ class MainWindow(QMainWindow):
         events = self._music_data.get_playback_events_for_indices(selected_indices)
 
         if events:
-            duration_ms = self._music_data.get_current_duration_ms()
-            self.synth.play_chord(events, duration_ms=duration_ms)
+            # Each group carries its own duration now (Ref 9 AC2/Ref 13
+            # AC2), so no separate slice-wide duration_ms is needed here -
+            # see get_playback_events_for_indices.
+            self.synth.play_chord(events)
 
         # E8/Ref 14 AC3: stepping onto a beat position plays a metronome
         # tick - fires even when there are no events at all (a metronome-
@@ -1222,10 +1222,23 @@ class MainWindow(QMainWindow):
         its .rsc, so they're there to restore next time this file is
         opened. Called right before swapping in a new file
         (load_score_from_file) and on app shutdown (closeEvent) - the two
-        points the user asked for, not on every individual toggle."""
+        points the user asked for, not on every individual toggle.
+
+        export_config() fills in its own best-effort voices_off (derived
+        from active_voice_filter, for standalone/test use with no Region 2
+        widget at all) - overwritten here with the real per-node state from
+        Region 2 itself, the only place a part/stave's OWN toggle
+        (independent of its descendants) actually lives. Reported bug,
+        live-tested: without this, a part switched off with a sub-voice
+        still individually on had that voice's own state silently lost on
+        reload - see ScoreConfig's docstring."""
         if self._music_data is None or not self._music_data.file_path:
             return
-        score_config.save(self._music_data.file_path, self._music_data.export_config())
+        config = self._music_data.export_config()
+        config.parts_off, config.staves_off, config.voices_off = (
+            self.region_2.model_manager.get_off_node_keys()
+        )
+        score_config.save(self._music_data.file_path, config)
 
     def _open_score_config_folder(self):
         folder = score_config.config_dir()

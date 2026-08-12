@@ -66,6 +66,33 @@ def test_playback_waits_for_the_last_note_to_ring_out_before_finishing(
     assert seq.is_playing is False
 
 
+def test_a_later_parts_new_attack_does_not_silence_an_earlier_parts_ringing_note(
+    timeline, null_synth, staggered_two_part_entry_score
+):
+    """Reported bug, live-tested against Pachelbel's Canon: turning on
+    Violin I (which enters on beats 2/4) was cutting Violin II/Viola/
+    Cello's beat-1 minims short to one beat - "like Violin I was sending a
+    MIDI off to the other parts". It was: SynthEngine.play_chord
+    unconditionally called stop_all_notes() before every step, silencing
+    whatever was still ringing from an earlier, unrelated part's slice.
+    staggered_two_part_entry_score's Viola half note (beat 1, 2 beats) and
+    Violin I quarter note (beat 2, its own EventSlice) reproduce this
+    exactly - advancing onto Violin I's slice must not call
+    stop_all_notes() again (retrigger=False for a natural advance)."""
+    md = timeline(staggered_two_part_entry_score)
+    seq, timer = _build(md, null_synth)
+
+    seq.play_from(0)  # Viola's half note - play_from's own reposition clears the deck once
+    stop_count_after_start = null_synth.stop_count
+
+    timer.fire()  # Violin I's quarter note on beat 2 - a natural advance
+
+    assert null_synth.stop_count == stop_count_after_start, (
+        "Violin I's entry must not silence Viola's still-ringing half note"
+    )
+    assert [p["midi_notes"] for p in null_synth.played] == [[48], [69]], "Viola C3, then Violin I A4"
+
+
 def test_reaching_the_end_naturally_reverts_to_the_original_start_index(
     timeline, null_synth, minimal_score
 ):

@@ -70,6 +70,13 @@ class Sequencer(QObject):
         should move active_event_index as it goes (full playback, E5) or
         leave it alone (phrase audition, E6)."""
         self._timer.stop()
+        # Explicit reposition, not a natural step-to-step advance - clear
+        # anything still ringing from wherever playback was before (Ref 10
+        # AC1/AC5), since _sound_current_step below now uses retrigger=
+        # False and won't do this itself (that's what lets OTHER parts'
+        # notes keep ringing across an unrelated part's new attack during
+        # a normal run - see play_chord).
+        self.synth.stop_all_notes()
         self._current_index = start_index
         self._original_start_index = start_index
         self._end_index = end_index
@@ -115,10 +122,27 @@ class Sequencer(QObject):
         if self._current_index is None:
             return
 
-        duration_ms = self.music_data.get_duration_ms_for_index(self._current_index)
         events = self.music_data.get_playback_events_at_index(self._current_index)
         if events:
-            self.synth.play_chord(events, duration_ms=duration_ms)
+            # retrigger=False: a natural step-to-step advance must not
+            # silence OTHER parts' still-ringing notes just because this
+            # part has a new attack here (reported bug, live-tested:
+            # Violin I entering on beat 2 was cutting Violin II/Viola/
+            # Cello's beat-1 minims short to one beat, "like Violin I was
+            # sending a MIDI off to the other parts" - because it
+            # literally was, via play_chord's old unconditional
+            # stop_all_notes()). Explicit repositioning (play_from/resume)
+            # still clears the deck first - see play_from.
+            self.synth.play_chord(events, retrigger=False)
+            # Each group now carries its own duration (Ref 9 AC2/Ref 13
+            # AC2 - one part no longer gets clamped to another part's
+            # shorter note sounding at the same instant); the longest of
+            # them is what actually needs to finish ringing before this
+            # step is done, which matters below when this is the final
+            # step of the run.
+            ring_out_ms = max(group[3] for group in events)
+        else:
+            ring_out_ms = self.music_data.get_duration_ms_for_index(self._current_index)
 
         # E8/Ref 14 AC1/AC2: a click layers on top of whatever notes (or
         # nothing) sound at this step, whenever the step lands on a whole
@@ -139,7 +163,7 @@ class Sequencer(QObject):
         if next_index is None:
             # Reported bug, live-tested: this used to flip is_playing False
             # and emit finished() here immediately - before the last note
-            # had actually rung out for duration_ms. is_playing being False
+            # had actually rung out for ring_out_ms. is_playing being False
             # while the note was still audibly sounding meant Space, pressed
             # right after, took toggle_play_stop()'s "start a new run"
             # branch instead of "stop" - and since the cursor was already on
@@ -149,7 +173,7 @@ class Sequencer(QObject):
             # _pending_next_index left None as the signal that this wait is
             # the finish, not a further step.
             self._pending_next_index = None
-            self._timer.start(duration_ms)
+            self._timer.start(ring_out_ms)
             return
 
         self._pending_next_index = next_index

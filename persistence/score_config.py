@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Set, Tuple
 from PySide6.QtCore import QStandardPaths
 
 VoiceKey = Tuple[str, int, int]
+StaffKey = Tuple[str, int]
 
 
 @dataclass
@@ -19,13 +20,29 @@ class ScoreConfig:
     last left it. Deliberately excludes language (persistence/app_settings.py
     - a global preference, not a per-file one).
 
-    voices_off (not an on-list) and voice_display_attributes/attribute_order
-    filtered against the freshly-loaded score's own known voices/attribute
-    keys are what make loading best-effort: a saved entry that no longer
-    corresponds to anything in the current score is simply dropped rather
-    than rejecting the whole config (see MusicData.apply_config)."""
+    parts_off/staves_off/voices_off are each that node's OWN toggle state,
+    independent of its ancestors - NOT "effectively active" (which would
+    conflate "this voice was individually switched off" with "this voice is
+    merely hidden because its part is off"). Reported bug, live-tested:
+    switching a part off with a sub-voice still individually on, then
+    reloading, used to bring the sub-voice back off too, because the only
+    thing persisted was a single flattened, ancestor-gated voice set that
+    couldn't tell those two cases apart. Region2HierarchyModel.
+    get_off_node_keys()/apply_off_node_keys() are the lossless read/write
+    side of this - MusicData.export_config()/apply_config() only fill in a
+    best-effort voices_off of their own (for standalone/test use with no
+    Region 2 widget at all), which MainWindow overwrites with the real
+    per-node sets before saving.
+
+    All three (not-an-on-list) and voice_display_attributes/attribute_order
+    filtered against the freshly-loaded score's own known parts/staves/
+    voices/attribute keys are what make loading best-effort: a saved entry
+    that no longer corresponds to anything in the current score is simply
+    dropped rather than rejecting the whole config."""
 
     schema_version: int = 1
+    parts_off: Set[str] = field(default_factory=set)
+    staves_off: Set[StaffKey] = field(default_factory=set)
     voices_off: Set[VoiceKey] = field(default_factory=set)
     metronome_enabled: bool = False
     voice_display_attributes: Dict[VoiceKey, Set[str]] = field(default_factory=dict)
@@ -40,6 +57,16 @@ def _encode_voice_key(key: VoiceKey) -> str:
 def _decode_voice_key(encoded: str) -> VoiceKey:
     part_id, staff, voice = encoded.split("|")
     return (part_id, int(staff), int(voice))
+
+
+def _encode_staff_key(key: StaffKey) -> str:
+    part_id, staff = key
+    return f"{part_id}|{staff}"
+
+
+def _decode_staff_key(encoded: str) -> StaffKey:
+    part_id, staff = encoded.split("|")
+    return (part_id, int(staff))
 
 
 def config_dir() -> Path:
@@ -65,6 +92,8 @@ def load_for(file_path: str) -> Optional[ScoreConfig]:
             data = json.load(f)
         return ScoreConfig(
             schema_version=data.get("schema_version", 1),
+            parts_off=set(data.get("parts_off", [])),
+            staves_off={_decode_staff_key(k) for k in data.get("staves_off", [])},
             voices_off={_decode_voice_key(k) for k in data.get("voices_off", [])},
             metronome_enabled=data.get("metronome_enabled", False),
             voice_display_attributes={
@@ -84,6 +113,8 @@ def save(file_path: str, config: ScoreConfig) -> None:
     path = path_for(file_path)
     data = {
         "schema_version": config.schema_version,
+        "parts_off": sorted(config.parts_off),
+        "staves_off": [_encode_staff_key(k) for k in sorted(config.staves_off)],
         "voices_off": [_encode_voice_key(k) for k in sorted(config.voices_off)],
         "metronome_enabled": config.metronome_enabled,
         "voice_display_attributes": {

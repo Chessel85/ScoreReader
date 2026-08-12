@@ -36,16 +36,28 @@ class NullSynth:
         self,
         events: List[tuple],
         duration_ms: int = 250,
+        retrigger: bool = True,
     ) -> None:
-        """Records one entry per (channel, program, midi_notes) group.
+        """Records one entry per (channel, program, midi_notes[, duration_ms]) group.
 
-        Mirrors SynthEngine.play_chord: one stop_all_notes() for the whole
-        chord, then every part's group is recorded so tests can assert
-        multi-part playback stayed on separate channels/programs.
+        Mirrors SynthEngine.play_chord: retrigger=True (the default) calls
+        stop_all_notes() for the whole chord first - discrete audition's
+        "everything sounding gets silenced before the next thing plays".
+        The Sequencer passes retrigger=False for its natural step-to-step
+        advance, so real playback layers a new part's notes on top of
+        other parts still ringing instead of cutting them off. Every part's
+        group is recorded with its OWN duration_ms - falling back to the
+        outer duration_ms when a group omits one (play_notes()'s
+        single-group callers) - so tests can assert both separate
+        channels/programs and separate per-part ring-out durations (Ref 9
+        AC2, Ref 13 AC2).
         """
-        self.stop_all_notes()
+        if retrigger:
+            self.stop_all_notes()
 
-        for channel, program, midi_notes in events:
+        for event in events:
+            channel, program, midi_notes = event[0], event[1], event[2]
+            group_duration_ms = event[3] if len(event) > 3 else duration_ms
             if not midi_notes:
                 continue
 
@@ -55,7 +67,7 @@ class NullSynth:
             self.played.append(
                 {
                     "midi_notes": list(midi_notes),
-                    "duration_ms": duration_ms,
+                    "duration_ms": group_duration_ms,
                     "channel": channel,
                     "program": program,
                 }

@@ -122,6 +122,15 @@ def flute_crotchets_viola_semibreves_score() -> str:
 
 
 @pytest.fixture
+def staggered_two_part_entry_score() -> str:
+    """One 4/4 bar: Viola (P1) plays two half notes filling the bar; Violin I
+    (P2) is silent on beat 1 and enters with a quarter note on beat 2 only -
+    a later part's new attack, on its own EventSlice, while an earlier
+    part's longer note from a previous EventSlice is still mid-ring."""
+    return _require(FIXTURES_DIR / "staggered_two_part_entry.musicxml")
+
+
+@pytest.fixture
 def many_measures_score() -> str:
     """One part, twelve complete 1/4 bars, one quarter note each.
 

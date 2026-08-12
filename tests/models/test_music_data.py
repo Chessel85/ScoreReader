@@ -4,6 +4,8 @@
 The real characterisation suite is A2. These tests exist to show the
 ElementTree-only path works and is wired up correctly.
 """
+import pytest
+
 from models.music_data import MusicData
 from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
@@ -643,9 +645,37 @@ def test_playback_events_group_simultaneous_notes_by_part(timeline, two_parts_ch
 
     events = md.get_playback_events_for_indices([0, 1])
 
-    events_by_channel = {channel: (program, notes) for channel, program, notes in events}
+    events_by_channel = {channel: (program, notes) for channel, program, notes, _ in events}
     assert events_by_channel[0] == (0, [60]), "Piano: channel 0, program 0-indexed, C4"
     assert events_by_channel[1] == (24, [52]), "Guitar: channel 1, program 0-indexed, E3"
+
+
+def test_playback_events_carry_each_parts_own_duration_not_the_shortest_at_the_slice(
+    timeline, flute_crotchets_viola_semibreves_score
+):
+    """Reported bug, live-tested against Pachelbel's Canon: a part's note was
+    being cut short to match a shorter note in a different part sounding at
+    the same instant (Ref 9 AC2 "matches note duration", Ref 13 AC2 "hold
+    for their marked length"). flute_crotchets_viola_semibreves_score's bar
+    1 beat 1 is exactly this shape - the flute's quarter note and the
+    viola's whole note share one EventSlice - so each part's playback
+    duration_ms must reflect its own note value, not get clamped to the
+    other part's shorter one."""
+    md = timeline(flute_crotchets_viola_semibreves_score)
+
+    assert md.timeline_slices[0].measure == 1
+    current = md.get_current_slice()
+    assert {n.part_id for n in current.notes} == {"P1", "P2"}, "flute crotchet + viola whole note"
+
+    events = md.get_playback_events_for_indices([0, 1])
+    duration_by_part_id = {
+        next(n.part_id for n in current.notes if n.midi_pitch in midi_notes): duration_ms
+        for _, _, midi_notes, duration_ms in events
+    }
+
+    assert duration_by_part_id["P2"] == pytest.approx(duration_by_part_id["P1"] * 4, rel=0.01), (
+        "viola's whole note must ring 4x as long as the flute's quarter note, not be clamped to it"
+    )
 
 
 def test_playback_events_skip_indices_with_no_pitch(timeline, rest_score):
@@ -750,7 +780,7 @@ def test_get_playback_events_at_index_reads_an_explicit_slice_not_the_cursor(
 
     assert md.active_event_index == 0
     assert len(events) == 1
-    _, _, midi_notes = events[0]
+    _, _, midi_notes, _ = events[0]
     assert midi_notes == [64]  # E4
 
 

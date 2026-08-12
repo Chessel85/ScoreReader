@@ -132,3 +132,69 @@ def test_reenabling_a_parent_restores_each_childs_previous_state(model):
         ("P2", 1, 1),
         ("P2", 1, 2),
     }, "voice 1 must still be off after its staff round-trips through off/on"
+
+
+# --- Ref 27: get_off_node_keys/apply_off_node_keys (per-node persistence) --
+
+def test_get_off_node_keys_reads_each_nodes_own_state_not_the_gated_one(model):
+    """A part switched off must not report its still-individually-on
+    sub-voices as off too - get_off_node_keys is the ungated read
+    get_active_voice_tuples deliberately isn't."""
+    model.toggle_node("part_P2")  # P2 off - its voices are still individually on
+
+    parts_off, staves_off, voices_off = model.get_off_node_keys()
+
+    assert parts_off == {"P2"}
+    assert staves_off == set()
+    assert voices_off == set(), "P2's voices are still individually ON underneath the off part"
+
+
+def test_off_node_keys_round_trip_preserves_a_sub_voices_state_under_an_off_part(model):
+    """Reported bug, live-tested: toggling a part off with a sub-voice still
+    individually on, then reloading, used to bring that sub-voice back off
+    too, because only the ancestor-gated active set was ever persisted.
+    get_off_node_keys/apply_off_node_keys must round-trip losslessly."""
+    model.toggle_node("part_P2")  # P2 off; P2's voices remain individually on underneath
+
+    parts_off, staves_off, voices_off = model.get_off_node_keys()
+
+    fresh = Region2HierarchyModel()
+    fresh.build_from_score(PARTS_DATA)
+    fresh.apply_off_node_keys(parts_off, staves_off, voices_off)
+
+    p2 = fresh._node_lookup["part_P2"]
+    p2_voice_1 = fresh._node_lookup["voice_P2_1_1"]
+    assert p2.enabled is False, "the part itself is off, as toggled"
+    assert p2_voice_1.enabled is True, (
+        "the sub-voice's own individual on-state must survive the round trip"
+    )
+
+    # Switching the part back on must reveal the sub-voice still on, not
+    # collapsed to off along with everything else under it.
+    fresh.toggle_node("part_P2")
+    assert fresh.get_active_voice_tuples() == {
+        ("P1", 1, 1),
+        ("P1", 2, 5),
+        ("P1", 2, 6),
+        ("P2", 1, 1),
+        ("P2", 1, 2),
+    }
+
+
+def test_apply_off_node_keys_ignores_keys_with_no_matching_node(model):
+    """Best-effort against a changed score: an OFF key for a part/staff/
+    voice that no longer exists here has nothing to apply to and must not
+    raise or otherwise disturb the nodes that do exist."""
+    model.apply_off_node_keys(
+        parts_off={"NoSuchPart"},
+        staves_off={("P1", 99)},
+        voices_off={("P1", 1, 99)},
+    )
+
+    assert model.get_active_voice_tuples() == {
+        ("P1", 1, 1),
+        ("P1", 2, 5),
+        ("P1", 2, 6),
+        ("P2", 1, 1),
+        ("P2", 1, 2),
+    }

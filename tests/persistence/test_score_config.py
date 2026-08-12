@@ -28,6 +28,8 @@ def test_load_for_with_no_saved_file_returns_none():
 
 def test_save_then_load_round_trips_all_fields():
     config = ScoreConfig(
+        parts_off={"P3"},
+        staves_off={("P1", 2)},
         voices_off={("P2", 1, 1)},
         metronome_enabled=True,
         voice_display_attributes={("P1", 1, 1): {"step", "string", "fret"}},
@@ -36,10 +38,31 @@ def test_save_then_load_round_trips_all_fields():
     score_config.save("Chessel Duet.mxl", config)
 
     loaded = score_config.load_for("Chessel Duet.mxl")
+    assert loaded.parts_off == {"P3"}
+    assert loaded.staves_off == {("P1", 2)}
     assert loaded.voices_off == {("P2", 1, 1)}
     assert loaded.metronome_enabled is True
     assert loaded.voice_display_attributes == {("P1", 1, 1): {"step", "string", "fret"}}
     assert loaded.attribute_order == ["step", "string", "fret", "octave"]
+
+
+def test_load_for_a_file_saved_before_parts_off_staves_off_existed():
+    """Backward compatibility: an .rsc written by an older build has no
+    "parts_off"/"staves_off" keys at all - loading it must default those to
+    empty sets rather than erroring, so old per-file configs keep working."""
+    path = score_config.path_for("Chessel Duet.mxl")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        '{"schema_version": 1, "voices_off": ["P2|1|1"], "metronome_enabled": false, '
+        '"voice_display_attributes": {}, "attribute_order": []}',
+        encoding="utf-8",
+    )
+
+    loaded = score_config.load_for("Chessel Duet.mxl")
+
+    assert loaded.parts_off == set()
+    assert loaded.staves_off == set()
+    assert loaded.voices_off == {("P2", 1, 1)}
 
 
 def test_delete_for_removes_the_file_and_is_safe_when_missing():

@@ -88,7 +88,7 @@ def test_guitar_notes_play_the_guitar_program_not_the_piano_program(score_duet):
     events = data.get_playback_events_for_indices(guitar_indices)
 
     assert len(events) == 1
-    channel, program, _ = events[0]
+    channel, program, _, _ = events[0]
     assert program == 24, "Classical Guitar is GM program 25, zero-indexed 24"
     assert channel == data.get_channel_for_part("P2")
     assert channel != data.get_channel_for_part("P1"), "parts must not share a channel"
