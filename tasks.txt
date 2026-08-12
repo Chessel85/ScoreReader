@@ -633,6 +633,45 @@ value shared across an entire call, rather than per group:
      part sustaining across another part's later, unrelated entry)
      regression-tests this directly.
 
+BUG FIX 2026-08-12 (reported by the user, live-tested with a real guitar and
+independently against Reaper/reaSynth - every note played about a semitone
+sharp, e.g. a written E sounded like F): initially suspected the reported
+soundfont (FluidR3_GM's nylon guitar patch), MIDI pitch computation, and a
+sample-rate mismatch against the user's actual audio device - all three
+tested and ruled out directly (offline fluidsynth.Synth.get_samples()
+rendering + autocorrelation pitch measurement, no real audio device needed;
+music21 cross-check on the MIDI number; user confirmed their device is
+already 48kHz). ROOT CAUSE, found by reproducing the app's own
+_init_engine() sequence in that same offline harness: SynthEngine._init_engine
+built the synth via `fluidsynth.Synth(gain=0.7)` (no samplerate= argument, so
+pyfluidsynth's own 44100 Hz default applied) and only set the intended 48000
+Hz afterward via `self._fs.setting("synth.sample-rate", 48000.0)`. But
+pyfluidsynth.Synth.__init__ calls new_fluid_synth(self.settings) - creating
+the actual DSP engine - using whatever synth.sample-rate is in the settings
+object AT THAT MOMENT, before returning; a .setting() call afterward only
+updates the stored value, it does not reinitialize an already-created
+engine. So FluidSynth was silently rendering audio at 44100 Hz the whole
+time while WASAPI opened the output stream at 48000 Hz (to match the real
+48kHz device) - playing 44100 Hz worth of samples through a 48000 Hz stream
+speeds everything up by 48000/44100 (~1.088x), which shifts pitch up ~147
+cents, landing closer to a semitone above (F) than a whole tone (F#) -
+exactly the reported symptom. GOTCHA WORTH REMEMBERING: pyfluidsynth's
+synth.sample-rate (and likely other settings read at engine-creation time)
+MUST be passed to the Synth() constructor itself, not set afterward via
+.setting() - the constructor's own samplerate=44100 default silently wins
+if omitted. Fix: `fluidsynth.Synth(gain=0.7, samplerate=48000.0)`. Verified
+by reproducing both the broken and fixed init sequences offline and
+measuring the actual rendered frequency each way; user confirmed live on
+real playback afterward. Considered - and explicitly declined by the user in
+favour of the existing hardcoded 48kHz - having SynthEngine query the host's
+actual default output device format and render at that native rate instead
+of relying on WASAPI shared-mode's own resampling to adapt a fixed 48kHz
+stream to whatever the real device runs at; shared-mode resampling is
+standard, expected OS behaviour (not something this bug depended on - the
+bug was an internal 44100-vs-48000 inconsistency within our own code, not a
+mismatch against the device), so no change was needed for other users on a
+44.1kHz device.
+
 [ ] E11 Metronome click sound quality - functional debt, not a missing
         feature (Ref 14 AC1-AC3 are all functionally met by E8) - see D-14.
         > OPENED 2026-08-07. Two synthesis attempts, both live-tested by the

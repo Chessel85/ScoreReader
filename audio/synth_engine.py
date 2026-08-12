@@ -70,10 +70,26 @@ class SynthEngine:
 
     def _init_engine(self, soundfont_path: Optional[str]):
         try:
-            self._fs = fluidsynth.Synth(gain=0.7)
+            # samplerate MUST be passed to the constructor, not set
+            # afterward: pyfluidsynth's Synth.__init__ calls
+            # new_fluid_synth(self.settings) - the actual DSP engine
+            # creation - using whatever synth.sample-rate is in the
+            # settings object AT THAT MOMENT (default 44100, since it's
+            # a constructor kwarg with that default). A later
+            # self._fs.setting("synth.sample-rate", ...) call only updates
+            # the stored settings value; it does not reinitialize the
+            # already-created engine. Reported bug, live-tested and
+            # confirmed by direct measurement: with the old code (rate set
+            # only via .setting() after construction, as it used to be
+            # here), audio was actually generated at 44100 Hz while WASAPI
+            # opened the output stream at 48000 Hz (matching the real
+            # device rate) - a 48000/44100 speed-up, audible as everything
+            # playing about a semitone sharp (and, less obviously without
+            # A/B comparison, slightly fast) - not a soundfont, MIDI
+            # number, or audio-device problem.
+            self._fs = fluidsynth.Synth(gain=0.7, samplerate=48000.0)
 
             # Optimise for low latency using WASAPI
-            self._fs.setting("synth.sample-rate", 48000.0)
             self._fs.setting("audio.period-size", 128)
             self._fs.setting("audio.periods", 2)
             self._fs.start(driver="wasapi")
