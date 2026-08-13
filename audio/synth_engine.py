@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple
 from PySide6.QtCore import QTimer
 
 from audio.metronome import METRONOME_CHANNEL
+from audio.performance_cue import PERFORMANCE_CUE_CHANNEL
 from audio.position_announcer import POSITION_ANNOUNCER_CHANNEL
 
 # --- DLL RESOLUTION FROM SUBFOLDER ---
@@ -75,6 +76,13 @@ class SynthEngine:
         # that module's own comment for why a shared channel can't work
         # here (FluidSynth releases by channel+key, not by preset).
         self._active_announcement: Optional[Tuple[int, int]] = None  # (channel, note)
+
+        # Ref 29: the Performance region's change cue gets its own parallel
+        # slot too, same reasoning as _active_click/_active_announcement
+        # above - its own dedicated channel (PERFORMANCE_CUE_CHANNEL) so it
+        # can't collide with either of them or with a note ringing at the
+        # same instant.
+        self._active_performance_cue: Optional[Tuple[int, int]] = None  # (channel, note)
 
         if not FLUIDSYNTH_AVAILABLE:
             print("[WARN] pyfluidsynth or DLLs missing. Sound engine disabled.")
@@ -160,8 +168,13 @@ class SynthEngine:
 
         PAN_FULL_LEFT = 0
         PAN_FULL_RIGHT = 127
+        PAN_CENTER = 64
         self._fs.cc(POSITION_ANNOUNCER_CHANNEL, 10, PAN_FULL_LEFT)
         self._fs.cc(METRONOME_CHANNEL, 10, PAN_FULL_RIGHT)
+        # Ref 29: center pan - unlike the click/announcer pair, this cue has
+        # no directional meaning to preserve, it just needs its own channel
+        # (see PERFORMANCE_CUE_CHANNEL's own comment).
+        self._fs.cc(PERFORMANCE_CUE_CHANNEL, 10, PAN_CENTER)
 
     def set_program(self, channel: int, program: int):
         if self._fs is None or self._sfid is None:
@@ -182,6 +195,7 @@ class SynthEngine:
 
         self._stop_click()
         self._stop_announcement()
+        self._stop_performance_cue()
 
     def _stop_click(self):
         """Silences a still-ringing metronome click, if any (E8). Separate
@@ -206,6 +220,33 @@ class SynthEngine:
         channel, note = self._active_announcement
         self._fs.noteoff(channel, note)
         self._active_announcement = None
+
+    def _stop_performance_cue(self):
+        """Silences a still-ringing performance-region cue, if any (Ref 29)
+        - the cue counterpart of _stop_click/_stop_announcement above, on
+        its own channel/active-note slot for the same reason."""
+        if self._fs is None or self._active_performance_cue is None:
+            return
+        channel, note = self._active_performance_cue
+        self._fs.noteoff(channel, note)
+        self._active_performance_cue = None
+
+    def play_performance_cue(self, channel: int, bank: int, program: int, pitch: int, velocity: int):
+        """Ref 29: sounds the "check Region 5" cue - same shape and
+        one-shot-sample reasoning as play_click/play_word above (see
+        play_click's own comment for why no note-off scheduling is needed).
+        Its own channel/active-note bookkeeping (_active_performance_cue) so
+        it can't collide with a click, a spoken word, or a note ringing at
+        the same instant."""
+        if self._fs is None or self._click_sfid is None:
+            return
+
+        self._stop_performance_cue()
+
+        ch = channel & 0x0F
+        self._fs.program_select(ch, self._click_sfid, bank, program)
+        self._fs.noteon(ch, pitch, velocity)
+        self._active_performance_cue = (ch, pitch)
 
     def play_click(self, channel: int, bank: int, program: int, pitch: int, velocity: int):
         """E8/Ref 14: sounds a metronome click on its own dedicated channel,

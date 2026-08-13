@@ -3,10 +3,14 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from models import vocabulary
+from models.ending_span import EndingSpan
 from models.event_slice import EventSlice
+from models.hairpin_span import HairpinSpan
 from models.key_signatures import FIFTHS_MAP
 from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
+from models.performance_region_row import PerformanceRegionRow
+from models.repeat_span import RepeatSpan
 from models.tempo_change import TempoChange
 from parsers.timeline_builder import TimelineBuilder
 from persistence.score_config import ScoreConfig
@@ -101,6 +105,16 @@ class MusicData:
     # preference, not a per-score one like metronome_enabled above.
     uk_terms: bool = False
 
+    # Ref 29 "Performance region": repeat-barline pairs, 1st/2nd-ending
+    # brackets, and crescendo/diminuendo hairpins - populated from
+    # TimelineBuilder as a side effect of build() (see __post_init__), same
+    # pattern as tempo_changes above. total_measures is the whole-score bar
+    # count (for the Performance Report), sourced the same way.
+    repeat_spans: List[RepeatSpan] = field(default_factory=list)
+    ending_spans: List[EndingSpan] = field(default_factory=list)
+    hairpin_spans: List[HairpinSpan] = field(default_factory=list)
+    total_measures: int = 0
+
     def __post_init__(self):
         # F2/Ref 15 AC4: the live, per-instance, mutable rendering order -
         # DISPLAY_ATTRIBUTE_ORDER (defined below, alongside the rest of the
@@ -114,6 +128,10 @@ class MusicData:
             self.timeline_slices = builder.build()
             self.tempo_changes = builder.tempo_changes
             self._beat_markers = builder.beat_markers
+            self.repeat_spans = builder.repeat_spans
+            self.ending_spans = builder.ending_spans
+            self.hairpin_spans = builder.hairpin_spans
+            self.total_measures = builder.total_measures
             self.active_event_index = 0
         else:
             self._beat_markers: List[EventSlice] = []
@@ -140,6 +158,9 @@ class MusicData:
         self._sounding_bounds_cache: Optional[Tuple[int, int]] = None
         self._sounding_bounds_computed: bool = False
         self._first_visible_index_by_measure_cache: Optional[Dict[int, int]] = None
+        # Ref 29: same caching rationale, for Region 5's Ctrl+End ("last
+        # note of the end bar") lookup.
+        self._last_visible_index_by_measure_cache: Optional[Dict[int, int]] = None
 
     def get_current_slice(self) -> Optional[EventSlice]:
         if 0 <= self.active_event_index < len(self.timeline_slices):
@@ -351,6 +372,37 @@ class MusicData:
         (C2) sympathetic to what's actually visible, the same way plain
         Left/Right already are via _slice_has_visible_notes."""
         return self._first_visible_index_by_measure().get(measure_number)
+
+    def _last_visible_index_by_measure(self) -> Dict[int, int]:
+        """measure_number -> index of its LAST visible event. Ref 29:
+        Region 5's Ctrl+End on a repeat/ending row jumps to the last
+        sounding note of the span's end bar, not the first - nothing else
+        in the app had this "last event in a measure" concept before, so it
+        gets its own cache alongside _first_visible_index_by_measure's."""
+        if self._last_visible_index_by_measure_cache is None:
+            cache: Dict[int, int] = {}
+            for i, s in enumerate(self.timeline_slices):
+                if self._slice_is_navigable(i):
+                    cache[s.measure] = i
+            self._last_visible_index_by_measure_cache = cache
+        return self._last_visible_index_by_measure_cache
+
+    def last_visible_event_index_of_measure(self, measure_number: int) -> Optional[int]:
+        """Ref 29: like first_visible_event_index_of_measure, but the LAST
+        visible event of the measure - Region 5's Ctrl+End target."""
+        return self._last_visible_index_by_measure().get(measure_number)
+
+    def slice_index_at_or_after_quarters(self, quarters_from_start: float) -> Optional[int]:
+        """Ref 29: first timeline_slices index at/after the given elapsed-
+        quarters position - resolves a HairpinSpan row's jump target, since
+        a wedge can start/stop mid-measure and the measure-only
+        first/last_visible_event_index_of_measure lookups aren't
+        fine-grained enough. timeline_slices is already sorted by
+        (measure, quarters_from_start)."""
+        for i, s in enumerate(self.timeline_slices):
+            if s.quarters_from_start >= quarters_from_start:
+                return i
+        return None
 
     def move_timeline_left_by_measure(self) -> bool:
         """Ctrl+Left (Ref 3): jump to the first visible event of the current
@@ -848,6 +900,147 @@ class MusicData:
             if 0 <= i < len(notes) and notes[i].midi_pitch is not None
         ]
 
+    def get_performance_region_rows(self, index: Optional[int] = None) -> List[PerformanceRegionRow]:
+        """Ref 29: Region 5's rows - two per RepeatSpan/EndingSpan/
+        HairpinSpan active at the given position (defaults to the cursor,
+        active_event_index): a start line and an end line. Repeat/ending
+        containment is a plain measure-number range check (barlines only
+        occur at measure boundaries); hairpins compare quarters_from_start,
+        since a wedge can start/stop mid-measure. Stable order (repeats,
+        then endings, then hairpins, each in span-list order) so
+        MainWindow's active-set diff (comparing label lists) is
+        deterministic. bar/measure wording goes through vocabulary.bar_word
+        (F4's uk_terms dialect toggle) rather than a hardcoded literal, the
+        same as get_status_bar_fields."""
+        slice_ = (
+            self.get_current_slice()
+            if index is None
+            else (self.timeline_slices[index] if 0 <= index < len(self.timeline_slices) else None)
+        )
+        if slice_ is None:
+            return []
+
+        bar_word = vocabulary.bar_word(self.uk_terms)
+        rows: List[PerformanceRegionRow] = []
+
+        for span in self.repeat_spans:
+            if span.start_measure <= slice_.measure <= span.end_measure:
+                rows.append(
+                    PerformanceRegionRow(
+                        label=f"Repeat start: {bar_word} {span.start_measure}",
+                        jump_target_measure=span.start_measure,
+                    )
+                )
+                rows.append(
+                    PerformanceRegionRow(
+                        label=f"Repeat end: {bar_word} {span.end_measure}",
+                        jump_target_measure=span.end_measure,
+                    )
+                )
+
+        for span in self.ending_spans:
+            if span.start_measure <= slice_.measure <= span.end_measure:
+                rows.append(
+                    PerformanceRegionRow(
+                        label=f"Ending {span.number} start: {bar_word} {span.start_measure}",
+                        jump_target_measure=span.start_measure,
+                    )
+                )
+                rows.append(
+                    PerformanceRegionRow(
+                        label=f"Ending {span.number} end: {bar_word} {span.end_measure}",
+                        jump_target_measure=span.end_measure,
+                    )
+                )
+
+        for span in self.hairpin_spans:
+            if span.start_quarters_from_start <= slice_.quarters_from_start <= span.end_quarters_from_start:
+                kind_label = span.kind.capitalize()
+                rows.append(
+                    PerformanceRegionRow(
+                        label=(
+                            f"{kind_label} start: "
+                            f"{self._bar_beat_label(bar_word, span.start_measure, span.start_beat_position)}"
+                        ),
+                        jump_target_measure=span.start_measure,
+                        jump_target_quarters=span.start_quarters_from_start,
+                    )
+                )
+                rows.append(
+                    PerformanceRegionRow(
+                        label=(
+                            f"{kind_label} end: "
+                            f"{self._bar_beat_label(bar_word, span.end_measure, span.end_beat_position)}"
+                        ),
+                        jump_target_measure=span.end_measure,
+                        jump_target_quarters=span.end_quarters_from_start,
+                    )
+                )
+
+        return rows
+
+    @staticmethod
+    def _bar_beat_label(bar_word: str, measure: int, beat_position: float) -> str:
+        """"bar N" alone when beat_position is beat 1 (the marker lands
+        exactly on the downbeat, so the bar number alone already pins it
+        down - repeat/ending rows are always this case, since barlines only
+        occur at measure boundaries); "bar N beat B" otherwise, same wording
+        as get_status_bar_fields's own "Bar N beat B" so a beat position
+        reads identically everywhere in the app. User-requested (Ref 29
+        follow-up): only markers that actually fall mid-bar need a beat
+        called out at all."""
+        if float(beat_position) == 1.0:
+            return f"{bar_word} {measure}"
+        beat_str = str(int(beat_position)) if float(beat_position).is_integer() else str(beat_position)
+        return f"{bar_word} {measure} beat {beat_str}"
+
+    def get_performance_report_lines(self) -> List[str]:
+        """Ref 29: the read-only Performance Report's content - a flat,
+        whole-score summary independent of the current Region 2 filter
+        state (unlike get_region_3_data etc., which follow
+        active_voice_filter) since the report describes the shape of the
+        piece, not the current filtered view."""
+        # Reuses get_region_1_data() wholesale (same dict Region 1 itself
+        # displays) rather than cherry-picking assumed keys like "Title"/
+        # "Composer" - credits_dict's keys come from each file's own
+        # <credit-type> text (MusicXMLReader._extract_credits_etree), so
+        # they aren't guaranteed to match any fixed name.
+        lines: List[str] = [f"{k}: {v}" for k, v in self.get_region_1_data().items()]
+
+        bar_word = vocabulary.bar_word(self.uk_terms).capitalize()
+        anacrusis_present = any(s.measure == 0 for s in self.timeline_slices)
+        lines.append(f"Anacrusis: {'Present' if anacrusis_present else 'Not present'}")
+        lines.append(f"Number of {bar_word.lower()}s: {self.total_measures}")
+
+        note_counts: Dict[str, int] = {}
+        for s in self._real_timeline_slices:
+            for n in s.notes:
+                if n.midi_pitch is not None:
+                    note_counts[n.part_name] = note_counts.get(n.part_name, 0) + 1
+        lines.append(f"Instruments: {len(self.parts_info)}")
+        for p in self.parts_info:
+            lines.append(f"{p.name}: {note_counts.get(p.name, 0)} notes")
+
+        lines.append(f"Repeated sections: {len(self.repeat_spans)}")
+        for span in self.repeat_spans:
+            lines.append(
+                f"Repeat: {bar_word} {span.start_measure} to {bar_word} {span.end_measure}"
+            )
+
+        lines.append(f"Endings: {len(self.ending_spans)}")
+        for span in self.ending_spans:
+            lines.append(
+                f"Ending {span.number}: {bar_word} {span.start_measure} to {bar_word} {span.end_measure}"
+            )
+
+        lines.append(f"Performance markers: {len(self.hairpin_spans)}")
+        for span in self.hairpin_spans:
+            lines.append(
+                f"{span.kind.capitalize()}: {bar_word} {span.start_measure} to {bar_word} {span.end_measure}"
+            )
+
+        return lines
+
     # Ref 12 AC2: hard playback tempo boundaries, expressed in the score's
     # own DISPLAY units (tempo_beat_unit_name) - what the user actually
     # reads and types, not the internal quarter-note equivalent.
@@ -937,7 +1130,12 @@ class MusicData:
     # the channel SynthEngine.play_word() uses, the same guarantee
     # PERCUSSION_CHANNEL already gives the click.
     POSITION_ANNOUNCER_CHANNEL = 8
-    RESERVED_CHANNELS = {POSITION_ANNOUNCER_CHANNEL, PERCUSSION_CHANNEL}
+    # Ref 29: also reserved, for the Performance region's "something
+    # changed" cue - same number as audio/performance_cue.py's
+    # PERFORMANCE_CUE_CHANNEL, duplicated for the same reason
+    # POSITION_ANNOUNCER_CHANNEL's own comment gives.
+    PERFORMANCE_CUE_CHANNEL = 7
+    RESERVED_CHANNELS = {POSITION_ANNOUNCER_CHANNEL, PERCUSSION_CHANNEL, PERFORMANCE_CUE_CHANNEL}
     MAX_MIDI_CHANNELS = 16
 
     def get_channel_for_part(self, part_id: str) -> int:

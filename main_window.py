@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from audio.metronome import click_event_for_beat
+from audio.performance_cue import performance_cue_event
 from audio.position_announcer import announcement_event_for_beat
 from audio.sequencer import Sequencer
 from audio.synth_engine import SynthEngine
@@ -31,9 +32,11 @@ from persistence.app_settings import AppSettings
 from widgets.about_dialog import AboutDialog
 from widgets.attribute_order_dialog import AttributeOrderDialog
 from widgets.goto_measure_dialog import GotoMeasureDialog
+from widgets.performance_report_dialog import PerformanceReportDialog
 from widgets.region2_list_widget import Region2ListWidget
 from widgets.region2_manager import node_breadcrumb, voice_tuples_for_node
 from widgets.region4_table_widget import Region4TableWidget
+from widgets.region5_list_widget import Region5ListWidget
 from widgets.region_table_widget import RegionTableWidget
 from widgets.status_bar_widget import StatusBarWidget
 from widgets.tempo_offset_dialog import TempoOffsetDialog
@@ -114,6 +117,19 @@ class MainWindow(QMainWindow):
         # that score's MusicData) - (re)created in _on_score_loaded.
         self.sequencer: Sequencer | None = None
 
+        # Ref 29: the labels currently shown in Region 5, used by
+        # _refresh_region_5 to detect when the active span set actually
+        # changed (vs. just being recomputed after some unrelated update) -
+        # only a real change rebuilds the list and fires the audio cue.
+        # None (not []) is the sentinel for "never rendered yet" - live-
+        # tested bug: starting this at [] made the very first render (an
+        # empty score-opening position, whose own rows are also []) compare
+        # equal and get skipped, leaving Region 5 with no "None" placeholder
+        # row at all rather than actually showing one. Reset to None in
+        # _on_score_loaded so a freshly loaded file always renders at least
+        # once and isn't diffed against the previous file's leftover state.
+        self._last_performance_row_labels: Optional[List[str]] = None
+
         # F4/D-6/Ref 27: a GLOBAL preference (persistence/app_settings.py),
         # not a per-score one like metronome_enabled - MusicData is wholly
         # replaced on every file load (_on_score_loaded), so this lives here
@@ -160,15 +176,31 @@ class MainWindow(QMainWindow):
         # for appending/removing an attribute in Region 3's note display.
         self.region_4 = self.create_property_list([], table_cls=Region4TableWidget)
 
-        grid_layout.addWidget(self.region_1, 0, 0)
-        grid_layout.addWidget(self.region_2, 0, 1)
-        grid_layout.addWidget(self.region_3, 1, 0)
-        grid_layout.addWidget(self.region_4, 1, 1)
+        # Region 5 (Ref 29, the "Performance region"): duration-spanning
+        # markers (repeat barlines, 1st/2nd endings, crescendo/diminuendo
+        # hairpins) active at the cursor's current position - see
+        # widgets/region5_list_widget.py.
+        self.region_5 = Region5ListWidget()
+        self.region_5.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+
+        # Ref 29: row 1 = 2 regions (metadata, parts), row 2 = 3 regions
+        # (notes, attributes, performance) - a deliberate departure from the
+        # original strict 2x2, agreed with the user, since the visual
+        # layout matters far less than consistent region numbering for this
+        # app's screen-reader-first users; sighted collaborators still see
+        # a sensible aligned grid. A 6-column grid (LCM of 2 and 3) with
+        # column spans keeps both rows aligned under one shared grid rather
+        # than needing two separate nested layouts.
+        grid_layout.addWidget(self.region_1, 0, 0, 1, 3)
+        grid_layout.addWidget(self.region_2, 0, 3, 1, 3)
+        grid_layout.addWidget(self.region_3, 1, 0, 1, 2)
+        grid_layout.addWidget(self.region_4, 1, 2, 1, 2)
+        grid_layout.addWidget(self.region_5, 1, 4, 1, 2)
 
         grid_layout.setRowStretch(0, 1)
         grid_layout.setRowStretch(1, 1)
-        grid_layout.setColumnStretch(0, 1)
-        grid_layout.setColumnStretch(1, 1)
+        for col in range(6):
+            grid_layout.setColumnStretch(col, 1)
 
         # C6: real QMainWindow status bar so NVDA+End ("report status bar")
         # works via Qt's native accessibility role.
@@ -178,11 +210,11 @@ class MainWindow(QMainWindow):
         # Region cycling deliberately does NOT use QWidget.setTabOrder/
         # focusNextChild: Qt's focus chain is ONE shared window-wide doubly
         # linked ring, and setTabOrder(a, b) works by relocating b's node in
-        # that ring. Closing a 4-widget loop needs region_1 to be relocated
-        # too (the wrap-around region_4->region_1 call), which resets
+        # that ring. Closing an N-widget loop needs region_1 to be relocated
+        # too (the wrap-around region_N->region_1 call), which resets
         # region_1's own outgoing pointer as a side effect - silently
         # breaking the region_1->region_2 edge set earlier. This isn't
-        # fixable by reordering the calls: with 4 widgets each used once as
+        # fixable by reordering the calls: with every widget used once as
         # a source and once as a target, the dependency between the calls is
         # circular. So each region widget's keyPressEvent calls
         # focus_next_region/focus_previous_region below directly instead,
@@ -292,6 +324,15 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self.clear_preferences_action)
         self._refresh_clear_preferences_action()
 
+        # Ref 29: read-only whole-score summary (title/composer/tempo/key/
+        # time-sig, instrument note counts, anacrusis, bar count, repeat/
+        # ending/hairpin summary) - see widgets/performance_report_dialog.py.
+        # No dedicated shortcut; R doesn't collide with Open Local Folder's
+        # F or Clear Preferences' C above.
+        self.performance_report_action = QAction("Performance &Report...", self)
+        self.performance_report_action.triggered.connect(self._show_performance_report_dialog)
+        edit_menu.addAction(self.performance_report_action)
+
         # C8: Navigation duplicates, as menu items, the keyboard-only ways of
         # moving to the start, end, or a specific measure (Refs 5, 6) - for
         # anyone who prefers a menu over typing into the Note region.
@@ -327,12 +368,37 @@ class MainWindow(QMainWindow):
         self.move_to_notes_action.setShortcut(QKeySequence("N"))
         self.move_to_notes_action.triggered.connect(self._navigation_menu_move_to_notes)
 
+        # Ref 29 follow-up: a direct jump shortcut for every region, not
+        # just Notes - user-requested letters, chosen to avoid the existing
+        # bare F/S/D tempo shortcuts (S was the user's first choice for
+        # Metadata, but that collides with tempo_slower_shortcut below; I
+        # was picked instead after flagging the conflict).
+        self.move_to_metadata_action = QAction("Move to &Info", self)
+        self.move_to_metadata_action.setShortcut(QKeySequence("I"))
+        self.move_to_metadata_action.triggered.connect(self._navigation_menu_move_to_metadata)
+
+        self.move_to_parts_action = QAction("Move to Parts List (&V)", self)
+        self.move_to_parts_action.setShortcut(QKeySequence("V"))
+        self.move_to_parts_action.triggered.connect(self._navigation_menu_move_to_parts)
+
+        self.move_to_attributes_action = QAction("Move to &Attributes", self)
+        self.move_to_attributes_action.setShortcut(QKeySequence("A"))
+        self.move_to_attributes_action.triggered.connect(self._navigation_menu_move_to_attributes)
+
+        self.move_to_performance_action = QAction("Move to &Performance", self)
+        self.move_to_performance_action.setShortcut(QKeySequence("P"))
+        self.move_to_performance_action.triggered.connect(self._navigation_menu_move_to_performance)
+
         navigation_menu.addAction(self.first_measure_action)
         navigation_menu.addAction(self.last_measure_action)
         navigation_menu.addSeparator()
         navigation_menu.addAction(self.goto_measure_action)
         navigation_menu.addSeparator()
+        navigation_menu.addAction(self.move_to_metadata_action)
+        navigation_menu.addAction(self.move_to_parts_action)
         navigation_menu.addAction(self.move_to_notes_action)
+        navigation_menu.addAction(self.move_to_attributes_action)
+        navigation_menu.addAction(self.move_to_performance_action)
 
         self._update_navigation_actions_enabled()
 
@@ -412,10 +478,10 @@ class MainWindow(QMainWindow):
         help_menu.addAction(self.about_action)
 
     def _region_cycle_order(self) -> list:
-        return [self.region_1, self.region_2, self.region_3, self.region_4]
+        return [self.region_1, self.region_2, self.region_3, self.region_4, self.region_5]
 
     def focus_next_region(self, current):
-        """Tab within the regions area (the MAA): cycles 1->2->3->4->1 and
+        """Tab within the regions area (the MAA): cycles 1->2->3->4->5->1 and
         cannot leave the MAA. Called directly by each region widget's
         keyPressEvent rather than relying on Qt's global focus chain - see
         the comment in setup_ui for why setTabOrder can't do this here."""
@@ -439,6 +505,18 @@ class MainWindow(QMainWindow):
 
     def _navigation_menu_move_to_notes(self):
         self.region_3.setFocus()
+
+    def _navigation_menu_move_to_metadata(self):
+        self.region_1.setFocus()
+
+    def _navigation_menu_move_to_parts(self):
+        self.region_2.setFocus()
+
+    def _navigation_menu_move_to_attributes(self):
+        self.region_4.setFocus()
+
+    def _navigation_menu_move_to_performance(self):
+        self.region_5.setFocus()
 
     def _goto_measure_action_text(self) -> str:
         return f"&Go to {bar_word(self._uk_terms).capitalize()}..."
@@ -533,6 +611,20 @@ class MainWindow(QMainWindow):
         self._on_region_3_selection_changed()
         dialog.refresh_list(self._attribute_order_pairs_for_node(node), preferred_key=attribute_key)
 
+    def _show_performance_report_dialog(self):
+        """Ref 29: read-only, no live signal wiring - construct with the
+        current data, exec(), restore whatever had focus before (same
+        previous-focus-restore pattern as _show_tempo_offset_dialog, since
+        there's no obvious "next place" for focus the way GotoMeasureDialog
+        has Region 3)."""
+        if not self._music_data:
+            return
+        previous_focus = self.focusWidget()
+        dialog = PerformanceReportDialog(self, lines=self._music_data.get_performance_report_lines())
+        dialog.exec()
+        if previous_focus is not None:
+            previous_focus.setFocus()
+
     def create_property_list(self, items: list, table_cls: type = RegionTableWidget) -> RegionTableWidget:
         table = table_cls(len(items), 2)
         table.setHorizontalHeaderLabels(["Property", "Value"])
@@ -602,6 +694,9 @@ class MainWindow(QMainWindow):
         if saved_config is not None:
             self._music_data.apply_config(saved_config)
         self._refresh_clear_preferences_action()
+        # Ref 29: a freshly loaded score's Region 5 state must not be
+        # diffed against the previous file's leftover active-span labels.
+        self._last_performance_row_labels = None
         self.sequencer = Sequencer(music_data, self.synth, parent=self)
         self.sequencer.step_played.connect(self._on_sequencer_step)
         self.sequencer.finished.connect(self._on_sequencer_finished)
@@ -1095,8 +1190,18 @@ class MainWindow(QMainWindow):
         self._on_region_3_selection_changed()
         self._update_status_bar()
 
+        # Ref 29: sound the notes (and their retrigger-driven
+        # stop_all_notes()) before the performance cue, not after - reported
+        # bug, live-tested: with the cue fired first, play_chord's default
+        # retrigger=True immediately called stop_all_notes() right behind
+        # it, cutting the cue off almost as soon as it started. Playback
+        # (play_all=False here; the Sequencer already sounded its own chord
+        # with retrigger=False, which never calls stop_all_notes()) never
+        # hit this, which is why the cue only ever seemed to work there.
         if play_all:
             self._play_selected_region_3_notes()
+
+        self._refresh_region_5()
 
     def _refresh_region_3_labels(self):
         """Re-renders Region 3's row text after a Ref 15 AC4 attribute
@@ -1117,6 +1222,67 @@ class MainWindow(QMainWindow):
         self.region_3.blockSignals(False)
 
         self._on_region_3_selection_changed()
+
+    def _refresh_region_5(self):
+        """Ref 29: recomputes Region 5's rows for the cursor's current
+        position, hooked into _update_timeline_views' single choke point -
+        every path that moves active_event_index (arrow/measure/typed-
+        measure navigation, Home/End, Region 2 filter changes, Sequencer/
+        Ref-10 playback stepping, initial load) already funnels through
+        there, so no per-navigation-method wiring is needed here.
+
+        Skips the rebuild entirely (not just the audio cue) when the active
+        label set is unchanged from last time - so Region 5's own focus/
+        selection isn't reset on every single navigation step while the
+        cursor stays inside the same span(s), and the "something changed,
+        check Region 5" cue only fires on a genuine change."""
+        if not self._music_data:
+            return
+        rows = self._music_data.get_performance_region_rows()
+        labels = [r.label for r in rows]
+        if labels == self._last_performance_row_labels:
+            return
+        self.region_5.refresh_list(rows)
+        self.synth.play_performance_cue(*performance_cue_event())
+        self._last_performance_row_labels = labels
+
+    def jump_to_performance_span_start(self):
+        """Ref 29: Region 5's Ctrl+Home - jumps the timeline cursor to the
+        focused row's span start. A hairpin row's jump_target_quarters is
+        set (a wedge can start mid-measure); a repeat/ending row's is None
+        (barlines only occur at measure boundaries), resolved via the plain
+        measure lookup instead."""
+        self._jump_to_performance_span(is_start=True)
+
+    def jump_to_performance_span_end(self):
+        """Ref 29: Region 5's Ctrl+End - jumps to the focused row's span
+        end. For a repeat/ending row this lands on the LAST sounding note
+        of the end bar (not the first), per the user's own decision on this
+        - the one place this app has a "last event in a measure" jump
+        target. A hairpin row's end can land mid-measure, so it always uses
+        the quarters-based lookup regardless."""
+        self._jump_to_performance_span(is_start=False)
+
+    def _jump_to_performance_span(self, is_start: bool):
+        if not self._music_data:
+            return
+        row = self.region_5.current_row_data()
+        if row is None:
+            return
+
+        if row.jump_target_quarters is not None:
+            index = self._music_data.slice_index_at_or_after_quarters(row.jump_target_quarters)
+        elif is_start:
+            index = self._music_data.first_visible_event_index_of_measure(row.jump_target_measure)
+        else:
+            index = self._music_data.last_visible_event_index_of_measure(row.jump_target_measure)
+
+        if index is None:
+            self._play_boundary_cue()
+            return
+
+        self._music_data.active_event_index = index
+        self._update_timeline_views(play_all=True)
 
     def _update_status_bar(self):
         if not self._music_data:
@@ -1212,7 +1378,7 @@ class MainWindow(QMainWindow):
     def _on_focus_changed(self, old, now):
         """C7: remembers which region last held focus, so F6's "regions"
         pane stop can restore it rather than always landing on Region 1."""
-        if now in (self.region_1, self.region_2, self.region_3, self.region_4):
+        if now in (self.region_1, self.region_2, self.region_3, self.region_4, self.region_5):
             self._last_focused_region = now
         self._update_navigation_actions_enabled(now)
 

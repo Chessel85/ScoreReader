@@ -43,12 +43,13 @@ def test_constructs_without_touching_audio(window, null_synth):
     assert not null_synth.closed
 
 
-def test_four_distinct_regions_are_tab_focusable(window):
+def test_five_distinct_regions_are_tab_focusable(window):
     """Groundwork for Ref 1 AC2/AC3. Verifying the cycle actually wraps needs
-    a shown window, so that assertion waits for the Ref 4 work in C1."""
-    regions = [window.region_1, window.region_2, window.region_3, window.region_4]
+    a shown window, so that assertion waits for the Ref 4 work in C1. Ref 29
+    added Region 5 (the Performance region) alongside the original four."""
+    regions = [window.region_1, window.region_2, window.region_3, window.region_4, window.region_5]
 
-    assert len(set(id(r) for r in regions)) == 4
+    assert len(set(id(r) for r in regions)) == 5
     for region in regions:
         assert region.focusPolicy().name in ("TabFocus", "StrongFocus")
 
@@ -346,37 +347,42 @@ def test_shift_f6_also_toggles_between_regions_and_status_bar(
     assert window.focusWidget() is window.region_1
 
 
-def test_tab_cycles_through_all_four_regions_and_wraps(
+def test_tab_cycles_through_all_five_regions_and_wraps(
     window, qtbot, null_synth, minimal_score
 ):
     """Regression: Tab used to be forwarded to window().focusNextChild(),
-    relying on QWidget.setTabOrder to have built a clean 4-widget loop.
+    relying on QWidget.setTabOrder to have built a clean N-widget loop.
     Qt's focus chain is ONE shared window-wide ring, and setTabOrder(a, b)
     works by relocating b's node into it - closing the loop needs region_1
-    relocated too (the wrap-around region_4->region_1 call), which resets
+    relocated too (the wrap-around region_N->region_1 call), which resets
     region_1's own outgoing pointer as a side effect, silently breaking the
     region_1->region_2 edge set by an earlier call. This isn't fixable by
-    reordering the calls: with 4 widgets each used once as a source and once
+    reordering the calls: with every widget used once as a source and once
     as a target, the dependency between the calls is circular - some edge
     always breaks. Fixed by having MainWindow.focus_next_region move focus
-    directly instead of going through Qt's global chain at all."""
+    directly instead of going through Qt's global chain at all. Ref 29
+    added Region 5 (the Performance region) to the cycle."""
     load_and_wait(window, qtbot, minimal_score)
     _show(window, qtbot)
     _focus(window.region_1)
 
-    for expected in (window.region_2, window.region_3, window.region_4, window.region_1):
+    for expected in (
+        window.region_2, window.region_3, window.region_4, window.region_5, window.region_1
+    ):
         qtbot.keyClick(window.focusWidget(), Qt.Key.Key_Tab)
         assert window.focusWidget() is expected
 
 
-def test_shift_tab_cycles_through_all_four_regions_in_reverse(
+def test_shift_tab_cycles_through_all_five_regions_in_reverse(
     window, qtbot, null_synth, minimal_score
 ):
     load_and_wait(window, qtbot, minimal_score)
     _show(window, qtbot)
     _focus(window.region_1)
 
-    for expected in (window.region_4, window.region_3, window.region_2, window.region_1):
+    for expected in (
+        window.region_5, window.region_4, window.region_3, window.region_2, window.region_1
+    ):
         qtbot.keyClick(window.focusWidget(), Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier)
         assert window.focusWidget() is expected
 
@@ -604,6 +610,10 @@ def test_navigation_menu_items_use_home_and_end_shortcuts(window):
     assert window.last_measure_action.shortcut() == QKeySequence(Qt.Key.Key_End)
     assert window.goto_measure_action.shortcut() == QKeySequence("Ctrl+G")
     assert window.move_to_notes_action.shortcut() == QKeySequence("N")
+    assert window.move_to_metadata_action.shortcut() == QKeySequence("I")
+    assert window.move_to_parts_action.shortcut() == QKeySequence("V")
+    assert window.move_to_attributes_action.shortcut() == QKeySequence("A")
+    assert window.move_to_performance_action.shortcut() == QKeySequence("P")
 
 
 def test_first_and_last_note_actions_are_only_enabled_in_the_note_region(
@@ -646,6 +656,35 @@ def test_move_to_notes_action_focuses_region_3_from_any_pane(
         qtbot.keyClick(window.focusWidget(), Qt.Key.Key_N)
 
         assert window.focusWidget() is window.region_3
+
+
+@pytest.mark.parametrize(
+    "key, target_region_attr",
+    [
+        (Qt.Key.Key_I, "region_1"),
+        (Qt.Key.Key_V, "region_2"),
+        (Qt.Key.Key_A, "region_4"),
+        (Qt.Key.Key_P, "region_5"),
+    ],
+)
+def test_move_to_region_actions_focus_their_region_from_any_pane(
+    window, qtbot, null_synth, minimal_score, key, target_region_attr
+):
+    """Ref 29 follow-up (user-requested): I/V/A/P mirror Move to Notes (N)
+    for the other four regions - same "stays enabled everywhere" behaviour,
+    since each one's whole job is getting focus there from anywhere."""
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+    target = getattr(window, target_region_attr)
+
+    for start in (window.region_1, window.region_2, window.region_3, window.region_4, window.region_5):
+        if start is target:
+            continue
+        _focus(start)
+
+        qtbot.keyClick(window.focusWidget(), key)
+
+        assert window.focusWidget() is target
 
 
 def test_goto_measure_dialog_shows_with_focus_on_the_edit_field(window, qtbot):
@@ -1768,4 +1807,106 @@ def test_a_sub_staffs_own_toggle_survives_reload_under_an_off_part(
     assert window.region_2._current_visible_nodes[node_row("staff_P1_2")].enabled is False, (
         "staff 2 was individually off before the part was toggled off - must stay off"
     )
+
+
+# --- Ref 29: Performance region (Region 5) + Performance Report --------
+
+def _region_5_labels(window):
+    return [window.region_5.item(i).text() for i in range(window.region_5.count())]
+
+
+def test_region_5_shows_none_outside_any_span(window, qtbot, repeats_and_endings_score):
+    load_and_wait(window, qtbot, repeats_and_endings_score)  # starts on measure 1
+
+    assert _region_5_labels(window) == ["None"]
+
+
+def test_navigating_into_a_repeated_section_updates_region_5_and_plays_the_cue(
+    window, qtbot, null_synth, repeats_and_endings_score
+):
+    load_and_wait(window, qtbot, repeats_and_endings_score)
+    null_synth.performance_cues.clear()
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Right)  # measure 1 -> measure 2 (repeat opens here)
+
+    assert _region_5_labels(window) == ["Repeat start: measure 2", "Repeat end: measure 3"]
+    assert len(null_synth.performance_cues) == 1
+
+
+def test_performance_cue_does_not_refire_while_the_active_span_set_is_unchanged(
+    window, qtbot, null_synth, repeats_and_endings_score
+):
+    """measure 2 has two notes (two navigable slices), both inside the same
+    repeat span - only the first move into the span should fire the cue."""
+    load_and_wait(window, qtbot, repeats_and_endings_score)
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Right)  # -> measure 2, note 1
+    null_synth.performance_cues.clear()
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Right)  # -> measure 2, note 2 (same active spans)
+
+    assert null_synth.performance_cues == []
+
+
+def test_performance_cue_fires_again_when_leaving_a_repeated_section(
+    window, qtbot, null_synth, repeats_and_endings_score
+):
+    load_and_wait(window, qtbot, repeats_and_endings_score)
+    for _ in range(4):  # measure 1 -> measure 2 note 1/2 -> measure 3 -> measure 4
+        qtbot.keyClick(window.region_3, Qt.Key.Key_Right)
+    null_synth.performance_cues.clear()
+
+    assert _region_5_labels(window) == [
+        "Ending 2 start: measure 4",
+        "Ending 2 end: measure 4",
+    ]
+
+
+def test_ctrl_home_on_region_5_jumps_to_the_span_start(
+    window, qtbot, repeats_and_endings_score
+):
+    load_and_wait(window, qtbot, repeats_and_endings_score)
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Right)  # -> measure 2 note 1 (repeat span active)
+    window.region_5.setCurrentRow(0)  # "Repeat start: measure 2"
+
+    qtbot.keyClick(window.region_5, Qt.Key.Key_Home, Qt.KeyboardModifier.ControlModifier)
+
+    assert window._music_data.get_current_slice().measure == 2
+
+
+def test_ctrl_end_on_region_5_jumps_to_the_last_note_of_the_end_bar(
+    window, qtbot, repeats_and_endings_score
+):
+    """The end bar (measure 3) has a single note - Ctrl+End must land there,
+    the LAST sounding note of that measure (the user's own decision on this,
+    not the first)."""
+    load_and_wait(window, qtbot, repeats_and_endings_score)
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Right)  # -> measure 2 note 1
+    window.region_5.setCurrentRow(1)  # "Repeat end: measure 3"
+
+    qtbot.keyClick(window.region_5, Qt.Key.Key_End, Qt.KeyboardModifier.ControlModifier)
+
+    current = window._music_data.get_current_slice()
+    assert current.measure == 3
+    assert current.notes[0].step_name == "E"
+
+
+def test_performance_report_action_shows_the_dialog_and_restores_focus(
+    window, qtbot, minimal_score, monkeypatch
+):
+    load_and_wait(window, qtbot, minimal_score)
+    window.region_2.setFocus()
+
+    from widgets.performance_report_dialog import PerformanceReportDialog
+
+    dialog = PerformanceReportDialog(window, lines=window._music_data.get_performance_report_lines())
+    monkeypatch.setattr(dialog, "exec", lambda: PerformanceReportDialog.DialogCode.Rejected)
+    monkeypatch.setattr(
+        "main_window.PerformanceReportDialog",
+        lambda parent, lines=None: dialog,
+    )
+
+    window._show_performance_report_dialog()
+
+    assert dialog.report_list.count() > 0
+    assert window.focusWidget() is window.region_2
 

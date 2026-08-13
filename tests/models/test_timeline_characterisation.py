@@ -261,6 +261,145 @@ def test_playback_tempo_offset_applies_on_top_of_whichever_tempo_is_current(
     assert md.effective_tempo_bpm(m2_first_index) == 210
 
 
+def test_repeat_and_ending_spans_are_paired_correctly(timeline, repeats_and_endings_score):
+    """Ref 29: forward repeat (m2) pairs with the backward repeat (m3);
+    ending 1 (start+discontinue both in m3) and ending 2 (start+discontinue
+    both in m4, no trailing repeat - the "last time through" case) are each
+    their own EndingSpan."""
+    md = timeline(repeats_and_endings_score)
+
+    assert len(md.repeat_spans) == 1
+    assert (md.repeat_spans[0].start_measure, md.repeat_spans[0].end_measure) == (2, 3)
+
+    assert len(md.ending_spans) == 2
+    e1, e2 = md.ending_spans
+    assert (e1.number, e1.start_measure, e1.end_measure) == (1, 3, 3)
+    assert (e2.number, e2.start_measure, e2.end_measure) == (2, 4, 4)
+
+
+def test_unmatched_backward_repeat_defaults_start_to_measure_one(
+    timeline, unmatched_backward_repeat_score
+):
+    """A backward repeat with no preceding forward repeat is the standard
+    notation reading of an unmarked opening repeat (Ref 29)."""
+    md = timeline(unmatched_backward_repeat_score)
+
+    assert len(md.repeat_spans) == 1
+    assert (md.repeat_spans[0].start_measure, md.repeat_spans[0].end_measure) == (1, 2)
+
+
+def test_hairpin_spans_cross_measure_and_same_measure(timeline, hairpin_score):
+    """Ref 29: a crescendo starting at m1 beat 3 and stopping at m2 beat 2
+    (crosses a measure boundary), and a diminuendo fully contained within
+    m3 (beat 1 to beat 3) - both captured with their ts-relative beat
+    positions and monotonic quarters_from_start."""
+    md = timeline(hairpin_score)
+
+    assert len(md.hairpin_spans) == 2
+    crescendo, diminuendo = md.hairpin_spans
+
+    assert crescendo.kind == "crescendo"
+    assert (crescendo.start_measure, crescendo.start_beat_position) == (1, 3.0)
+    assert (crescendo.end_measure, crescendo.end_beat_position) == (2, 2.0)
+    assert crescendo.start_quarters_from_start == 2.0
+    assert crescendo.end_quarters_from_start == 5.0
+
+    assert diminuendo.kind == "diminuendo"
+    assert (diminuendo.start_measure, diminuendo.start_beat_position) == (3, 1.0)
+    assert (diminuendo.end_measure, diminuendo.end_beat_position) == (3, 3.0)
+
+
+def test_total_measures_counts_the_whole_score_not_just_sounding_slices(
+    timeline, repeats_and_endings_score
+):
+    """Ref 29: sourced from measure_start_quarters (built regardless of note
+    content), not timeline_slices, which would undercount a trailing
+    all-rest measure - not exercised by this fixture (every bar has a
+    note), but the source must be the structural one regardless."""
+    md = timeline(repeats_and_endings_score)
+
+    assert md.total_measures == 4
+
+
+def test_performance_region_rows_follow_the_cursor_into_and_out_of_a_span(
+    timeline, repeats_and_endings_score
+):
+    """Ref 29: Region 5's rows are empty outside any span, two rows per
+    active repeat/ending span while inside one, in the documented order
+    (repeats, then endings)."""
+    md = timeline(repeats_and_endings_score)
+
+    m1_index = next(i for i, s in enumerate(md.timeline_slices) if s.measure == 1)
+    assert md.get_performance_region_rows(m1_index) == []
+
+    m3_index = next(i for i, s in enumerate(md.timeline_slices) if s.measure == 3)
+    rows = md.get_performance_region_rows(m3_index)
+    labels = [r.label for r in rows]
+    assert labels == [
+        "Repeat start: measure 2",
+        "Repeat end: measure 3",
+        "Ending 1 start: measure 3",
+        "Ending 1 end: measure 3",
+    ]
+
+
+def test_performance_region_rows_hairpin_wording_omits_beat_on_the_downbeat(
+    timeline, hairpin_score
+):
+    """Ref 29 follow-up (user-requested): a marker landing exactly on beat 1
+    needs no beat spelled out - "measure N" alone already pins it down, the
+    same as every repeat/ending row (barlines only occur at measure
+    boundaries, so they never show a beat either). Only an off-the-downbeat
+    position (e.g. the crescendo's own start/end here) gets "measure N
+    beat B" appended, matching get_status_bar_fields's own wording."""
+    md = timeline(hairpin_score)
+
+    crescendo_start_index = md.slice_index_at_or_after_quarters(2.0)  # m1 beat 3
+    labels = [r.label for r in md.get_performance_region_rows(crescendo_start_index)]
+    assert labels == [
+        "Crescendo start: measure 1 beat 3",
+        "Crescendo end: measure 2 beat 2",
+    ]
+
+    diminuendo_start_index = next(
+        i
+        for i, s in enumerate(md.timeline_slices)
+        if s.measure == 3 and s.notes[0].step_name == "D"
+    )
+    labels = [r.label for r in md.get_performance_region_rows(diminuendo_start_index)]
+    assert labels == [
+        "Diminuendo start: measure 3",
+        "Diminuendo end: measure 3 beat 3",
+    ]
+
+
+def test_slice_index_at_or_after_quarters_resolves_a_hairpin_jump_target(
+    timeline, hairpin_score
+):
+    """Ref 29: Region 5's Ctrl+Home/Ctrl+End on a hairpin row resolves via
+    this quarters-based lookup, not the measure-only first/last_visible_
+    event_index_of_measure lookups repeat/ending rows use."""
+    md = timeline(hairpin_score)
+
+    index = md.slice_index_at_or_after_quarters(2.0)
+    assert md.timeline_slices[index].quarters_from_start == 2.0
+    assert md.timeline_slices[index].notes[0].step_name == "E"
+
+
+def test_last_visible_event_index_of_measure_finds_the_last_note(
+    timeline, repeats_and_endings_score
+):
+    """Ref 29: Region 5's Ctrl+End on a repeat/ending row lands on the LAST
+    sounding note of the end bar, not the first - the one place this app
+    needs that "last event in a measure" concept."""
+    md = timeline(repeats_and_endings_score)
+
+    first = md.first_visible_event_index_of_measure(3)
+    last = md.last_visible_event_index_of_measure(3)
+    assert first == last, "this fixture's measure 3 has only one note"
+    assert md.timeline_slices[last].notes[0].step_name == "E"
+
+
 def test_quarters_from_start_is_continuous_across_the_pickup_boundary(timeline, score_duet):
     """E4: the pickup bar's real duration is however much of it is actually
     filled (pickup_filled_quarters), not a full bar - measure 1 must start

@@ -482,6 +482,10 @@ directly (see also §13.3).
 | Move to Last Note | End | Jumps to the last active note. Only enabled while focus is already in the Note region. |
 | Go to Measure... | Ctrl+G | Opens a dialog, pre-filled with the current bar, to jump to a specific bar number. |
 | Move to Notes | N | Jumps focus to the Note region from anywhere, without moving your timeline position. |
+| Move to Info | I | Jumps focus to the Score Info (metadata) region from anywhere. |
+| Move to Parts List | V | Jumps focus to the Parts List region from anywhere. |
+| Move to Attributes | A | Jumps focus to the Note Attributes region from anywhere. |
+| Move to Performance | P | Jumps focus to the Performance region from anywhere. |
 
 ### 11.4 Options Menu
 
@@ -505,6 +509,10 @@ directly (see also §13.3).
 | Move focus to the next / previous region | Tab / Shift+Tab |
 | Toggle focus between the regions area and the status bar | F6 / Shift+F6 |
 | Jump focus to the Note region from anywhere | N |
+| Jump focus to the Score Info region from anywhere | I |
+| Jump focus to the Parts List region from anywhere | V |
+| Jump focus to the Note Attributes region from anywhere | A |
+| Jump focus to the Performance region from anywhere | P |
 | Step to the next / previous active event *(Note region only)* | Left Arrow / Right Arrow |
 | Jump to the first active event of the next / current-or-previous bar *(Note region only)* | Ctrl+Left Arrow / Ctrl+Right Arrow |
 | Jump to the first / last active note *(Note region only)* | Home / End |

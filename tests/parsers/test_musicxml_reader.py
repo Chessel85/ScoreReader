@@ -27,6 +27,27 @@ def test_reader_captures_part_structure(minimal_score):
 
 
 @pytest.mark.slow
+def test_reader_keeps_a_non_ascii_part_name_instead_of_discarding_it(score_bourree):
+    """Reported bug: parts_info's own part-list parse used to replace any
+    non-ASCII part name with the hardcoded "Classical Guitar" fallback -
+    this fixture's real <part-name> is Korean ("클래식 기타 ", itself the
+    literal translation of "Classical Guitar"). TimelineBuilder's separate
+    part-list read for NoteData.part_name has no such filter, so the two
+    diverged and every part_name-keyed lookup against parts_info (e.g. the
+    Performance Report's per-instrument note counts) silently found nothing
+    - the report showed "0 notes" for a real, fully-noted part."""
+    data = MusicXMLReader(score_bourree).load()
+
+    assert len(data.parts_info) == 1
+    assert data.parts_info[0].name == "클래식 기타"
+
+    matching_notes = [
+        n for s in data._real_timeline_slices for n in s.notes if n.part_name == data.parts_info[0].name
+    ]
+    assert matching_notes, "parts_info.name must match the same notes' own part_name"
+
+
+@pytest.mark.slow
 def test_reader_handles_compressed_mxl_the_same_as_the_uncompressed_score(score_duet, score_duet_mxl):
     """Both MusicXMLReader's own ElementTree pass and TimelineBuilder's
     (invoked via MusicData(file_path=...), see the `timeline` fixture used

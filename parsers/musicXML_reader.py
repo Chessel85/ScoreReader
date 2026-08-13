@@ -206,9 +206,6 @@ class MusicXMLReader:
                 p_id = sp.attrib.get("id", "")
                 p_name_elem = sp.find("part-name")
                 p_name = p_name_elem.text.strip() if p_name_elem is not None and p_name_elem.text else "Classical Guitar"
-
-                if any(ord(c) > 127 for c in p_name):
-                    p_name = "Classical Guitar"
                 part_names[p_id] = p_name
 
             for part_elem in root.findall("part"):

@@ -9,9 +9,11 @@
 # dirname(dirname(audio/synth_engine.py)) still lands on the bundle root
 # where these datas are placed below.
 #
-# Not meant to be invoked directly - run packaging/build_installer.ps1,
-# which regenerates version_info.txt from version.py first and points
-# PyInstaller at this file with --distpath/--workpath at the repo root.
+# Runnable directly: .venv\Scripts\python.exe -m PyInstaller
+# packaging\RecallScore.spec --noconfirm (from the repo root, so dist\ and
+# build\ land there - packaging/installer.nsi expects dist\RecallScore).
+# packaging/build_installer.ps1 is an optional convenience wrapper that also
+# invokes NSIS afterwards; this spec needs nothing from it.
 
 import glob
 import os
@@ -41,6 +43,9 @@ datas = [
     # .md source changes; opened from the Help menu (main_window.py
     # user_guide_html_path()/_show_user_guide).
     (os.path.join(REPO_ROOT, "docs", "user_guide.html"), "docs"),
+    # version.py reads this at both dev-time and (once bundled here) at
+    # frozen-runtime - see version.py's own module docstring.
+    (os.path.join(REPO_ROOT, "version.txt"), "."),
 ]
 
 # Bundled example scores (main_window.py examples_dir(), File > Open Example
@@ -71,10 +76,45 @@ has_icon = os.path.exists(icon_path)
 if has_icon:
     datas.append((icon_path, "."))
 
-# Regenerated fresh by build_installer.ps1 on every run from version.py -
-# not tracked in git, so it may not exist yet if this spec is run by hand.
+# Windows exe version resource, regenerated fresh from version.txt on every
+# run - not tracked in git (packaging/build_installer.ps1 used to do this
+# from version.py; now this spec does it directly from version.txt so the
+# spec can be run standalone, no wrapper script required).
+with open(os.path.join(REPO_ROOT, "version.txt"), "r", encoding="utf-8") as f:
+    APP_VERSION = f.read().strip()
+_version_octets = (APP_VERSION.split(".") + ["0", "0", "0", "0"])[:4]
+_file_vers = tuple(int(part) for part in _version_octets)
+
 version_file = os.path.join(PACKAGING_DIR, "version_info.txt")
-has_version_file = os.path.exists(version_file)
+with open(version_file, "w", encoding="utf-8") as f:
+    f.write(f"""VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers={_file_vers!r},
+    prodvers={_file_vers!r},
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo(
+      [
+      StringTable(
+        u'040904B0',
+        [StringStruct(u'FileDescription', u'Recall Score - accessible music score and tab viewer'),
+        StringStruct(u'FileVersion', u'{APP_VERSION}'),
+        StringStruct(u'InternalName', u'RecallScore'),
+        StringStruct(u'OriginalFilename', u'RecallScore.exe'),
+        StringStruct(u'ProductName', u'Recall Score'),
+        StringStruct(u'ProductVersion', u'{APP_VERSION}')])
+      ]),
+    VarFileInfo([VarStruct(u'Translation', [1033, 1200])])
+  ]
+)
+""")
+has_version_file = True
 
 a = Analysis(
     [os.path.join(REPO_ROOT, "main.py")],

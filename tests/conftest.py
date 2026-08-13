@@ -195,6 +195,31 @@ def score_long_tune() -> str:
 
 
 @pytest.fixture
+def repeats_and_endings_score() -> str:
+    """Ref 29: one part, 4 complete 4/4 bars reproducing the real
+    files/bach-bourree-tab/score.xml fixture's repeat/ending barline shape
+    at small scale - forward repeat (m2), 1st ending + backward repeat
+    (m3), 2nd ending with no trailing repeat (m4)."""
+    return _require(FIXTURES_DIR / "repeats_and_endings.musicxml")
+
+
+@pytest.fixture
+def unmatched_backward_repeat_score() -> str:
+    """Ref 29: one part, 2 complete 4/4 bars - a backward repeat with no
+    preceding forward repeat, exercising the "default start to measure 1"
+    fallback neither real fixture exercises."""
+    return _require(FIXTURES_DIR / "unmatched_backward_repeat.musicxml")
+
+
+@pytest.fixture
+def hairpin_score() -> str:
+    """Ref 29: one part, 3 complete 4/4 bars of quarter notes - a crescendo
+    spanning a measure boundary (m1 beat 3 -> m2 beat 2) and a diminuendo
+    fully contained within one measure (m3 beat 1 -> m3 beat 3)."""
+    return _require(FIXTURES_DIR / "hairpin.musicxml")
+
+
+@pytest.fixture
 def score_way_to_go() -> str:
     """4/4 two-part score: Flute (GM 74) + Viola (GM 42), no pickup.
 

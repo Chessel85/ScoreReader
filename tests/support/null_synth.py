@@ -17,6 +17,7 @@ class NullSynth:
         self.closed: bool = False
         self.clicks: List[Dict[str, Any]] = []
         self.words: List[Dict[str, Any]] = []
+        self.performance_cues: List[Dict[str, Any]] = []
 
     def set_program(self, channel: int, program: int) -> None:
         self.program_changes.append((channel, program))
@@ -98,6 +99,23 @@ class NullSynth:
         announcer fired independently of (and simultaneously with) a click,
         the whole point of giving it its own channel."""
         self.words.append(
+            {
+                "channel": channel,
+                "bank": bank,
+                "program": program,
+                "pitch": pitch,
+                "velocity": velocity,
+            }
+        )
+
+    def play_performance_cue(
+        self, channel: int, bank: int, program: int, pitch: int, velocity: int
+    ) -> None:
+        """Ref 29: mirrors SynthEngine.play_performance_cue - recorded
+        separately from `played`/`clicks`/`words` so a test can assert the
+        Performance region's change cue fired independently of anything
+        else."""
+        self.performance_cues.append(
             {
                 "channel": channel,
                 "bank": bank,

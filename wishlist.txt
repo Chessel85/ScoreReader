@@ -18,3 +18,5 @@ Perhaps have add and remove buttons in the reorder dialogue, or perhaps a find n
 * Should we have a licence agreement?  Basically very happy for this to be open source for anyone to contribute to and to distribute.  Standard GNU or MIT licence I think as long as I'm not liable for anything.
 * when metronome is on, but moving up and down a chord, do not sound the metronome click.
 * Need to check pitches are correct. compare with reasynth in reaper.
+* Bourree contains repeats and probably codas.  ask claude i#to verify and perhaps create a test file.  but need to cope with these.  repeats need to be part of the score report.
+* There might be some tiny clicks in my headphones when Recall Score starts.  This might be indicative of something bad.  Can I make Reaper reaSynth go silent again when RS closes and restarts?

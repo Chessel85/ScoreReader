@@ -1,11 +1,15 @@
 # version.py
-# Year.Release.Build (D-13, revised 2026-08-11 from the old Major.Minor.Patch
-# scheme - see the About dialog, C8, and tasks.txt D-13).
-#   Year:    calendar year, bumped by the user roughly annually.
-#   Release: a release counter the user owns and bumps when they say so
-#            (carries over "minor"'s old semantics).
-#   Build:   bumped by whoever commits+pushes, on every push - never reset
-#            when Year or Release changes (carries over "patch"'s old
-#            semantics). Nothing in the codebase automates this; it's a
-#            manual step to remember when asked to commit and push.
-__version__ = "2026.1.12"
+# Reads the app version from version.txt (repo root), which the user
+# maintains by hand - see the "Packaging" section of CLAUDE.md. This is the
+# single source of truth for both the About dialog (widgets/about_dialog.py)
+# and the installer build (packaging/RecallScore.spec, packaging/installer.nsi).
+#
+# version.txt is bundled into the frozen app by RecallScore.spec, so this
+# resolves next to version.py in dev and at the frozen bundle root
+# (sys._MEIPASS) once packaged - same idiom as main.py's _app_icon_path().
+import os
+import sys
+
+_base_dir = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+with open(os.path.join(_base_dir, "version.txt"), "r", encoding="utf-8") as _f:
+    __version__ = _f.read().strip()
