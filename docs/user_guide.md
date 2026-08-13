@@ -1,8 +1,7 @@
 # Recall Score — User Guide
 
 *This guide describes Recall Score, a screen-reader-first music score and
-guitar-tab viewer for visually impaired musicians, version 0.1.12
-(Windows).*
+guitar-tab viewer for visually impaired musicians, for Windows.*
 
 ## 1. Introduction
 
@@ -22,23 +21,19 @@ memorising process as efficient as possible.
 
 ### 1.2 Who This Guide Is For
 
-This guide is written for anyone using Recall Score to read and listen
-to a score - the app's current focus. If you're configuring the app for
-your own workflow (choosing which details are spoken, setting UK or US
-terminology), the same sections apply to you too.
-
-Some roles described in the project's own design documents - hands-free
-control by voice, editing and transcribing scores, capo and chord-naming
-support for tablature - aren't built yet. See §14 for exactly what's not
-here yet, so you don't spend time hunting for something that doesn't
-exist.
+This guide is written for anyone using Recall Score to read, listen to
+and study a score - opening files, navigating and filtering what you
+hear, and configuring how notes and performance markings are spoken. If
+you're setting the app up for your own workflow (choosing UK or US
+terminology, which details are spoken, which attributes appear), the
+same sections apply to you too.
 
 ### 1.3 How to Read This Guide with a Screen Reader
 
 This document is one long page. Use your screen reader's heading
 navigation (for example, the `H` key in NVDA) to jump between the
 numbered sections and subsections below, or search the page directly for
-a keystroke or menu name. §12 is a single reference table of every
+a keystroke or menu name. §13 is a single reference table of every
 keyboard shortcut in the app - worth bookmarking or returning to
 directly rather than reading top to bottom.
 
@@ -58,25 +53,24 @@ administrator permission during setup - this is expected.
 Once installed, Recall Score appears in your Start Menu and in
 Add/Remove Programs like any other Windows application, with a normal
 uninstaller. Uninstalling does **not** delete any preferences you've
-saved for individual scores (§10) - those live separately under your own
-Windows user profile and are covered in §13.3 if you ever want to clear
+saved for individual scores (§11) - those live separately under your own
+Windows user profile and are covered in §14.3 if you ever want to clear
 them by hand.
 
 ### 2.2 Opening a Score File
 
 Choose **File > Open...** (or press `Ctrl+O`). A standard file-open
 dialog titled "Open MusicXML Score" appears. Choose your file and select
-Open. Once the file has finished loading, the four regions and status
+Open. Once the file has finished loading, the five regions and status
 bar (§3) populate automatically - Region 1 with the score's title,
 composer, key, time signature and tempo, Region 2 with its parts and
 staves, and so on.
 
 ### 2.3 Supported File Types
 
-Today, Recall Score opens **MusicXML** files only - `.xml`, `.musicxml`,
-and the compressed `.mxl` format that many notation programs (including
-MuseScore) export by default. Support for MIDI, Guitar Pro and Braille
-Music Editor files is planned but not built yet - see §14.
+Recall Score opens **MusicXML** files - `.xml`, `.musicxml`, and the
+compressed `.mxl` format that many notation programs (including
+MuseScore) export by default.
 
 ### 2.4 A Five-Minute First Walkthrough
 
@@ -105,20 +99,24 @@ detail.
 
 ## 3. Understanding the Screen Layout
 
-### 3.1 The Four Regions at a Glance
+### 3.1 The Five Regions at a Glance
 
-The main window is a 2x2 grid of four regions, plus a status bar:
+The main window is arranged in two rows, plus a status bar below them:
+the top row holds two regions, the bottom row holds three.
 
 - **Region 1 (top-left): Score Information** - the piece's metadata.
 - **Region 2 (top-right): Parts, Staves and Voices** - what's switched
   on or off.
 - **Region 3 (bottom-left): Note Timeline** - the notes at your current
   position; this is where you navigate through the music.
-- **Region 4 (bottom-right): Note Attributes** - full detail on whatever
-  is currently selected in Region 3.
+- **Region 4 (bottom-middle): Note Attributes** - full detail on
+  whatever is currently selected in Region 3.
+- **Region 5 (bottom-right): Performance** - repeat barlines, 1st/2nd-
+  time endings and dynamics hairpins active at your current position
+  (§8).
 
-`Tab` moves focus forward through the four regions in this order,
-wrapping back to Region 1 after Region 4; `Shift+Tab` moves backward.
+`Tab` moves focus forward through the five regions in this order,
+wrapping back to Region 1 after Region 5; `Shift+Tab` moves backward.
 Each region also has its own normal Up/Down row navigation for moving
 within it - only Region 3 additionally responds to the timeline keys
 described in §5, and only moving through Region 3 triggers audio
@@ -131,7 +129,7 @@ signature and starting tempo, as read from the file when it was opened.
 These are the piece's **opening** values and don't change as you move
 through the score - for values that track your current position instead
 (useful on a piece whose key or time signature changes partway through),
-see the status bar in §3.6.
+see the status bar in §3.7.
 
 ### 3.3 Region 2: Parts, Staves and Voices
 
@@ -155,10 +153,20 @@ Shows full detail for whichever note(s) are currently selected in Region
 3 - by default step, octave, measure number, beat position and
 duration, plus dynamics, articulation, fingering, string, fret and other
 details when the source file provides them and they've been switched on
-(§8). This region updates automatically to always match Region 3's
+(§9). This region updates automatically to always match Region 3's
 current selection.
 
-### 3.6 The Status Bar
+### 3.6 Region 5: Performance
+
+Lists whichever repeat barlines, 1st/2nd-time endings and dynamics
+hairpins (crescendo/diminuendo) are active at your current position - a
+start line and an end line for each, or a single "None" row when nothing
+applies there. A short sound plays whenever this list changes as you
+navigate, so you know to check it. See §8 for the full detail, including
+jumping straight to a marking's start or end and the separate whole-
+score Performance Report.
+
+### 3.7 The Status Bar
 
 Six individually focusable fields, in order: measure and beat position,
 key signature, time signature, playback tempo, playback status
@@ -175,9 +183,9 @@ be read at any time, from any region, using your screen reader's own
 
 ## 4. Moving Between Regions
 
-### 4.1 Cycling Through the Four Regions (Tab / Shift+Tab)
+### 4.1 Cycling Through the Five Regions (Tab / Shift+Tab)
 
-`Tab` moves focus to the next region in the Region 1 → 2 → 3 → 4 → 1
+`Tab` moves focus to the next region in the Region 1 → 2 → 3 → 4 → 5 → 1
 cycle; `Shift+Tab` moves in reverse. This is separate from each region's
 own internal Up/Down navigation - `Tab` always changes which region has
 focus, it never scrolls within one.
@@ -190,12 +198,22 @@ same thing - since there are only two panes, there's no meaningful
 "reverse" direction. The menu bar is reached the normal Windows way
 (the `Alt` key), not through `F6`.
 
-### 4.3 Jumping to the Note Region from Anywhere (N)
+### 4.3 Jumping to Any Region Directly (I / V / N / A / P)
 
-Press `N` at any time - from any region or the status bar - to move
-focus straight to the Note region (Region 3) without changing your
-timeline position. This saves repeatedly tabbing all the way around just
-to get back to the notes.
+Each region also has its own direct-jump key that moves focus straight
+to it from anywhere in the window - another region, the status bar,
+wherever - without changing your timeline position:
+
+| Key | Jumps to |
+| :--- | :--- |
+| `I` | Region 1, Score Info |
+| `V` | Region 2, Parts List |
+| `N` | Region 3, Notes |
+| `A` | Region 4, Note Attributes |
+| `P` | Region 5, Performance |
+
+This saves repeatedly tabbing all the way around just to reach a
+particular region.
 
 ## 5. Navigating the Timeline
 
@@ -348,14 +366,75 @@ of their own become reachable, audible stops in the timeline too, so you
 can navigate through - and hear the pulse of - even entirely silent
 passages.
 
-The click's actual sound is still being refined. It's functionally
-complete (correct timing, correctly accented beat 1, navigable silent
-beats) but isn't the final polished tone yet - if it sounds a little
-plain for now, that's known and being worked on.
+### 7.7 Using the Position Announcer
 
-## 8. Understanding Note Attributes
+**Options > Toggle Position Announcer**, or `Ctrl+P`, turns on a spoken
+"talking metronome": at each beat position it speaks a word for where
+you are in the bar - "one" through "seven" for whole beats, and "e",
+"and" or "a" for the subdivisions in between, the standard way musicians
+count subdivided beats aloud. It's independent of the metronome switch
+(§7.6) - you can have either, both, or neither running at once, and each
+is remembered separately.
 
-### 8.1 What's Shown by Default
+## 8. Performance Markings: Repeats, Endings and Dynamics
+
+### 8.1 What Appears in the Performance Region
+
+Region 5 (§3.6) shows two lines for every repeat barline, 1st/2nd-time
+ending, or dynamics hairpin (crescendo/diminuendo) that covers your
+current position - one for where it starts, one for where it ends - for
+example:
+
+```
+Repeat start: bar 2
+Repeat end: bar 9
+```
+
+or, for a hairpin that doesn't begin or end exactly on the first beat of
+a bar:
+
+```
+Crescendo start: bar 12 beat 3
+Crescendo end: bar 13
+```
+
+A beat position is only shown when a marking's start or end doesn't fall
+on beat 1 of its bar - repeats and endings never show one, since
+barlines only ever occur at the start of a bar. When your current
+position isn't covered by any marking, Region 5 shows a single "None"
+row.
+
+### 8.2 The "Something Changed" Cue
+
+A short, distinct sound plays whenever the set of entries showing in
+Region 5 changes as you navigate - for example the moment you step into
+or out of a repeated section. It doesn't repeat on every move while
+you're still inside the same passage, only when what's showing actually
+changes, so it's a reliable signal to check Region 5 rather than
+background noise.
+
+### 8.3 Jumping to a Marking's Start or End (Ctrl+Home / Ctrl+End)
+
+With focus on an entry in the Performance region, `Ctrl+Home` moves your
+timeline position to that marking's start; `Ctrl+End` moves it to the
+last sounding note of the marking's end bar. Either jump plays the notes
+at the new position immediately, the same as any other timeline move.
+
+### 8.4 The Performance Report (Edit > Performance Report...)
+
+**Edit > Performance Report...** opens a read-only summary of the whole
+piece, independent of whatever's currently filtered in Region 2: title,
+composer, key, time signature and tempo (the same details Region 1
+shows), whether the piece has a pickup bar, its total number of bars, a
+note count for each instrument, and a list of every repeat, ending and
+dynamics hairpin in the score by bar range. It's a single flat list you
+can read top to bottom with Up/Down Arrow. Close it with the Close
+button or `Escape`; focus returns to wherever it was before you opened
+it.
+
+## 9. Understanding Note Attributes
+
+### 9.1 What's Shown by Default
 
 By default, the Note region (Region 3) speaks only each note's plain
 name - for example "C", "F sharp", "B double flat". Accidentals are
@@ -364,10 +443,10 @@ are left out to keep things brief. A rest is simply announced as "rest".
 
 Region 4 always shows a fuller picture of whatever is currently selected
 - step, octave, measure number, beat position and duration - plus
-whichever of the extra details in §8.2 the file provides and you've
+whichever of the extra details in §9.2 the file provides and you've
 chosen to show.
 
-### 8.2 Adding More Detail (Dynamics, Articulation, Fingering, String, Fret)
+### 9.2 Adding More Detail (Dynamics, Articulation, Fingering, String, Fret)
 
 Depending on what the source file contains, additional details may be
 available: dynamics markings (forte, piano, and so on), articulation
@@ -385,7 +464,7 @@ and "Add to notes in the whole score" for an attribute that isn't
 showing yet - or the matching "Remove for notes in..." options once it
 already is.
 
-### 8.3 Choosing Where an Attribute Applies (Voice / Stave / Part / Score)
+### 9.3 Choosing Where an Attribute Applies (Voice / Stave / Part / Score)
 
 The scope you choose from that context menu decides how far the change
 reaches: just the one voice you're on, everything sharing its stave,
@@ -394,7 +473,7 @@ several notes across different voices are selected (a chord), the scope
 you pick applies across every voice represented in that selection, not
 only the note you happened to open the menu from.
 
-### 8.4 Changing the Order Attributes Are Read
+### 9.4 Changing the Order Attributes Are Read
 
 **Options > Reorder Attributes...** opens a dialog scoped to whatever
 part, stave or voice is currently selected in Region 2, listing only the
@@ -403,9 +482,9 @@ attributes relevant there. Use **Move Up** (`Alt+U`) and **Move Down**
 applies everywhere - both Region 3's note labels and Region 4's rows
 follow it - it isn't a separate ordering per voice.
 
-## 9. Terminology: UK and US Music Vocabulary
+## 10. Terminology: UK and US Music Vocabulary
 
-### 9.1 What Changes When You Switch
+### 10.1 What Changes When You Switch
 
 Recall Score can speak either UK or US musical terminology: **bar**
 versus **measure**, and the **crotchet/quaver/semiquaver** family versus
@@ -417,7 +496,7 @@ One family is deliberately left out of this toggle: stave/staff naming
 (Region 2's clef labels, and Region 4's "stave" attribute) always reads
 the same way regardless of which terminology language is selected.
 
-### 9.2 Switching Terminology Language
+### 10.2 Switching Terminology Language
 
 **Options > Terminology Language** offers UK and US as two mutually
 exclusive choices - exactly one is always selected at a time. This is a
@@ -425,30 +504,31 @@ single preference that applies across the whole application, not tied to
 any individual score, so opening a different file mid-session never
 changes which wording you're hearing.
 
-## 10. Your Settings Are Remembered
+## 11. Your Settings Are Remembered
 
-### 10.1 What's Saved Per Score
+### 11.1 What's Saved Per Score
 
 For each individual score file, Recall Score remembers, and restores the
 next time you open that same file:
 
 - Which parts, staves and voices are switched on or off.
 - Whether the metronome is switched on.
-- Which note attributes are shown for each voice (§8.2).
-- The order those attributes are read in (§8.4).
+- Whether the position announcer is switched on.
+- Which note attributes are shown for each voice (§9.2).
+- The order those attributes are read in (§9.4).
 
 Files are matched by their own filename, so moving a file to a different
 folder doesn't lose its saved settings. If a saved setting no longer
 matches the file - for example a part that's since been renamed or
 removed - it's simply left out rather than causing an error or a dialog.
 
-### 10.2 What's Saved Across All Scores
+### 11.2 What's Saved Across All Scores
 
-Your UK/US terminology choice (§9) is the one preference that applies to
+Your UK/US terminology choice (§10) is the one preference that applies to
 every score, not just one - it stays as you last set it no matter which
 file you open next.
 
-### 10.3 Clearing Saved Preferences for a Score
+### 11.3 Clearing Saved Preferences for a Score
 
 **Edit > Clear Preferences for `<filename>`** deletes just that one
 file's saved settings, so it reverts to defaults the next time it's
@@ -456,25 +536,26 @@ opened. This menu item is disabled when no file is currently loaded.
 
 **Edit > Open Local Folder** opens the folder on disk where these saved
 settings actually live, in case you ever want to inspect or back them up
-directly (see also §13.3).
+directly (see also §14.3).
 
-## 11. Menu Reference
+## 12. Menu Reference
 
-### 11.1 File Menu
+### 12.1 File Menu
 
 | Item | Shortcut | What it does |
 | :--- | :--- | :--- |
 | Open... | Ctrl+O | Opens a MusicXML file. |
 | Exit | - | Closes Recall Score. |
 
-### 11.2 Edit Menu
+### 12.2 Edit Menu
 
 | Item | Shortcut | What it does |
 | :--- | :--- | :--- |
 | Open Local Folder | - | Opens the folder where saved per-score preferences are stored. |
 | Clear Preferences for `<filename>` | - | Deletes the currently loaded file's saved settings. Disabled when no file is loaded. |
+| Performance Report... | - | Opens a read-only summary of the whole piece (§8.4). |
 
-### 11.3 Navigation Menu
+### 12.3 Navigation Menu
 
 | Item | Shortcut | What it does |
 | :--- | :--- | :--- |
@@ -487,22 +568,23 @@ directly (see also §13.3).
 | Move to Attributes | A | Jumps focus to the Note Attributes region from anywhere. |
 | Move to Performance | P | Jumps focus to the Performance region from anywhere. |
 
-### 11.4 Options Menu
+### 12.4 Options Menu
 
 | Item | Shortcut | What it does |
 | :--- | :--- | :--- |
 | Tempo Offset... | Ctrl+T | Sets an exact playback tempo offset, including decimal values (§7.5). |
-| Terminology Language | - | Submenu to choose UK or US wording (§9.2). |
+| Terminology Language | - | Submenu to choose UK or US wording (§10.2). |
 | Toggle Metronome | Ctrl+M | Turns the beat click on or off (§7.6). |
-| Reorder Attributes... | - | Changes the order note attributes are read in for the current Region 2 scope (§8.4). |
+| Toggle Position Announcer | Ctrl+P | Turns the spoken beat-position announcer on or off (§7.7). |
+| Reorder Attributes... | - | Changes the order note attributes are read in for the current Region 2 scope (§9.4). |
 
-### 11.5 Help Menu
+### 12.5 Help Menu
 
 | Item | Shortcut | What it does |
 | :--- | :--- | :--- |
 | About Recall Score... | - | Shows the application name, version number and a short description. |
 
-## 12. Keyboard Shortcut Reference
+## 13. Keyboard Shortcut Reference
 
 | Action | Keystroke |
 | :--- | :--- |
@@ -530,12 +612,15 @@ directly (see also §13.3).
 | Reset playback tempo to the score's own tempo | D |
 | Open the Tempo Offset dialog | Ctrl+T |
 | Toggle the metronome on/off | Ctrl+M |
+| Toggle the position announcer on/off | Ctrl+P |
+| Jump to the start / end of the focused Performance region entry *(Performance region only)* | Ctrl+Home / Ctrl+End |
+| Open the Performance Report | Edit menu > Performance Report... |
 | Open a note attribute's context menu *(Note Attributes region only)* | right-click, or Menu key / Shift+F10 |
 | Open a score file | Ctrl+O |
 
-## 13. Troubleshooting
+## 14. Troubleshooting
 
-### 13.1 No Sound
+### 14.1 No Sound
 
 Recall Score plays sound through a bundled audio engine and instrument
 library that need to start up successfully when the application
@@ -545,53 +630,30 @@ you navigate and use every region normally - it simply won't produce any
 sound, without announcing that fact on screen. As a first check, confirm
 your system's normal audio output is working outside Recall Score too.
 
-### 13.2 A File Won't Open
+### 14.2 A File Won't Open
 
-If a file fails to load, nothing changes on screen - there's no error
-dialog for this yet (it's on the list in §14). Check the log file at
-`%LOCALAPPDATA%\Recall Score\recall_score.log` for details of what went
-wrong. The most common cause is a file that isn't valid MusicXML, or
-isn't one of the supported extensions (§2.3): `.xml`, `.musicxml` or
+If a file fails to load, nothing changes on screen. Check the log file
+at `%LOCALAPPDATA%\Recall Score\recall_score.log` for details of what
+went wrong. The most common cause is a file that isn't valid MusicXML,
+or isn't one of the supported extensions (§2.3): `.xml`, `.musicxml` or
 `.mxl`.
 
-### 13.3 Where Settings Are Stored on Disk
+### 14.3 Where Settings Are Stored on Disk
 
 **Edit > Open Local Folder** opens the storage location directly. Both
-your per-score settings (§10.1) and your shared UK/US preference (§10.2)
+your per-score settings (§11.1) and your shared UK/US preference (§11.2)
 live under your own Windows user profile, entirely separate from where
 Recall Score itself is installed - reinstalling or moving the
 application doesn't affect them.
-
-## 14. What's Not Yet Supported
-
-Recall Score is under active development. As of this version, the
-following are not yet available:
-
-- Importing MIDI, Guitar Pro or Braille Music Editor files - only
-  MusicXML can be opened today (§2.3).
-- Saving or exporting a score in any format.
-- Edit mode - scores can currently be viewed and navigated, but not
-  changed.
-- Hands-free voice control.
-- Capo handling, automatic chord naming, and spoken descriptions of
-  fretboard shapes for tablature.
-- An accessible error dialog for a corrupt or unreadable file - see
-  §13.2 for checking the log file in the meantime.
-- macOS support - Windows only, for now.
-- Forced or interrupting screen-reader announcements beyond whatever
-  your screen reader already reads on a focus change - for example,
-  there's no separate spoken measure-number cue beyond what checking the
-  status bar (§3.6) or Region 3 already tells you.
 
 ## 15. Getting Help and Reporting Problems
 
 If you run into a problem, **Help > About Recall Score...** shows the
 exact version you're running - worth including if you report an issue.
-For anything that looks like a bug rather than one of the gaps listed in
-§14, check §13 first; if that doesn't resolve it, please raise an issue
-on the project's GitHub page:
+Check §14 (Troubleshooting) first; if that doesn't resolve it, please
+raise an issue on the project's GitHub page:
 
 <https://github.com/Chessel85/ScoreReader/issues>
 
 Include what you were doing, the version number, and - if the app was
-involved - the contents of `recall_score.log` (§13.2).
+involved - the contents of `recall_score.log` (§14.2).
