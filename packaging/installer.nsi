@@ -25,8 +25,10 @@
 ;
 ; Version comes from version.txt (repo root) - edit that file to change the
 ; version this build stamps into the installer filename/registry entry.
-; Icon comes from packaging/icon.ico if present, else the installer/app use
-; NSIS's default icon.
+; Icon comes from packaging/RecallScore.ico if present, else the
+; installer/app use NSIS's default icon.
+; License page text comes from LICENSE (repo root, MIT) - shown between the
+; Welcome and Components pages, standard NSIS wizard convention.
 
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
@@ -40,7 +42,8 @@
 !define DIST_DIR "${REPO_ROOT}\dist\RecallScore"
 !define OUT_DIR "${REPO_ROOT}\dist_installer"
 !define VERSION_FILE "${REPO_ROOT}\version.txt"
-!define ICON_PATH "${__FILEDIR__}\icon.ico"
+!define ICON_PATH "${__FILEDIR__}\RecallScore.ico"
+!define LICENSE_FILE "${REPO_ROOT}\LICENSE"
 
 ; NSIS has no built-in !ifexist - this is the standard compile-time
 ; file-existence idiom: shell out to `if exist`, have it write a !define
@@ -61,6 +64,14 @@
   !error "version.txt not found at ${VERSION_FILE} - create it with the version number to build, e.g. 2026.1.12"
 !endif
 !searchparse /file "${VERSION_FILE}" "" APP_VERSION
+
+!tempfile _licensecheck
+!system 'if exist "${LICENSE_FILE}" echo !define HAS_LICENSE > "${_licensecheck}"'
+!include "${_licensecheck}"
+!delfile "${_licensecheck}"
+!ifndef HAS_LICENSE
+  !error "LICENSE not found at ${LICENSE_FILE} - the install wizard shows this on its license page."
+!endif
 
 !system 'if not exist "${OUT_DIR}" mkdir "${OUT_DIR}"'
 
@@ -83,6 +94,7 @@ SetCompressor /SOLID lzma
 !endif
 
 !insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_LICENSE "${LICENSE_FILE}"
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_DIRECTORY
 

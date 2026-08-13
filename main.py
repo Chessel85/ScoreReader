@@ -36,12 +36,12 @@ from main_window import MainWindow
 
 
 def _app_icon_path():
-    """icon.ico lives next to main.py in dev, and at the frozen bundle root
-    (sys._MEIPASS) once packaging/RecallScore.spec bundles packaging/icon.ico
-    - see M2. Returns None until the user supplies that file; QIcon(None)
-    would raise, so callers must check first."""
+    """RecallScore.ico lives next to main.py in dev, and at the frozen bundle
+    root (sys._MEIPASS) once packaging/RecallScore.spec bundles
+    packaging/RecallScore.ico - see M2. Returns None until the user supplies
+    that file; QIcon(None) would raise, so callers must check first."""
     base_dir = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-    icon_path = os.path.join(base_dir, "icon.ico")
+    icon_path = os.path.join(base_dir, "RecallScore.ico")
     return icon_path if os.path.exists(icon_path) else None
 
 

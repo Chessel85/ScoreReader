@@ -71,7 +71,7 @@ datas += collect_data_files(
 
 # Dropped in by the user (see main.py's _app_icon_path()) - optional, the
 # build works without it.
-icon_path = os.path.join(PACKAGING_DIR, "icon.ico")
+icon_path = os.path.join(PACKAGING_DIR, "RecallScore.ico")
 has_icon = os.path.exists(icon_path)
 if has_icon:
     datas.append((icon_path, "."))
