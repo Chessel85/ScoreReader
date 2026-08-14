@@ -64,9 +64,8 @@ class StatusBarWidget(QStatusBar):
     accessibility role - no extra plumbing needed here for that.
     """
 
-    # R15: named indices so callers updating a single field don't hardcode
-    # its position (MainWindow._update_playback_status_field used a bare 4).
-    # Field order here is also the Tab order the user experiences.
+    # Named indices so callers updating one field don't hardcode a number.
+    # This order is also the Tab order the user experiences.
     POSITION_FIELD = 0
     KEY_FIELD = 1
     TIME_FIELD = 2

@@ -24,114 +24,85 @@ class MusicData:
     file_path: str = ""
     tempo_bpm: int = 120
 
-    # A9: tempo_bpm is always quarter-note BPM (music21's getQuarterBPM()),
-    # for playback timing. tempo_beat_unit_quarter_length/name are the ratio
-    # and label needed to convert that back to the score's OWN beat unit -
-    # e.g. a score marked eighth=96 has tempo_bpm=48,
-    # tempo_beat_unit_quarter_length=0.5, tempo_beat_unit_name="eighth", so
-    # 48 / 0.5 = 96, matching what Region 1 already displays (A9's
-    # tempo_display string) instead of the internal 48. Needed live (not
-    # just once for Region 1's summary) by E1-E3's tempo offset/F/S/D/dialog
-    # - reported bug, live-tested: the status bar and Tempo Offset dialog
-    # were showing/accepting the raw quarter-BPM number, not the score's own
-    # displayed tempo.
+    # A9: tempo_bpm is ALWAYS quarter-note BPM (playback timing).
+    # tempo_beat_unit_* are the ratio and label converting it back to the
+    # score's own beat unit - a score marked eighth=96 has tempo_bpm=48 and
+    # quarter_length=0.5, so 48/0.5 = 96, the number the user actually
+    # reads. Anything user-facing (Region 1, status bar, tempo dialog, F/S/D)
+    # must go through the display units, never the raw quarter BPM.
     tempo_beat_unit_quarter_length: float = 1.0
     tempo_beat_unit_name: str = "quarter"
 
-    # Ref 12: playback tempo is a temporary offset from the score's own
-    # tempo, never a mutation of tempo_bpm itself (AC1) - Region 1 keeps
-    # showing the score-defined tempo unchanged regardless of this offset.
-    # Stored in the score's own DISPLAY units (see above), not quarter-note
-    # terms, so F/S's "+10" means +10 in what the user actually sees/reads.
+    # Ref 12 AC1: a temporary offset from the score's tempo, never a
+    # mutation of tempo_bpm - Region 1 keeps showing the score's own tempo.
+    # Stored in DISPLAY units (see above) so F/S's "+10" means +10 of what
+    # the user reads.
     playback_tempo_offset: float = 0.0
 
-    # Ref 12 "multi-tempo scope": every tempo marking after the first,
-    # sorted by position - populated from TimelineBuilder as a side effect
-    # of build() (see __post_init__). tempo_bpm/tempo_beat_unit_* above
-    # remain the score's opening tempo (what Region 1's one-off summary
-    # shows); this list is what makes the status bar/dialog/Sequencer look
-    # up the tempo actually in effect at a given position instead of always
-    # that opening one.
+    # Ref 12 multi-tempo scope: every tempo marking after the first, sorted
+    # by position, from TimelineBuilder. tempo_bpm above stays the OPENING
+    # tempo (Region 1's summary); this list is what lets the status bar,
+    # dialog and Sequencer use the tempo actually in effect at a position.
     tempo_changes: List[TempoChange] = field(default_factory=list)
 
-    # Pre-parsed ElementTree root from MusicXMLReader, if it already parsed
-    # the file - lets TimelineBuilder skip a second parse of the same file
-    # (R2). None when a test builds MusicData(file_path=...) directly, in
-    # which case TimelineBuilder parses the file itself as before.
+    # Pre-parsed ElementTree root from MusicXMLReader, so TimelineBuilder
+    # need not re-parse. None when MusicData(file_path=...) is built
+    # directly, in which case TimelineBuilder parses the file itself.
     xml_root: Optional[Any] = None
 
     timeline_slices: List[EventSlice] = field(default_factory=list)
     active_event_index: int = 0
 
-    # (part_id, staff, voice) tuples currently shown/played, set by Region 2
-    # toggling (Ref 7). None means unfiltered - show everything. Must default
-    # to None, not an empty set: most tests build MusicData directly or via
-    # MusicXMLReader.load() without ever calling set_active_voice_filter, and
+    # (part_id, staff, voice) tuples currently shown/played (Ref 7).
+    # None means unfiltered. Must default to None, NOT an empty set - an
+    # empty set means "nothing visible", and callers that never set a filter
     # expect the full note list.
     active_voice_filter: Optional[Set[Tuple[str, int, int]]] = None
 
-    # Ref 15 AC4: extra Region 4 attributes (beyond the always-toggleable
-    # "step") appended to a note's Region 3 display, keyed the same way
-    # active_voice_filter is. A voice absent from this dict uses
-    # DEFAULT_DISPLAY_ATTRIBUTES, NOT an empty set - most voices are never
-    # touched by the F-phase context menu and must keep showing today's
-    # plain note name.
+    # Ref 15 AC4: which optional attributes each voice shows in Region 3.
+    # A voice absent from this dict falls back to DEFAULT_DISPLAY_ATTRIBUTES,
+    # NOT an empty set - most voices are never touched by the context menu
+    # and must keep showing the plain note name.
     voice_display_attributes: Dict[Tuple[str, int, int], Set[str]] = field(default_factory=dict)
 
-    # F2/Ref 15 AC4: the live, per-instance, mutable rendering order Region
-    # 3/4 both read. R14: a declared field, not something __post_init__
-    # conjures onto the instance - it is public API (MainWindow and
-    # apply_config both assign to it), so leaving it undeclared kept it out
-    # of the dataclass's own repr/eq and out of reach of type checkers.
-    # Empty default rather than DISPLAY_ATTRIBUTE_ORDER: that constant is
-    # defined further down the class body and isn't bound yet at field-
-    # definition time. __post_init__ fills it in, so "empty" never escapes.
+    # F2/Ref 15 AC4: the live, mutable rendering order Region 3/4 both read.
+    # Defaults empty rather than to DISPLAY_ATTRIBUTE_ORDER because that
+    # constant is defined further down the class body and isn't bound yet
+    # here; __post_init__ fills it in, so "empty" never escapes.
     attribute_order: List[str] = field(default_factory=list)
 
-    # E8/Ref 14: off by default per score load (MusicData is reconstructed
-    # fresh on every _on_score_loaded, so no explicit reset code is needed
-    # elsewhere, same as playback_tempo_offset above). Gates both whether a
-    # beat position sounds a click (Sequencer, MainWindow) and whether a
-    # beat position with no note counts as a navigable event at all
-    # (_slice_is_navigable, Ref 14 AC4).
+    # Ref 14: gates both whether a beat sounds a click and whether a beat
+    # with no note counts as a navigable event at all (_slice_is_navigable,
+    # AC4). Off by default per load - MusicData is rebuilt on every load, so
+    # nothing needs an explicit reset.
     metronome_enabled: bool = False
 
-    # Ref 28: off by default, same reasoning as metronome_enabled above.
-    # Unlike metronome_enabled, toggling this never touches timeline_slices
-    # - AC5 requires the position announcer to only ever speak at positions
-    # that already have an event (a real note/rest, or one of the
-    # metronome's own beat markers when that's on too) and never create
-    # further events of its own, so no synthetic-marker splicing is needed
-    # here at all.
+    # Ref 28: unlike metronome_enabled, toggling this never touches
+    # timeline_slices - AC5 requires the announcer to speak only where an
+    # event already exists and never create one, so there is nothing to
+    # splice in or out.
     position_announcer_enabled: bool = False
 
-    # F4/D-6: UK vs US music terminology (bar/measure, duration names,
-    # stave/staff). Off (US-leaning defaults) is required here, not
-    # arbitrary - it preserves every existing test's current English-text
-    # assertions unchanged. main_window.py decides the real app-level
-    # startup default (OS-locale-detected, UK unless confidently US) and
-    # applies it explicitly, including re-applying it after each file load
-    # since MusicData is wholly replaced then and this is a session
-    # preference, not a per-score one like metronome_enabled above.
+    # F4/D-6: UK vs US terminology. main_window.py owns the real startup
+    # default (OS-locale-detected) and re-applies it after every load, since
+    # MusicData is wholly replaced then and this is a session preference,
+    # not a per-score one like metronome_enabled.
     uk_terms: bool = False
 
-    # Ref 29 "Performance region": repeat-barline pairs, 1st/2nd-ending
-    # brackets, and crescendo/diminuendo hairpins - populated from
-    # TimelineBuilder as a side effect of build() (see __post_init__), same
-    # pattern as tempo_changes above. total_measures is the whole-score bar
-    # count (for the Performance Report), sourced the same way.
+    # Ref 29: repeat-barline pairs, 1st/2nd endings and hairpins, from
+    # TimelineBuilder, same side-channel pattern as tempo_changes above.
+    # total_measures is the whole-score bar count for the Performance
+    # Report - NOT derived from timeline_slices, which would undercount a
+    # trailing all-rest measure.
     repeat_spans: List[RepeatSpan] = field(default_factory=list)
     ending_spans: List[EndingSpan] = field(default_factory=list)
     hairpin_spans: List[HairpinSpan] = field(default_factory=list)
     total_measures: int = 0
 
     def __post_init__(self):
-        # DISPLAY_ATTRIBUTE_ORDER (defined below, alongside the rest of the
-        # attribute system) stays the fixed default every fresh MusicData
-        # starts from; attribute_order is the live copy F2's dialog mutates.
-        # MainWindow reapplies its own session-level copy after every load
-        # (MusicData is wholly replaced then), the same pattern already used
-        # for uk_terms. Honours a caller-supplied order if one was passed.
+        # DISPLAY_ATTRIBUTE_ORDER is the fixed default; attribute_order is
+        # the live copy the reorder dialog mutates. A caller-supplied order
+        # is honoured as-is.
         if not self.attribute_order:
             self.attribute_order = list(self.DISPLAY_ATTRIBUTE_ORDER)
         if self.file_path:
@@ -146,26 +117,21 @@ class MusicData:
             self.active_event_index = 0
         else:
             self._beat_markers: List[EventSlice] = []
-        # The real, marker-free timeline - kept stable so
-        # set_metronome_enabled can always restore exactly this when the
-        # metronome turns back off, even after self.timeline_slices has been
-        # replaced with a merged (real + marker) view while it was on.
+        # The real, marker-free timeline, kept stable so
+        # set_metronome_enabled can restore exactly this when the metronome
+        # goes off again.
         self._real_timeline_slices = self.timeline_slices
-        # measure_numbers() is safe to cache forever - timeline_slices is
-        # never reassigned after this point. The other two are keyed off
-        # active_voice_filter and are invalidated in
-        # _invalidate_visibility_cache below.
+        # Safe to cache forever: timeline_slices is never reassigned after
+        # this point. The filter-dependent caches are separate, below.
         self._measure_numbers_cache: Optional[List[int]] = None
         self._invalidate_visibility_cache()
 
     def _invalidate_visibility_cache(self) -> None:
-        """_sounding_bounds() and first_visible_event_index_of_measure() used
-        to re-walk the whole timeline from scratch on every single
-        navigation keypress (and move_timeline_*_by_measure called the
-        latter once per measure scanned, i.e. O(N) per measure => O(N*M)
-        worst case for a long run of filtered-out measures). Both are
-        cached here instead and only recomputed the first time they're
-        needed after active_voice_filter changes."""
+        """These lookups run on every navigation keypress, and the
+        by-measure ones once per measure scanned - O(N*M) uncached across a
+        long run of filtered-out measures. They depend only on
+        active_voice_filter, so they are computed on demand and dropped
+        whenever it changes."""
         self._sounding_bounds_cache: Optional[Tuple[int, int]] = None
         self._sounding_bounds_computed: bool = False
         self._first_visible_index_by_measure_cache: Optional[Dict[int, int]] = None
@@ -196,19 +162,15 @@ class MusicData:
         )
 
     def set_metronome_enabled(self, enabled: bool) -> None:
-        """E8/Ref 14 toggle.
+        """Ref 14 toggle.
 
-        timeline_slices itself is rebuilt here rather than being a
-        permanently-merged list: with the metronome off (the default),
-        timeline_slices stays exactly "one entry per (measure, offset) with
-        at least one sounding note" - the invariant the rest of the codebase
-        (and a good number of existing tests) already assume, unaffected by
-        this feature ever existing. Only turning the metronome on splices in
-        the synthetic beat markers TimelineBuilder computed separately
-        (_beat_markers); turning it back off restores the untouched real
-        list. The cursor is relocated to the same real position across the
-        rebuild (indices shift once markers are spliced in) rather than
-        left pointing at an arbitrary slice.
+        timeline_slices is rebuilt rather than permanently merged, so with
+        the metronome off it holds exactly "one entry per (measure, offset)
+        with at least one sounding note" - the invariant the rest of the
+        codebase assumes. Turning it on splices in TimelineBuilder's
+        synthetic beat markers; turning it off restores the untouched real
+        list. Indices shift either way, so the cursor is relocated to the
+        equivalent real position rather than left on an arbitrary slice.
         """
         if enabled == self.metronome_enabled:
             return
@@ -224,12 +186,10 @@ class MusicData:
             self.timeline_slices = self._real_timeline_slices
 
         if current is not None and self.timeline_slices:
-            # Last slice at or before the current position - exact match
-            # when one exists (toggling on, or off from a real slice),
-            # nearest preceding real event when it doesn't (toggling off
-            # while sitting on a marker, which has no counterpart at all in
-            # the real-only list) - i.e. wherever the cursor would be had
-            # the metronome never been turned on.
+            # Last slice at or before the current position: an exact match
+            # where one exists, else the nearest preceding real event (which
+            # is the case when toggling off while sitting on a marker, since
+            # markers have no counterpart in the real-only list).
             match_index = 0
             for i, s in enumerate(self.timeline_slices):
                 if s.quarters_from_start <= current.quarters_from_start:
@@ -253,41 +213,26 @@ class MusicData:
         self.set_position_announcer_enabled(not self.position_announcer_enabled)
 
     def _slice_is_navigable(self, index: int) -> bool:
-        """Ref 14 AC4: with the metronome on, a beat position counts as a
-        navigable/steppable event even where no note sounds there - a whole
-        beat is always a whole number in the score's own ts-relative units
-        (Ref 18), whether it's a real note's own beat_position or one of the
-        synthetic click-only markers TimelineBuilder bakes in for exactly
-        this purpose. Used in place of _slice_has_visible_notes at every
-        navigation/stepping call site (Left/Right, Ctrl+Left/Right,
-        jump-to-measure, and the Sequencer's own step walk) - NOT at
-        _slice_has_visible_sounding_note/_sounding_bounds below, which stay
-        anchored to real sounding notes only so metronome mode can't
-        resurrect trailing rest-only padding as navigable."""
+        """Ref 14 AC4: with the metronome on, a whole beat is steppable even
+        with no note there (whole beats are integers in ts-relative units,
+        Ref 18). Used at every navigation/stepping call site, but NOT by
+        _sounding_bounds below, which stays anchored to real sounding notes
+        so metronome mode can't resurrect trailing rest-only padding."""
         if self._slice_has_visible_notes(index):
             return True
-        # R10: the bounds check is this method's own, not inherited from the
-        # call above - _slice_has_visible_notes returns False both for "out
-        # of range" and for "in range but nothing visible", so falling
-        # through to index timeline_slices directly would raise IndexError
-        # on the first case whenever the metronome happens to be on. Every
-        # current caller passes a bounded index, so this is a latent crash
-        # rather than a live one; guarding here keeps it that way.
+        # Own bounds check: _slice_has_visible_notes returns False both for
+        # "out of range" and "nothing visible", so it can't be relied on to
+        # have validated the index.
         if not self.metronome_enabled or not (0 <= index < len(self.timeline_slices)):
             return False
         return float(self.timeline_slices[index].beat_position).is_integer()
 
     def _slice_has_visible_sounding_note(self, index: int) -> bool:
-        """True if timeline_slices[index] has at least one visible note that
-        actually sounds (midi_pitch is not None) - i.e. is not a rest.
-
-        Used to bound navigation to _sounding_bounds() below. A rest still
-        counts as "visible" for _slice_has_visible_notes and remains
-        individually reachable when it sits between two sounding notes
-        (Ref 16), but a run of rests that only exists to pad the score's
-        final bar out to a complete measure - live-tested on Chessel Duet's
-        last bar, all voices resting after the final dotted crotchet - is
-        not a further "active event" to step onto (Ref 2/3/5).
+        """True if this slice has a visible note that actually sounds (not a
+        rest). Bounds navigation via _sounding_bounds(): a rest between two
+        sounding notes stays individually reachable (Ref 16), but a run of
+        rests padding the final bar out to full length is not a further
+        event to step onto (Ref 2/3/5).
         """
         if not (0 <= index < len(self.timeline_slices)):
             return False
@@ -357,11 +302,8 @@ class MusicData:
         return self._measure_numbers_cache
 
     def first_event_index_of_measure(self, measure_number: int) -> Optional[int]:
-        """Index of the first timeline event in the given measure.
-
-        None if that measure has no events - e.g. Ref 6: an unknown bar
-        plays an error sound and does not move.
-        """
+        """Index of the first timeline event in the measure, or None if it
+        has none - Ref 6 turns that into a boundary cue and no movement."""
         for i, s in enumerate(self.timeline_slices):
             if s.measure == measure_number:
                 return i
@@ -372,10 +314,9 @@ class MusicData:
         return len(self.timeline_slices) - 1
 
     def _first_visible_index_by_measure(self) -> Dict[int, int]:
-        """measure_number -> index of its first visible event. Cached per
-        active_voice_filter state (see _invalidate_visibility_cache) so
-        move_timeline_*_by_measure's walk over several measures is O(1) per
-        measure instead of re-scanning the whole timeline each time."""
+        """measure_number -> index of its first visible event, cached per
+        filter state so move_timeline_*_by_measure's walk is O(1) per
+        measure instead of re-scanning the timeline for each one."""
         if self._first_visible_index_by_measure_cache is None:
             cache: Dict[int, int] = {}
             for i, s in enumerate(self.timeline_slices):
@@ -392,11 +333,9 @@ class MusicData:
         return self._first_visible_index_by_measure().get(measure_number)
 
     def _last_visible_index_by_measure(self) -> Dict[int, int]:
-        """measure_number -> index of its LAST visible event. Ref 29:
-        Region 5's Ctrl+End on a repeat/ending row jumps to the last
-        sounding note of the span's end bar, not the first - nothing else
-        in the app had this "last event in a measure" concept before, so it
-        gets its own cache alongside _first_visible_index_by_measure's."""
+        """measure_number -> index of its LAST visible event. Region 5's
+        Ctrl+End jumps to the last sounding note of a span's end bar; this
+        is the only place in the app with that concept."""
         if self._last_visible_index_by_measure_cache is None:
             cache: Dict[int, int] = {}
             for i, s in enumerate(self.timeline_slices):
@@ -411,24 +350,20 @@ class MusicData:
         return self._last_visible_index_by_measure().get(measure_number)
 
     def slice_index_at_or_after_quarters(self, quarters_from_start: float) -> Optional[int]:
-        """Ref 29: first timeline_slices index at/after the given elapsed-
-        quarters position - resolves a HairpinSpan row's jump target, since
-        a wedge can start/stop mid-measure and the measure-only
-        first/last_visible_event_index_of_measure lookups aren't
-        fine-grained enough. timeline_slices is already sorted by
-        (measure, quarters_from_start)."""
+        """First slice index at or after an elapsed-quarters position -
+        resolves a hairpin row's jump target, which the measure-only
+        lookups can't since a wedge may start or stop mid-measure."""
         for i, s in enumerate(self.timeline_slices):
             if s.quarters_from_start >= quarters_from_start:
                 return i
         return None
 
     def move_timeline_left_by_measure(self) -> bool:
-        """Ctrl+Left (Ref 3): jump to the first visible event of the current
-        measure, or the preceding measure's if already there. The pickup
-        bar (measure 0, if present) falls out of this for free - it's just
-        the first entry in measure_numbers(). Bounded by _sounding_bounds()
-        the same way plain Left is, so a trailing rest-only measure (or the
-        rest-only tail of one) is never a valid target."""
+        """Ctrl+Left (Ref 3): to the first visible event of this measure, or
+        the previous measure's if already there. The pickup bar needs no
+        special case - it is just the first entry in measure_numbers().
+        Bounded by _sounding_bounds() like plain Left, so a trailing
+        rest-only measure is never a target."""
         current = self.get_current_slice()
         if current is None:
             return False
@@ -506,11 +441,11 @@ class MusicData:
         return True
 
     def move_timeline_home(self) -> bool:
-        """Home (Ref 5): jump to the first event with a real sounding note.
+        """Home (Ref 5): to the first event with a real sounding note.
 
-        Unlike Left/Right/Ctrl+Left/Right, this never represents "moving
-        past a boundary" - it jumps to a known limit - so callers never play
-        the boundary sound off this return value.
+        Unlike Left/Right this can never mean "moved past a boundary" - it
+        jumps to a known limit - so callers never sound the boundary cue off
+        this return value.
         """
         bounds = self._sounding_bounds()
         if bounds is None:
@@ -519,10 +454,8 @@ class MusicData:
         return True
 
     def last_sounding_event_index(self) -> Optional[int]:
-        """Index of the last visible event with a real sounding note, or
-        None if nothing currently sounds - the true end of playable content
-        (C5), excluding trailing rest-only padding. Used by phrase audition
-        (E6) to bound how far a run can play, the same way Home/End (C3)
+        """The true end of playable content, excluding trailing rest-only
+        padding - bounds how far a phrase audition can run, as Home/End
         already bound navigation."""
         bounds = self._sounding_bounds()
         return bounds[1] if bounds else None
@@ -538,13 +471,11 @@ class MusicData:
         return True
 
     def get_region_1_data(self) -> Dict[str, str]:
-        """self.credits' "Tempo" entry was baked once at parse time in US
-        units (MusicXMLReader._extract_tempo) - override it here with a
-        freshly-built string so a live vocabulary toggle (F4) is reflected
-        without needing to reload the file. Rebuilt from tempo_bpm/
-        tempo_beat_unit_quarter_length directly (not tempo_beat_unit_name_at,
-        which is cursor-position-aware) since Region 1 always shows the
-        score's OPENING tempo (A9), never the live/cursor one."""
+        """credits' "Tempo" entry is baked at parse time in US units, so it
+        is rebuilt here to reflect a live UK/US toggle without a reload.
+        Built from tempo_bpm directly, not the cursor-aware
+        tempo_beat_unit_name_at, because Region 1 always shows the score's
+        OPENING tempo (A9)."""
         data = dict(self.credits)
         if "Tempo" in data:
             number = self.tempo_bpm / self.tempo_beat_unit_quarter_length
@@ -554,10 +485,8 @@ class MusicData:
         return data
 
     def get_score_structure(self) -> List[Dict[str, Any]]:
-        """Parts/staves/voices shape Region2HierarchyModel.build_from_score()
-        documents - drives Region 2 (Ref 7). Pure transform of parts_info,
-        no XML access. D-15: stave names are NOT translated by F4's
-        uk_terms toggle - deliberate decision, see tasks.txt."""
+        """The parts/staves/voices shape Region2HierarchyModel expects
+        (Ref 7). A pure transform of parts_info, no XML access."""
         structure = []
         for p in self.parts_info:
             staves = [
@@ -576,14 +505,11 @@ class MusicData:
         self._invalidate_visibility_cache()
 
     def _all_voice_tuples(self) -> Set[Tuple[str, int, int]]:
-        """Every (part_id, staff, voice) this score actually has - the
-        universe export_config/apply_config (Ref 27) filter saved voice keys
-        against. Scans _real_timeline_slices' actual notes (same source
-        attribute_keys_for_voices uses) rather than parts_info, since
-        parts_info is only populated by MusicXMLReader.load() - a MusicData
-        built directly via MusicData(file_path=...) (the timeline test
-        fixture, and TimelineBuilder's own fast path) leaves it empty even
-        though the notes themselves are already there."""
+        """Every (part_id, staff, voice) the score has - the universe
+        export_config/apply_config filter saved keys against. Scans the
+        notes rather than parts_info, which is only populated by
+        MusicXMLReader.load() and so is empty for a directly-built
+        MusicData even though the notes are all there."""
         return {
             (n.part_id, n.staff, n.voice)
             for event_slice in self._real_timeline_slices
@@ -591,17 +517,14 @@ class MusicData:
         }
 
     def _visible_notes(self, index: Optional[int] = None) -> List[NoteData]:
-        """Notes at the given slice that pass the Region 2 filter (Ref 7),
-        or at the current cursor position when index is None (the default,
-        used by every UI-facing accessor).
+        """Notes at the given slice passing the Region 2 filter (Ref 7), or
+        at the cursor when index is None.
 
-        All of get_region_3_data/get_region_4_data_for_indices/
-        get_midi_notes_for_indices/get_playback_events_for_indices read
-        through this so a row index always means the same note everywhere -
-        Region 3 only ever displays what this returns. The explicit-index
-        form is for the Sequencer (E4), which plays slices by absolute
-        timeline index without disturbing active_event_index/Region 3's
-        selection (so phrase audition, E6, can leave the cursor untouched).
+        Every UI-facing accessor reads through this, which is what makes a
+        row index mean the same note in Region 3, Region 4 and playback
+        alike. The explicit-index form is for the Sequencer, which plays by
+        absolute index without disturbing the cursor or Region 3's
+        selection (so phrase audition can leave the cursor untouched).
         """
         if index is None:
             current = self.get_current_slice()
@@ -630,22 +553,18 @@ class MusicData:
     DEFAULT_DISPLAY_ATTRIBUTES = frozenset({"step"})
 
     def notes_for_indices(self, selected_indices: List[int]) -> List[NoteData]:
-        """The real NoteData objects behind Region 3's selected row indices -
-        shared by get_region_4_row_targets and the Ref 15 AC4 attribute-scope
-        actions (main_window.py), which need the notes themselves rather
-        than just indices or playback pitches."""
+        """The NoteData behind Region 3's selected rows, for callers needing
+        the notes themselves rather than indices or pitches."""
         notes = self._visible_notes()
         return [notes[i] for i in selected_indices if 0 <= i < len(notes)]
 
     def _note_attribute_pairs(self, note: NoteData) -> Dict[str, str]:
-        """Un-prefixed attribute-name -> value for one note. Shared by
-        _region_4_rows (Region 4, "note N "-prefixed when more than one note
-        is selected) and _format_note_for_region_3 (Ref 15 AC4's optional
-        extra attributes) so the two regions can never disagree on an
-        attribute's name or value. Only includes keys that actually have a
-        value for this note (e.g. a rest has no octave/midi) - the absence
-        of a key here is what keeps both a Region 4 row and a Region 3
-        attribute from ever being rendered for data that doesn't exist."""
+        """Attribute name -> value for one note, shared by Region 3 and
+        Region 4 so the two can never disagree on a name or value.
+
+        Only keys the note actually has a value for are included (a rest has
+        no octave or midi). That absence is the mechanism that stops either
+        region rendering a row for data that doesn't exist."""
         dur_str = str(int(note.ts_duration)) if note.ts_duration.is_integer() else str(note.ts_duration)
         pairs = {"step": note.step_name}
         if note.octave is not None:
@@ -673,16 +592,12 @@ class MusicData:
         return pairs
 
     def _region_4_rows(self, selected_notes: List[NoteData]) -> List[Tuple[str, str, NoteData, str]]:
-        """(display_key, attribute_key, note, value) per Region 4 row, in
-        display order - display_key carries the "note N " prefix used when
-        more than one note is selected (a chord), attribute_key never does.
-        Shared source for get_region_4_data_for_indices (the dict Region 4
-        renders) and get_region_4_row_targets (which row maps to which
-        note/attribute, for the Ref 15 AC4 context menu). Row order follows
-        attribute_order (F2) - the same live order Region 3's optional extras
-        render in - rather than _note_attribute_pairs' own dict-insertion
-        order, so reordering attributes can't leave the two regions
-        disagreeing about sequence."""
+        """(display_key, attribute_key, note, value) per Region 4 row.
+        display_key carries the "note N " prefix used for a chord;
+        attribute_key never does. Shared by the rendering dict and the
+        context menu's row->target mapping. Order follows attribute_order -
+        the same live order Region 3 uses - not _note_attribute_pairs'
+        insertion order, so the two regions can't disagree on sequence."""
         is_chord = len(selected_notes) > 1
         rows = []
         for idx, n in enumerate(selected_notes, start=1):
@@ -696,13 +611,10 @@ class MusicData:
         return rows
 
     def _format_note_for_region_3(self, note: NoteData) -> str:
-        """Ref 15 AC4: the note's name plus whichever extra attributes are
-        configured on for its voice, comma-separated. An attribute is
-        skipped both when it's not in the voice's configured set AND when
-        the note has no value for it (e.g. octave on a rest) - the latter is
-        what stops a missing attribute from leaving a dangling/double comma.
-        An all-off voice (including "step" removed) renders "" - a blank but
-        still selectable, still-audible Region 3 row."""
+        """Ref 15 AC4: the note name plus whichever extras its voice has
+        switched on, comma-separated. An attribute renders only when it is
+        both configured on AND present on the note. A voice with everything
+        off renders "" - a blank but still selectable, still audible row."""
         voice_key = (note.part_id, note.staff, note.voice)
         wanted = self.voice_display_attributes.get(voice_key, self.DEFAULT_DISPLAY_ATTRIBUTES)
         pairs = self._note_attribute_pairs(note)
@@ -789,12 +701,11 @@ class MusicData:
     def set_display_attribute(
         self, attribute_key: str, scope: str, notes: List[NoteData], add: bool
     ) -> None:
-        """Ref 15 AC4: add or remove `attribute_key` from Region 3's display
-        for every voice `scope` ("voice"/"stave"/"part"/"score") reaches from
-        each note in `notes` - plural because a multi-note Region 3 selection
-        (a chord) unions the scope across every selected note, e.g. a
-        stave-scope action from a two-part chord affects both parts' staves,
-        not just the one the context menu happened to be opened on."""
+        """Ref 15 AC4: add or remove `attribute_key` for every voice `scope`
+        reaches from each note. Plural because a chord selection unions the
+        scope across all selected notes - a stave-scope action from a
+        two-part chord affects both parts' staves, not just the one the menu
+        was opened on."""
         voice_keys: Set[Tuple[str, int, int]] = set()
         for note in notes:
             voice_keys |= self._voice_tuples_for_scope(note, scope)
@@ -807,30 +718,21 @@ class MusicData:
             self.voice_display_attributes[voice_key] = current
 
     def move_attribute_order(self, attribute_key: str, up: bool, within: Optional[List[str]] = None) -> bool:
-        """F2/Ref 15 AC4: move `attribute_key` one step earlier (up=True) or
-        later (up=False) in attribute_order - the single global rendering
-        order Region 3/4 both read (_format_note_for_region_3,
-        _region_4_rows). Returns False (no-op) at a boundary or if
-        attribute_key isn't present, mirroring move_timeline_left/right's
-        boundary-bool convention.
+        """F2/Ref 15 AC4: move `attribute_key` one step earlier (up) or later
+        in attribute_order, the single global order Region 3 and 4 both
+        render from. Returns False at a boundary or for an unknown key,
+        matching move_timeline_left/right's convention.
 
-        `within`, if given, is a subset of attribute_order (e.g. the
-        attribute-order dialog's per-Region-2-node filtered list) - the move
-        is then relative to attribute_key's nearest neighbour IN THAT SUBSET,
-        not its immediate neighbour in the full order. Any attribute_order
-        entries that aren't in `within` and sit between attribute_key and
-        that neighbour are carried along for the ride: their positions
-        relative to each other are untouched, only their position relative to
-        the moved attribute shifts. This is what makes a dialog filtered down
-        to "attributes present for this voice" still move its visible list by
-        exactly one row per click, without the caller needing to know
-        anything about the attributes it can't see.
+        `within`, if given, is a subset of attribute_order (the dialog's
+        per-node filtered list) and the move is relative to the nearest
+        neighbour IN THAT SUBSET. Entries not in `within` that sit between
+        the two are carried along, keeping their order relative to each
+        other. That is what lets a filtered dialog move its visible list by
+        exactly one row per click without knowing about hidden attributes.
 
-        Implementation note: computing the neighbour's index in the full
-        order BEFORE popping attribute_key out of it, then inserting
-        attribute_key at that same (now-still-valid) index, is what makes one
-        pop/insert pair correct for both directions - no separate branching
-        needed for "neighbour was before" vs "neighbour was after"."""
+        Taking the neighbour's index BEFORE popping attribute_key, then
+        inserting at that same index, is what makes one pop/insert pair
+        correct in both directions with no branching."""
         order = self.attribute_order
         if attribute_key not in order:
             return False
@@ -864,12 +766,11 @@ class MusicData:
         return [key for key in self.attribute_order if key in present]
 
     def export_config(self) -> ScoreConfig:
-        """Ref 27: this score's current state as a ScoreConfig, for
-        persistence/score_config.save(). voices_off is the complement of
-        active_voice_filter (empty when active_voice_filter is None, since
-        None already means "everything visible") rather than the ON-list
-        itself - see apply_config for why that's what makes reloading
-        best-effort."""
+        """Ref 27: this score's state as a ScoreConfig. voices_off is the
+        complement of active_voice_filter, not the ON-list - an OFF-list is
+        what lets a changed score still load best-effort (see apply_config).
+        MainWindow overwrites it with Region 2's own per-node state, which
+        is lossless where this derived version is not."""
         voices_off: Set[Tuple[str, int, int]] = set()
         if self.active_voice_filter is not None:
             voices_off = self._all_voice_tuples() - self.active_voice_filter
@@ -884,12 +785,10 @@ class MusicData:
         )
 
     def apply_config(self, config: ScoreConfig) -> None:
-        """Ref 27: restores a previously saved ScoreConfig, best-effort - a
-        saved entry that no longer corresponds to anything in THIS score
-        (different part names, a voice that's gone, an attribute key this
-        build doesn't know) is silently dropped rather than rejecting the
-        whole config, so a stale or partially-matching .rsc still applies
-        everything it can instead of falling back to all-defaults."""
+        """Ref 27: restore a saved ScoreConfig, best-effort. An entry that no
+        longer matches anything in THIS score (renamed part, deleted voice,
+        unknown attribute key) is dropped silently rather than rejecting the
+        whole config, so a stale .rsc still applies everything it can."""
         known_voices = self._all_voice_tuples()
         active = known_voices - (config.voices_off & known_voices)
         self.set_active_voice_filter(active)
@@ -919,17 +818,16 @@ class MusicData:
         ]
 
     def get_performance_region_rows(self, index: Optional[int] = None) -> List[PerformanceRegionRow]:
-        """Ref 29: Region 5's rows - two per RepeatSpan/EndingSpan/
-        HairpinSpan active at the given position (defaults to the cursor,
-        active_event_index): a start line and an end line. Repeat/ending
-        containment is a plain measure-number range check (barlines only
-        occur at measure boundaries); hairpins compare quarters_from_start,
-        since a wedge can start/stop mid-measure. Stable order (repeats,
-        then endings, then hairpins, each in span-list order) so
-        MainWindow's active-set diff (comparing label lists) is
-        deterministic. bar/measure wording goes through vocabulary.bar_word
-        (F4's uk_terms dialect toggle) rather than a hardcoded literal, the
-        same as get_status_bar_fields."""
+        """Ref 29: Region 5's rows - a start and an end line per span active
+        at the given position (default: the cursor).
+
+        Repeat/ending containment is a measure-number range check (barlines
+        fall at measure boundaries); hairpins compare quarters_from_start,
+        since a wedge can start or stop mid-measure. The order (repeats,
+        endings, hairpins, each in span-list order) must stay stable -
+        MainWindow diffs the resulting label list to detect a real change.
+        Wording goes through vocabulary.bar_word, never a hardcoded
+        "bar"/"measure"."""
         slice_ = (
             self.get_current_slice()
             if index is None
@@ -999,30 +897,23 @@ class MusicData:
 
     @staticmethod
     def _bar_beat_label(bar_word: str, measure: int, beat_position: float) -> str:
-        """"bar N" alone when beat_position is beat 1 (the marker lands
-        exactly on the downbeat, so the bar number alone already pins it
-        down - repeat/ending rows are always this case, since barlines only
-        occur at measure boundaries); "bar N beat B" otherwise, same wording
-        as get_status_bar_fields's own "Bar N beat B" so a beat position
-        reads identically everywhere in the app. User-requested (Ref 29
-        follow-up): only markers that actually fall mid-bar need a beat
-        called out at all."""
+        """"bar N" on the downbeat (the bar number already pins it down, and
+        repeat/ending rows are always this case since barlines fall at
+        measure boundaries); "bar N beat B" otherwise, worded exactly as
+        get_status_bar_fields does so it reads the same everywhere. Only
+        markers actually falling mid-bar name a beat (user's decision)."""
         if float(beat_position) == 1.0:
             return f"{bar_word} {measure}"
         beat_str = str(int(beat_position)) if float(beat_position).is_integer() else str(beat_position)
         return f"{bar_word} {measure} beat {beat_str}"
 
     def get_performance_report_lines(self) -> List[str]:
-        """Ref 29: the read-only Performance Report's content - a flat,
-        whole-score summary independent of the current Region 2 filter
-        state (unlike get_region_3_data etc., which follow
-        active_voice_filter) since the report describes the shape of the
-        piece, not the current filtered view."""
-        # Reuses get_region_1_data() wholesale (same dict Region 1 itself
-        # displays) rather than cherry-picking assumed keys like "Title"/
-        # "Composer" - credits_dict's keys come from each file's own
-        # <credit-type> text (MusicXMLReader._extract_credits_etree), so
-        # they aren't guaranteed to match any fixed name.
+        """Ref 29: the Performance Report's content - a whole-score summary,
+        deliberately independent of the Region 2 filter (unlike every other
+        accessor here), since it describes the piece, not the current view."""
+        # Reuses get_region_1_data() wholesale rather than cherry-picking
+        # keys like "Title"/"Composer": credit keys come from each file's own
+        # <credit-type> text, so no fixed name is guaranteed to exist.
         lines: List[str] = [f"{k}: {v}" for k, v in self.get_region_1_data().items()]
 
         bar_word = vocabulary.bar_word(self.uk_terms).capitalize()
@@ -1059,21 +950,16 @@ class MusicData:
 
         return lines
 
-    # Ref 12 AC2: hard playback tempo boundaries, expressed in the score's
-    # own DISPLAY units (tempo_beat_unit_name) - what the user actually
+    # Ref 12 AC2: hard bounds, in the score's DISPLAY units - what the user
     # reads and types, not the internal quarter-note equivalent.
     MIN_TEMPO_BPM = 30
     MAX_TEMPO_BPM = 300
 
     def _tempo_change_at(self, index: Optional[int] = None) -> Tuple[int, float, str]:
-        """(tempo_bpm, beat_unit_quarter_length, beat_unit_name) actually in
-        effect at the given timeline index, or the cursor (active_event_index)
-        when index is None - the same default-to-cursor convention
-        _visible_notes uses. Falls back to the score's opening tempo
-        (tempo_bpm/tempo_beat_unit_*) when tempo_changes is empty or the
-        position is before the first marking (Ref 12 "multi-tempo scope").
-        tempo_changes is kept sorted by quarters_from_start (TimelineBuilder's
-        job), so the last entry not past the position wins."""
+        """(tempo_bpm, beat_unit_quarter_length, beat_unit_name) in effect at
+        an index, or the cursor. Falls back to the score's opening tempo
+        before the first marking. tempo_changes is sorted by position
+        (TimelineBuilder's job), so the last entry not past it wins."""
         idx = self.active_event_index if index is None else index
         quarters = self.timeline_slices[idx].quarters_from_start if 0 <= idx < len(self.timeline_slices) else 0.0
 
@@ -1121,13 +1007,11 @@ class MusicData:
         return vocabulary.duration_name(name, self.uk_terms)
 
     def set_playback_tempo_offset(self, offset: float) -> None:
-        """Clamp offset so effective_tempo_display_bpm() always stays within
-        [MIN_TEMPO_BPM, MAX_TEMPO_BPM] (Ref 12 AC2) - the boundary the user
-        actually reads/types, not tempo_bpm's internal quarter-note
-        equivalent - without ever touching tempo_bpm itself (AC1). Clamped
-        against whichever tempo is in effect at the cursor right now (Ref 12
-        "multi-tempo scope": F/S/D and this dialog add/subtract from
-        "whatever the current tempo is", which can change mid-score)."""
+        """Clamp so effective_tempo_display_bpm() stays within
+        [MIN_TEMPO_BPM, MAX_TEMPO_BPM] (Ref 12 AC2) - bounds on what the
+        user reads and types, not on tempo_bpm's quarter-note equivalent -
+        without touching tempo_bpm itself (AC1). Clamped against the tempo
+        at the cursor, which can change mid-score."""
         base = self.score_tempo_display_bpm()
         min_offset = self.MIN_TEMPO_BPM - base
         max_offset = self.MAX_TEMPO_BPM - base
@@ -1137,38 +1021,26 @@ class MusicData:
         """Ref 12 AC4: reset control returns to the score's own tempo."""
         self.playback_tempo_offset = 0.0
 
-    # MIDI channel 10 (0-indexed 9) is reserved for percussion and must be
-    # skipped when allocating one channel per part (D-5).
-    PERCUSSION_CHANNEL = 9
-    # Ref 28: also reserved, for the position announcer - same number as
-    # audio/position_announcer.py's POSITION_ANNOUNCER_CHANNEL, duplicated
-    # rather than imported (models/ doesn't depend on audio/, same as
-    # PERCUSSION_CHANNEL's own relationship to audio/metronome.py's
-    # METRONOME_CHANNEL). Needed so a real instrument part can never land on
-    # the channel SynthEngine.play_word() uses, the same guarantee
-    # PERCUSSION_CHANNEL already gives the click.
-    POSITION_ANNOUNCER_CHANNEL = 8
-    # Ref 29: also reserved, for the Performance region's "something
-    # changed" cue - same number as audio/performance_cue.py's
-    # PERFORMANCE_CUE_CHANNEL, duplicated for the same reason
-    # POSITION_ANNOUNCER_CHANNEL's own comment gives.
-    PERFORMANCE_CUE_CHANNEL = 7
+    # Channels no real part may use. Each value is duplicated from the
+    # audio/ module that owns it rather than imported - models/ must not
+    # depend on audio/. Keeping parts off these is what stops an instrument
+    # colliding with the click, the spoken position word or the change cue.
+    PERCUSSION_CHANNEL = 9          # audio/metronome.py METRONOME_CHANNEL
+    POSITION_ANNOUNCER_CHANNEL = 8  # audio/position_announcer.py
+    PERFORMANCE_CUE_CHANNEL = 7     # audio/performance_cue.py
     RESERVED_CHANNELS = {POSITION_ANNOUNCER_CHANNEL, PERCUSSION_CHANNEL, PERFORMANCE_CUE_CHANNEL}
     MAX_MIDI_CHANNELS = 16
 
     def get_channel_for_part(self, part_id: str) -> int:
-        """One MIDI channel per part, in part-list order, skipping the
-        reserved channels above.
+        """One MIDI channel per part, in part-list order, skipping
+        RESERVED_CHANNELS. Wraps if a score has more melodic parts than the
+        16 channels minus reservations allow.
 
-        Wraps past the end of the usable-channel list if a score has more
-        melodic parts than it has room for - the hard ceiling is 16
-        channels minus the two reservations (D-5, Ref 28). Computed fresh
-        each call rather than cached: a class-body comprehension can't see
-        RESERVED_CHANNELS (only a comprehension's outermost iterable is
-        evaluated in the enclosing class scope, not its condition - the
-        two constants above would each raise NameError if this were built
-        at class-definition time instead), and this is far too cheap
-        (16 elements) to be worth a real cache.
+        The usable list is built per call, not as a class attribute: only a
+        comprehension's outermost iterable is evaluated in the enclosing
+        class scope, not its condition, so referring to RESERVED_CHANNELS
+        there raises NameError. 16 elements is too cheap to be worth caching
+        another way.
         """
         usable_channels = [
             c for c in range(self.MAX_MIDI_CHANNELS) if c not in self.RESERVED_CHANNELS
@@ -1185,11 +1057,9 @@ class MusicData:
         return 25
 
     def get_stave_name_for_part(self, part_id: str, staff: int) -> str:
-        """Screen-reader-friendly stave name for Region 4, e.g. "Treble
-        stave" or "C stave" - same wording Region 2 uses (Ref 7), so a note
-        looked up in Region 4 matches the stave it was toggled under. D-15:
-        NOT translated by F4's uk_terms toggle - deliberate decision, see
-        tasks.txt."""
+        """Spoken-friendly stave name for Region 4 ("Treble stave"), worded
+        exactly as Region 2 does so a note matches the stave it was toggled
+        under. D-15: deliberately NOT translated by the uk_terms toggle."""
         for p in self.parts_info:
             if p.part_id == part_id:
                 return p.staves_clefs.get(staff, "Standard stave")
@@ -1198,25 +1068,18 @@ class MusicData:
     def get_playback_events_for_indices(
         self, selected_indices: List[int], index: Optional[int] = None
     ) -> List[Tuple[int, Optional[int], List[int], int]]:
-        """Group selected notes by part for simultaneous multi-instrument playback.
+        """Group selected notes by part for simultaneous multi-part playback.
 
         Each group is (channel, zero-indexed GM program, midi pitches,
-        duration_ms) so a chord spanning two parts sounds both instruments
-        together instead of collapsing onto parts_info[0]'s instrument (Ref
-        8, Ref 9 AC2), AND each part rings for its own notated length
-        instead of every part being clamped to whichever part happens to
-        have the shortest note at this instant (Ref 9 AC2 "matches note
-        duration", Ref 13 AC2 "hold for their marked length" - reported
-        bug: Pachelbel's Canon cello minims were being cut short to match
-        faster-moving upper parts sounding at the same beat). duration_ms
-        is the MAX quarter_length within that part's own notes here (not
-        an average/min) so a same-voice chord with slightly inconsistent
-        source data still rings for its longest member rather than cutting
-        early.
+        duration_ms), so a chord spanning two parts sounds both instruments
+        rather than collapsing onto parts_info[0]'s (Ref 8). duration_ms is
+        PER PART - the max quarter_length among that part's own notes here,
+        not the slice-wide minimum - so no part is clamped to whichever
+        other part happens to have the shortest note at this instant
+        (Ref 9 AC2, Ref 13 AC2). The max, not the min, so a chord with
+        slightly inconsistent source data rings for its longest member.
 
-        index: an explicit timeline slice to read from instead of the
-        current cursor (see _visible_notes) - used by
-        get_playback_events_at_index (E4/Sequencer).
+        index: read an explicit slice instead of the cursor (Sequencer).
         """
         notes = self._visible_notes(index)
         if not notes:
@@ -1252,11 +1115,10 @@ class MusicData:
         return self.get_duration_ms_for_index(self.active_event_index)
 
     def get_duration_ms_for_index(self, index: int) -> int:
-        """Like get_current_duration_ms, but for an arbitrary timeline index
-        rather than the cursor - used by the Sequencer (E4) to know how long
-        to keep is_playing True after the last step's longest note (see
-        get_playback_events_for_indices for actual per-note note-off
-        timing, which no longer reads this slice-wide scalar)."""
+        """Slice-wide duration at an arbitrary index - used only by the
+        Sequencer to know how long to stay playing after the final step.
+        Real per-note note-off timing is per group; see
+        get_playback_events_for_indices."""
         if not (0 <= index < len(self.timeline_slices)):
             return 500
         quarter_length = self.timeline_slices[index].quarter_length
@@ -1279,16 +1141,12 @@ class MusicData:
     def next_visible_event_index(
         self, index: int, end_index: Optional[int] = None
     ) -> Optional[int]:
-        """Next timeline index after `index` with at least one note passing
-        the active Region 2 filter (Ref 7) - rests included, unlike
-        _sounding_bounds()'s navigation range, since real playback (E4)
-        should advance through and take up the time of a rest, not skip
-        over it. Also visits metronome-only beat markers when the metronome
-        is on (_slice_is_navigable, Ref 14 AC1) - this is what makes the
-        Sequencer's own step walk sound a click on a silent beat with no
-        extra scheduling logic. Bounded by end_index (inclusive) if given,
-        else the whole timeline. None if there is no further visible event -
-        the Sequencer treats that as the end of playback."""
+        """Next index after `index` passing the Region 2 filter - rests
+        INCLUDED, unlike _sounding_bounds()'s navigation range, because
+        playback must advance through a rest and take up its time rather
+        than skip it. Visits metronome beat markers too when the metronome
+        is on, which is what makes the Sequencer click on a silent beat with
+        no extra scheduling. None means the end of playback."""
         limit = end_index if end_index is not None else len(self.timeline_slices) - 1
         idx = index
         while idx < limit:
@@ -1298,14 +1156,12 @@ class MusicData:
         return None
 
     def get_status_bar_fields(self) -> List[str]:
-        """C6/E2: four fields in Tab order for the status bar - measure/beat
-        position, key signature, time signature and playback tempo. All four
-        read from the *current* slice/position rather than the score's
-        opening values, since any of them can change mid-score (D-11, Ref 12
-        "multi-tempo scope") unlike Region 1's one-off summary. The tempo
-        field is the one place a screen-reader user can check the current
-        playback tempo without a forced announcement (Phase D deliberately
-        skipped for now)."""
+        """The first four status-bar fields in Tab order: position, key,
+        time signature, playback tempo. All read the CURRENT slice, not the
+        score's opening values - any of them can change mid-score, unlike
+        Region 1's one-off summary. The tempo field is the only way a
+        screen-reader user can check playback tempo without an
+        announcement."""
         bar_word = vocabulary.bar_word(self.uk_terms).capitalize()
         current = self.get_current_slice()
         if current is None:
@@ -1324,11 +1180,9 @@ class MusicData:
         ]
 
     def _tempo_status_field(self) -> str:
-        """Reported bug, live-tested: this used to show effective_tempo_bpm()
-        (the internal quarter-note-equivalent value, e.g. 48 for a score
-        marked eighth=96) instead of the score's own display units (96) -
-        the same units Region 1's tempo credit already uses (A9). Now reads
-        through effective_tempo_display_bpm() so the two stay consistent."""
+        """Reads effective_tempo_display_bpm(), i.e. the score's own units
+        (96 for eighth=96), never effective_tempo_bpm()'s internal
+        quarter-note equivalent (48) - see the tempo_bpm field comment."""
         effective = self.effective_tempo_display_bpm()
         effective_str = str(int(effective)) if float(effective).is_integer() else str(round(effective, 2))
         unit = f"{self.tempo_beat_unit_name_at()} notes per minute"

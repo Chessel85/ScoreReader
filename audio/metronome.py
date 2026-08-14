@@ -1,54 +1,41 @@
 # audio/metronome.py
-"""E8/Ref 14: metronome click constants and the one rule that decides
-whether a beat position gets a click - a plain module (constants + one pure
-function), not a class, matching models/key_signatures.py and
-models/duration_units.py's existing "plain module-level, not a class"
-pattern for the same kind of small shared lookup.
+"""E8/Ref 14: metronome click constants and the one rule deciding whether a
+beat position gets a click.
 
-Both audio/sequencer.py (playback, Ref 14 AC1/AC2) and main_window.py
-(step navigation, Ref 14 AC3) call click_event_for_beat() so the two
-contexts trigger identical clicks off one definition.
+A plain module (constants + one pure function), not a class - same shape as
+models/key_signatures.py and models/duration_units.py.
+
+Both audio/sequencer.py (playback) and main_window.py (step navigation) call
+click_event_for_beat(), so the two contexts click off one definition.
 """
 from typing import Optional, Tuple
 
-# tasks.txt E11/D-14: the built-in click sound went through two rejected
-# attempts (a synthesized sawtooth lead, then GM percussion Claves with
-# velocity distinguishing the accent) before landing here - a small
-# project-authored soundfont (tools/wav_to_sf2.py, built from
-# tools/config.ini, checked into soundfonts/recall_score_sounds.sf2
-# despite soundfonts/ otherwise being gitignored - see .gitignore's own
-# comment). SynthEngine loads it as a SECOND soundfont alongside
-# FluidR3_GM and selects it explicitly via program_select on
-# METRONOME_CHANNEL, so accent vs regular is now which SAMPLE plays (two
-# distinct recorded sounds), not a velocity difference on one fixed voice
-# - unlike the old Claves approach, where only velocity distinguished
-# beat 1.
-METRONOME_CHANNEL = 9  # same reservation as before - MusicData skips this
-                        # channel when assigning real parts (D-5); no
-                        # longer relying on channel 10's GM-percussion
-                        # bank behaviour, just kept for the same
-                        # collision-avoidance reason.
+# Accent vs regular beat is which SAMPLE plays, not a velocity difference:
+# SynthEngine loads soundfonts/recall_score_sounds.sf2 as a second soundfont
+# alongside FluidR3_GM and program_selects it on METRONOME_CHANNEL.
+# Synthesised clicks (a sawtooth lead, then GM Claves accented by velocity)
+# were both tried and rejected as sounds.
+METRONOME_CHANNEL = 9  # reserved in MusicData.RESERVED_CHANNELS so no real
+                       # part lands here. Nothing depends on channel 10's
+                       # GM-percussion behaviour any more - the reservation
+                       # is purely collision avoidance.
 METRONOME_BANK = 0
 METRONOME_PROGRAM = 1  # [preset:click_default] in tools/config.ini
 METRONOME_ACCENT_NOTE = 60  # "accent" sample - beat 1 of every bar
 METRONOME_OFFBEAT_NOTE = 61  # "offbeat" sample - every other beat
-METRONOME_VELOCITY = 100  # constant now the accent is a different sample,
-                           # not a louder one
+METRONOME_VELOCITY = 100
 
 
 def click_event_for_beat(beat_position: float) -> Optional[Tuple[int, int, int, int, int]]:
     """(channel, bank, program, pitch, velocity) for a click at this beat
-    position, or None if beat_position isn't a whole beat - main beats are
-    always whole numbers in the score's own ts-relative units (Ref 18), so
-    this is the same test for "is this a beat" everywhere it's needed.
+    position, or None if it isn't a whole beat - main beats are always whole
+    numbers in the score's own ts-relative units (Ref 18), so this is the
+    same "is this a beat" test everywhere it's needed.
 
-    Duration isn't decided here, and isn't decided anywhere: each click zone
-    is a one-shot, non-looping sample, and FluidSynth retires such a voice
-    by itself once the sample data runs out, with no note-off needed. (R7:
-    this used to describe SynthEngine.play_click reading per-sample
-    durations from a sidecar soundfonts/recall_score_sounds.sf2.json - that
-    sidecar was removed along with the scheduling it fed, see play_click's
-    own comment. The description outlived the mechanism.)"""
+    Duration is decided nowhere: each click zone is a one-shot, non-looping
+    sample, and FluidSynth retires such a voice by itself once the sample
+    data runs out. See SynthEngine.play_click.
+    """
     if not float(beat_position).is_integer():
         return None
     pitch = METRONOME_ACCENT_NOTE if beat_position == 1 else METRONOME_OFFBEAT_NOTE

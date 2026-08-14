@@ -18,35 +18,27 @@ class Region5ListWidget(RegionFocusCycleMixin, QListWidget):
     Region 5 (Ref 29, the "Performance region"): a flat list of whichever
     repeat/ending/hairpin rows are active at the cursor's current position.
 
-    Modeled on Region2ListWidget (thin QListWidget + UserRole-stashed row
-    data) rather than the table widgets Region 1/4 use - same "NVDA reads a
-    whole row in one keystroke" reasoning. Unlike Region 2, there's no
-    user-authored order to preserve across a rebuild (MusicData.
-    get_performance_region_rows already returns a stable, deterministic
-    order), so refresh_list here is a plain repopulate always landing on row
-    0, not an id-based re-anchor.
+    A list, not a table, for the same "NVDA reads a whole row in one
+    keystroke" reasoning as Region 2. Unlike Region 2 there is no
+    user-authored order to preserve across a rebuild, so refresh_list is a
+    plain repopulate landing on row 0 rather than an id-based re-anchor.
 
-    Ctrl+Home/Ctrl+End jump the main timeline cursor to the focused row's
-    span start/end (MainWindow.jump_to_performance_span_start/end) - a real
-    navigation feature scoped only to this region, distinct from the plain
-    (unmodified) Home/End that already mean "first/last note of the whole
-    piece" globally when Region 3 has focus.
+    Ctrl+Home/Ctrl+End jump the timeline cursor to the focused row's span
+    start/end - scoped to this region only, distinct from plain Home/End,
+    which mean "first/last note of the piece" when Region 3 has focus.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
     def _main_window(self) -> "MainWindow":
-        # This widget is only ever created by MainWindow.setup_ui and added
-        # to its central widget, so window() is always the MainWindow - same
-        # convention as TimelineListWidget._main_window.
+        # Only ever created by MainWindow.setup_ui, so window() is always it.
         return self.window()  # type: ignore[return-value]
 
     def refresh_list(self, rows: List[PerformanceRegionRow]) -> None:
-        """Clears and repopulates. An empty active set shows a single
-        "None" placeholder row (UserRole None, so Ctrl+Home/End on it is a
-        no-op) - mirrors get_region_3_data()'s own ["None"] convention for
-        "nothing here right now"."""
+        """Clears and repopulates. An empty set shows a single "None"
+        placeholder (UserRole None, so Ctrl+Home/End no-ops on it), matching
+        get_region_3_data()'s own ["None"] convention."""
         self.clear()
         if not rows:
             item = QListWidgetItem("None")
@@ -61,10 +53,8 @@ class Region5ListWidget(RegionFocusCycleMixin, QListWidget):
             self.setCurrentRow(0)
 
     def current_row_data(self) -> Optional[PerformanceRegionRow]:
-        """The PerformanceRegionRow behind the focused row, or None (empty
-        list, or the "None" placeholder row) - MainWindow's Ctrl+Home/End
-        handlers no-op on None rather than reaching into currentItem()
-        directly."""
+        """The row behind the focused item, or None (empty list or the
+        placeholder), so callers never reach into currentItem() themselves."""
         item = self.currentItem()
         if item is None:
             return None

@@ -8,24 +8,19 @@ from audio.position_announcer import announcement_event_for_beat
 
 
 class Sequencer(QObject):
-    """E4: schedules timeline events over real time from a start index, with
-    stop/pause/resume. Foundation for E5 (play/pause/stop from the cursor)
-    and E6 (two-bar phrase audition) - E7's chord audition doesn't need
-    scheduling at all, it's a single simultaneous chord, so it bypasses this
-    class entirely.
+    """Schedules timeline events over real time from a start index, with
+    stop/pause/resume (Ref 10 playback, Ref 11 phrase audition). Chord
+    audition needs no scheduling and bypasses this class entirely.
 
-    Uses a single QTimer, rescheduled one step at a time rather than N
-    timers pre-scheduled up front, so pause/stop/an F/S tempo change (E2)
-    mid-playback just cancels and reschedules the next step instead of
-    unwinding a queue built with now-stale timing. Timing between two steps
-    comes from EventSlice.quarters_from_start (added in this task) and
-    MusicData.effective_tempo_bpm() (E1), read fresh on every step rather
-    than cached at play_from time.
+    One QTimer, rescheduled a step at a time rather than N timers queued up
+    front, so a pause/stop or a mid-playback tempo change just cancels and
+    reschedules instead of unwinding a queue built on stale timing. Step
+    timing reads EventSlice.quarters_from_start and
+    MusicData.effective_tempo_bpm() fresh on every step, never cached at
+    play_from time.
 
-    timer: injectable like MainWindow's synth parameter (D-7) - defaults to
-    a real QTimer, but tests can pass a fake with a synchronous .start()/
-    .stop()/.timeout so scheduling can be driven deterministically without
-    a real wall-clock wait.
+    timer: injectable (like MainWindow's synth) so tests can drive
+    scheduling synchronously with no wall-clock wait.
     """
 
     step_played = Signal(int)  # emits the timeline index just sounded
@@ -65,18 +60,14 @@ class Sequencer(QObject):
         return self._original_start_index
 
     def play_from(self, start_index: int, end_index: Optional[int] = None, update_cursor: bool = True) -> None:
-        """Start playing from start_index through end_index (inclusive), or
-        to the end of the visible timeline if end_index is None (Ref 10
-        AC1). update_cursor tells callers (MainWindow) whether this run
-        should move active_event_index as it goes (full playback, E5) or
-        leave it alone (phrase audition, E6)."""
+        """Ref 10 AC1: play from start_index through end_index (inclusive),
+        or to the end of the visible timeline. update_cursor tells MainWindow
+        whether this run moves active_event_index as it goes (full playback)
+        or leaves it alone (phrase audition)."""
         self._timer.stop()
-        # Explicit reposition, not a natural step-to-step advance - clear
-        # anything still ringing from wherever playback was before (Ref 10
-        # AC1/AC5), since _sound_current_step below now uses retrigger=
-        # False and won't do this itself (that's what lets OTHER parts'
-        # notes keep ringing across an unrelated part's new attack during
-        # a normal run - see play_chord).
+        # An explicit reposition clears the deck; _sound_current_step uses
+        # retrigger=False and won't, which is what lets other parts' notes
+        # ring across an unrelated part's attack during a normal run.
         self.synth.stop_all_notes()
         self._current_index = start_index
         self._original_start_index = start_index
@@ -87,12 +78,10 @@ class Sequencer(QObject):
         self._sound_current_step()
 
     def pause(self) -> None:
-        """Ref 10 AC3: stop advancing and silence whatever's sounding right
-        now - reported bug, live-tested: an earlier version left the current
-        note ringing out on its own natural duration, which for a short note
-        meant pausing had no audible effect at all and read as "not
-        working". _current_index stays exactly where it is, which AC3 calls
-        "the position to restart playback"."""
+        """Ref 10 AC3: stop advancing AND silence what's sounding - letting
+        the current note ring out its natural duration makes pausing on a
+        short note inaudible, which reads as "pause doesn't work".
+        _current_index stays put, as the position to restart from."""
         if not self._is_playing:
             return
         self._timer.stop()
@@ -101,9 +90,9 @@ class Sequencer(QObject):
         self._is_paused = True
 
     def resume(self) -> None:
-        """Ref 10 AC3: restart playback from the paused position - re-sounds
-        the current step (matching the spec's own wording, not a mid-note
-        continuation) and carries on forward from there."""
+        """Ref 10 AC3: restart from the paused position - re-sounds the
+        current step (per the spec's wording, not a mid-note continuation)
+        and carries on from there."""
         if not self._is_paused:
             return
         self._is_paused = False
@@ -125,45 +114,30 @@ class Sequencer(QObject):
 
         events = self.music_data.get_playback_events_at_index(self._current_index)
         if events:
-            # retrigger=False: a natural step-to-step advance must not
-            # silence OTHER parts' still-ringing notes just because this
-            # part has a new attack here (reported bug, live-tested:
-            # Violin I entering on beat 2 was cutting Violin II/Viola/
-            # Cello's beat-1 minims short to one beat, "like Violin I was
-            # sending a MIDI off to the other parts" - because it
-            # literally was, via play_chord's old unconditional
-            # stop_all_notes()). Explicit repositioning (play_from/resume)
-            # still clears the deck first - see play_from.
+            # retrigger=False: a natural advance must not silence other
+            # parts' still-ringing notes just because this part has a new
+            # attack here. play_from/resume clear the deck themselves.
             self.synth.play_chord(events, retrigger=False)
-            # Each group now carries its own duration (Ref 9 AC2/Ref 13
-            # AC2 - one part no longer gets clamped to another part's
-            # shorter note sounding at the same instant); the longest of
-            # them is what actually needs to finish ringing before this
-            # step is done, which matters below when this is the final
-            # step of the run.
+            # Groups carry their own durations, so the longest is what has
+            # to finish ringing before this step is done - which matters
+            # below when this is the run's final step.
             ring_out_ms = max(group[3] for group in events)
         else:
             ring_out_ms = self.music_data.get_duration_ms_for_index(self._current_index)
 
-        # E8/Ref 14 AC1/AC2: a click layers on top of whatever notes (or
-        # nothing) sound at this step, whenever the step lands on a whole
-        # beat - accented on beat 1. Fires alongside real notes too, not
-        # instead of them, and needs no separate scheduling: this step is
-        # only reached at all for a silent beat because
-        # next_visible_event_index (Ref 14 AC4) now counts a metronome-only
-        # beat marker as a real step to visit.
+        # Ref 14 AC1/AC2: the click layers on top of whatever sounds here
+        # (or nothing), whenever the step is a whole beat. No separate
+        # scheduling needed - a silent beat is reached at all only because
+        # next_visible_event_index counts metronome-only beat markers.
         if self.music_data.metronome_enabled:
             current_slice = self.music_data.timeline_slices[self._current_index]
             click = click_event_for_beat(current_slice.beat_position)
             if click is not None:
                 self.synth.play_click(*click)
 
-        # Ref 28 AC1/AC2: independent of the click above - can fire whether
-        # or not the metronome is on, and on its own channel so the two
-        # never fight each other when they land on the same beat (see
-        # audio/position_announcer.py). Reads the same current_slice
-        # already fetched above when the metronome branch ran; fetch it
-        # again here if that branch was skipped.
+        # Ref 28 AC1/AC2: independent of the click - either can be on
+        # alone, and they use separate channels so simultaneous ones don't
+        # cancel each other (see audio/position_announcer.py).
         if self.music_data.position_announcer_enabled:
             current_slice = self.music_data.timeline_slices[self._current_index]
             announcement = announcement_event_for_beat(current_slice.beat_position)
@@ -174,17 +148,12 @@ class Sequencer(QObject):
 
         next_index = self.music_data.next_visible_event_index(self._current_index, self._end_index)
         if next_index is None:
-            # Reported bug, live-tested: this used to flip is_playing False
-            # and emit finished() here immediately - before the last note
-            # had actually rung out for ring_out_ms. is_playing being False
-            # while the note was still audibly sounding meant Space, pressed
-            # right after, took toggle_play_stop()'s "start a new run"
-            # branch instead of "stop" - and since the cursor was already on
-            # the last note, that played the boundary cue instead of doing
-            # anything sensible. Now: stay "playing" and wait out the ring
-            # duration via the same timer/_advance path, with
-            # _pending_next_index left None as the signal that this wait is
-            # the finish, not a further step.
+            # Stay "playing" and wait out the last note's ring via the same
+            # timer path, with _pending_next_index None marking this wait as
+            # the finish rather than a further step. Flipping is_playing
+            # False here instead would make Space (pressed while the note is
+            # still audibly sounding) take toggle_play_stop's "start" branch
+            # from the last note, i.e. just play the boundary cue.
             self._pending_next_index = None
             self._timer.start(ring_out_ms)
             return
@@ -193,10 +162,9 @@ class Sequencer(QObject):
         self._timer.start(self._delay_ms_to(next_index))
 
     def _delay_ms_to(self, next_index: int) -> int:
-        """Ref 12 "multi-tempo scope": uses the tempo in effect at the
-        *current* step, not the next one - a marking at next_index's own
-        position takes effect starting there, so the time it takes to reach
-        it is still governed by whatever tempo was active beforehand."""
+        """Uses the tempo at the CURRENT step, not the next one: a marking
+        at next_index takes effect on arrival, so the time taken to get
+        there is governed by the tempo in force beforehand (Ref 12)."""
         current_slice = self.music_data.timeline_slices[self._current_index]
         next_slice = self.music_data.timeline_slices[next_index]
         delta_quarters = next_slice.quarters_from_start - current_slice.quarters_from_start
@@ -205,14 +173,11 @@ class Sequencer(QObject):
 
     def _advance(self) -> None:
         if self._pending_next_index is None:
-            # The ring-out wait scheduled at the end of _sound_current_step
-            # has completed - only now is playback actually finished.
-            # Ref 10 AC5's "stopping reverts to the original start position"
-            # also applies here, not just to an explicit interrupt (stop()
-            # above does the same _original_start_index reset) - user
-            # decision, since reaching the end naturally is still "stopping"
-            # from the listener's point of view, not a new position to land
-            # on and leave the cursor at.
+            # The ring-out wait has completed, so playback is only now
+            # actually finished. Ref 10 AC5's "reverts to the original start
+            # position" applies to reaching the end naturally too, not just
+            # to an explicit stop (the user's decision: from the listener's
+            # point of view both are stopping).
             self._is_playing = False
             self._current_index = self._original_start_index
             self.finished.emit()

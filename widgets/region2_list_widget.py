@@ -29,9 +29,7 @@ class Region2ListWidget(RegionFocusCycleMixin, QListWidget):
 
     def current_node(self) -> Optional[Region2Node]:
         """The Region2Node behind the focused row, or None if the list is
-        empty/no score is loaded - powers F2's attribute-order dialog, which
-        scopes itself to whatever part/staff/voice the user was on in Region
-        2 when they opened it."""
+        empty - the attribute-order dialog scopes itself to this."""
         row = self.currentRow()
         if 0 <= row < len(self._current_visible_nodes):
             return self._current_visible_nodes[row]
@@ -44,12 +42,10 @@ class Region2ListWidget(RegionFocusCycleMixin, QListWidget):
 
     def apply_off_node_keys(self, parts_off: set, staves_off: set, voices_off: set):
         """Ref 27: restores each node's own on/off state from a saved
-        ScoreConfig, after load_score_structure has already reset every node
-        to its default enabled=True. refresh_list()'s filter_changed
-        emission at the end is what actually propagates the restored state
-        back to MusicData and Region 3 (MainWindow._on_region_2_filter_changed)
-        - the same signal path a live toggle already uses, not a separate
-        one."""
+        ScoreConfig, after load_score_structure has reset everything to
+        enabled. refresh_list()'s filter_changed emission is what propagates
+        the result to MusicData and Region 3 - the same signal path a live
+        toggle uses, not a separate one."""
         self.model_manager.apply_off_node_keys(parts_off, staves_off, voices_off)
         self.refresh_list()
 
@@ -72,11 +68,9 @@ class Region2ListWidget(RegionFocusCycleMixin, QListWidget):
                 target_row = row_idx
 
             status_text = "on" if node.enabled else "off"
-            # R11: no setData(UserRole, node_id) here - it was never read
-            # back. current_node() resolves a row through
-            # _current_visible_nodes, which is built from the same list in
-            # the same order, so the stashed copy was dead weight (and the
-            # codebase's only unscoped Qt.UserRole).
+            # No per-item UserRole data: current_node() resolves a row via
+            # _current_visible_nodes, built from this same list in the same
+            # order, so stashing the node_id would be dead weight.
             self.addItem(QListWidgetItem(f"{node.display_name} - {status_text}"))
 
         if self.count() > 0:
@@ -86,9 +80,8 @@ class Region2ListWidget(RegionFocusCycleMixin, QListWidget):
         self.filter_changed.emit(active_tuples)
 
     def keyPressEvent(self, event):
-        # Tab/Shift+Tab are handled a level up, in RegionFocusCycleMixin.
-        # event() - QAbstractItemView never lets them reach keyPressEvent at
-        # all on a single-column view (R1, see that module's docstring).
+        # Tab/Shift+Tab are handled in RegionFocusCycleMixin.event() -
+        # QAbstractItemView never lets them reach keyPressEvent here.
         if event.key() == Qt.Key.Key_O:
             curr_row = self.currentRow()
             if 0 <= curr_row < len(self._current_visible_nodes):

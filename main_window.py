@@ -1,57 +1,53 @@
 # main_window.py
 import os
 import sys
-from typing import List, Optional
+from typing import Optional
 
-from PySide6.QtCore import QItemSelectionModel, QLocale, QUrl, Qt
-from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence, QShortcut
+from PySide6.QtCore import QLocale, QUrl, Qt
+from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QApplication,
     QDialog,
     QFileDialog,
     QGridLayout,
     QHeaderView,
-    QListWidgetItem,
     QMainWindow,
-    QMenu,
     QTableWidget,
-    QTableWidgetItem,
     QWidget,
 )
 
-from audio.metronome import click_event_for_beat
-from audio.performance_cue import performance_cue_event
-from audio.position_announcer import announcement_event_for_beat
-from audio.sequencer import Sequencer
 from audio.synth_engine import SynthEngine
-from models.music_data import MusicData
-from models.vocabulary import attribute_label, bar_word
-from persistence import app_settings, score_config
+from controllers.attribute_controller import AttributeController
+from controllers.focus_controller import FocusController
+from controllers.navigation_controller import NavigationController
+from controllers.playback_controller import PlaybackController
+from controllers.region_presenter import RegionPresenter
+from controllers.score_persistence import ScorePersistenceController
+from controllers.score_session import ScoreSession
+from models.vocabulary import bar_word
+from persistence import app_settings
 from persistence.app_settings import AppSettings
 from widgets.about_dialog import AboutDialog
 from widgets.attribute_order_dialog import AttributeOrderDialog
 from widgets.goto_measure_dialog import GotoMeasureDialog
+from widgets.menu_builder import MenuBuilder, goto_measure_action_text
 from widgets.performance_report_dialog import PerformanceReportDialog
 from widgets.region2_list_widget import Region2ListWidget
-from widgets.region2_manager import node_breadcrumb, voice_tuples_for_node
+from widgets.region2_manager import node_breadcrumb
 from widgets.region4_table_widget import Region4TableWidget
 from widgets.region5_list_widget import Region5ListWidget
 from widgets.region_table_widget import RegionTableWidget
 from widgets.status_bar_widget import StatusBarWidget
 from widgets.tempo_offset_dialog import TempoOffsetDialog
 from widgets.timeline_list_widget import TimelineListWidget
-from workers.score_load_worker import ScoreLoadThread
 
 
 def detect_default_uk_terms(system_locale: Optional[QLocale] = None) -> bool:
-    """F4/D-6: UK terms are the safe default; only a positively-detected US
-    system locale switches the startup default to US. Any other locale (UK,
-    non-English, or one Qt can't resolve) stays UK - "indeterminate" means
-    UK, not a guess. Lives here (not models/vocabulary.py) because it needs
-    QLocale - models/ stays Qt-free. system_locale is injectable so a test
-    gets a deterministic result regardless of the machine running it - same
-    DI pattern as SynthEngine (D-7) and Sequencer's timer (E4)."""
+    """F4/D-6: UK is the safe default; only a positively-detected US locale
+    switches it. Anything indeterminate (non-English, unresolvable) stays
+    UK rather than guessing. Lives here, not models/vocabulary.py, because
+    it needs QLocale and models/ stays Qt-free. system_locale is injectable
+    so tests are deterministic regardless of the machine."""
     loc = system_locale if system_locale is not None else QLocale.system()
     # PySide6 6.11 exposes the non-deprecated .territory() method, but it
     # still returns the QLocale.Country enum (not a separate Territory enum
@@ -75,78 +71,56 @@ def examples_dir() -> str:
 
 
 class MainWindow(QMainWindow):
+    """The window shell: builds the widgets, owns the controllers, and wires
+    them together. Deliberately holds almost no logic of its own.
 
-    # Boundary ("doh") cue for Ref 2 AC4 / Ref 3 AC4 (C5) - a short, quiet,
-    # low double-bass note played instead of moving, so it isn't mistaken
-    # for a note in the score. Not part of any part's playback, so it gets
-    # a channel of its own rather than reusing get_channel_for_part: D-5
-    # allocates channels 0-8,10-15 in part-list order, so channel 15 is the
-    # one least likely to collide with a real part (only would on a 15+
-    # part score). See D-9 in tasks.txt.
-    BOUNDARY_CHANNEL = 15
-    BOUNDARY_GM_PROGRAM = 43  # GM 44 Contrabass, 0-indexed on the wire
-    BOUNDARY_MIDI_PITCH = 37  # C#2 - low
-    BOUNDARY_DURATION_MS = 100  # roughly a semiquaver; independent of score tempo
+    The methods below are mostly one-line delegators. They are the stable
+    API the region widgets call (via window()) and the tests drive, so they
+    stay here as a facade even though the work happens in controllers/.
+    """
+
+    # Re-exported so callers (and tests) can name the boundary cue's voice
+    # without reaching into the playback controller.
+    BOUNDARY_CHANNEL = PlaybackController.BOUNDARY_CHANNEL
+    BOUNDARY_GM_PROGRAM = PlaybackController.BOUNDARY_GM_PROGRAM
+    BOUNDARY_MIDI_PITCH = PlaybackController.BOUNDARY_MIDI_PITCH
+    BOUNDARY_DURATION_MS = PlaybackController.BOUNDARY_DURATION_MS
 
     def __init__(self, synth=None, uk_terms: bool | None = None):
         """Create the main window.
 
-        synth: any object exposing the SynthEngine interface
-        (play_chord / play_notes / stop_all_notes / set_program / close). Defaults to a
-        real SynthEngine. Tests pass a stand-in so no audio device is
-        opened, and so they can assert what would have sounded.
+        synth: any object with the SynthEngine interface (play_chord /
+        play_notes / stop_all_notes / set_program / close). Tests pass a
+        stand-in so no audio device opens and they can assert what would
+        have sounded.
 
-        uk_terms: F4/D-6 startup dialect override. Defaults to None, which
-        resolves to whatever AppSettings has saved from a previous session
-        (persistence/app_settings.py - a global preference, independent of
-        which file is loaded), falling back to detect_default_uk_terms()
-        (OS-locale detection) only when nothing has ever been saved. Passing
-        an explicit value (as tests do) skips both and is not itself
-        persisted - same constructor-injection pattern as synth above (D-7),
-        so tests get a deterministic value regardless of the machine running
-        them or its saved settings.
+        uk_terms: startup dialect override. None resolves to the saved
+        AppSettings value, falling back to OS-locale detection when nothing
+        has ever been saved. An explicit value skips both and is not
+        persisted, so tests are deterministic regardless of the machine.
         """
         super().__init__()
         self.setWindowTitle("Recall Score")
         self.resize(800, 600)
 
-        self._music_data: MusicData | None = None
-        self._load_thread: ScoreLoadThread | None = None
-        self.synth = synth if synth is not None else SynthEngine()
-        # E4/E5: one Sequencer per loaded score (it holds a reference to
-        # that score's MusicData) - (re)created in _on_score_loaded.
-        self.sequencer: Sequencer | None = None
-
-        # Ref 29: the labels currently shown in Region 5, used by
-        # _refresh_region_5 to detect when the active span set actually
-        # changed (vs. just being recomputed after some unrelated update) -
-        # only a real change rebuilds the list and fires the audio cue.
-        # None (not []) is the sentinel for "never rendered yet" - live-
-        # tested bug: starting this at [] made the very first render (an
-        # empty score-opening position, whose own rows are also []) compare
-        # equal and get skipped, leaving Region 5 with no "None" placeholder
-        # row at all rather than actually showing one. Reset to None in
-        # _on_score_loaded so a freshly loaded file always renders at least
-        # once and isn't diffed against the previous file's leftover state.
-        self._last_performance_row_labels: Optional[List[str]] = None
-
-        # F4/D-6/Ref 27: a GLOBAL preference (persistence/app_settings.py),
-        # not a per-score one like metronome_enabled - MusicData is wholly
-        # replaced on every file load (_on_score_loaded), so this lives here
-        # and is explicitly reapplied onto each freshly-loaded MusicData
-        # rather than living only on MusicData itself. Set before
-        # setup_menu() since menu text (goto_measure_action) depends on it
-        # at construction time.
-        if uk_terms is not None:
-            self._uk_terms: bool = uk_terms
-        else:
+        if uk_terms is None:
             saved_uk_terms = app_settings.load().uk_terms
-            self._uk_terms: bool = (
+            uk_terms = (
                 saved_uk_terms if saved_uk_terms is not None else detect_default_uk_terms()
             )
 
+        self.session = ScoreSession(
+            synth if synth is not None else SynthEngine(), uk_terms, parent=self
+        )
+
         self.setup_ui()
+        self.setup_controllers()
         self.setup_menu()
+        self.connect_signals()
+
+        self.region_1.setFocus()
+
+    # --- construction -------------------------------------------------
 
     def setup_ui(self):
         central_widget = QWidget(self)
@@ -154,43 +128,33 @@ class MainWindow(QMainWindow):
 
         grid_layout = QGridLayout(central_widget)
 
-        # Region 1: Property List
+        # Region 1: score info
         self.region_1 = self.create_property_list()
 
         # Region 2: Parts/Staves/Voices hierarchy, navigated Up/Down, O to toggle
         self.region_2 = Region2ListWidget()
         self.region_2.setFocusPolicy(Qt.FocusPolicy.TabFocus)
-        self.region_2.filter_changed.connect(self._on_region_2_filter_changed)
 
         # Region 3: Timeline List
         self.region_3 = TimelineListWidget()
         self.region_3.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.region_3.setFocusPolicy(Qt.FocusPolicy.TabFocus)
-        self.region_3.itemSelectionChanged.connect(self._on_region_3_selection_changed)
 
-        self.select_all_shortcut = QShortcut(QKeySequence("Ctrl+A"), self.region_3)
-        self.select_all_shortcut.activated.connect(self.select_all_region_3)
-
-        # Region 4: Property List. Region4TableWidget (not the plain
+        # Region 4: note attributes. Region4TableWidget (not the plain
         # RegionTableWidget Region 1 uses) adds the Ref 15 AC4 context menu
         # for appending/removing an attribute in Region 3's note display.
         self.region_4 = self.create_property_list(table_cls=Region4TableWidget)
 
         # Region 5 (Ref 29, the "Performance region"): duration-spanning
         # markers (repeat barlines, 1st/2nd endings, crescendo/diminuendo
-        # hairpins) active at the cursor's current position - see
-        # widgets/region5_list_widget.py.
+        # hairpins) active at the cursor's current position.
         self.region_5 = Region5ListWidget()
         self.region_5.setFocusPolicy(Qt.FocusPolicy.TabFocus)
 
-        # Ref 29: row 1 = 2 regions (metadata, parts), row 2 = 3 regions
-        # (notes, attributes, performance) - a deliberate departure from the
-        # original strict 2x2, agreed with the user, since the visual
-        # layout matters far less than consistent region numbering for this
-        # app's screen-reader-first users; sighted collaborators still see
-        # a sensible aligned grid. A 6-column grid (LCM of 2 and 3) with
-        # column spans keeps both rows aligned under one shared grid rather
-        # than needing two separate nested layouts.
+        # Row 1 = 2 regions, row 2 = 3 - a deliberate departure from the
+        # original 2x2 (agreed with the user: consistent region numbering
+        # matters far more than visual layout here). A 6-column grid, the
+        # LCM of 2 and 3, keeps both rows aligned under one layout.
         grid_layout.addWidget(self.region_1, 0, 0, 1, 3)
         grid_layout.addWidget(self.region_2, 0, 3, 1, 3)
         grid_layout.addWidget(self.region_3, 1, 0, 1, 2)
@@ -202,301 +166,317 @@ class MainWindow(QMainWindow):
         for col in range(6):
             grid_layout.setColumnStretch(col, 1)
 
-        # C6: real QMainWindow status bar so NVDA+End ("report status bar")
-        # works via Qt's native accessibility role.
+        # A real QMainWindow status bar, so NVDA+End ("report status bar")
+        # works through Qt's native accessibility role.
         self.status_bar = StatusBarWidget()
         self.setStatusBar(self.status_bar)
 
-        # Region cycling deliberately does NOT use QWidget.setTabOrder/
-        # focusNextChild: Qt's focus chain is ONE shared window-wide doubly
-        # linked ring, and setTabOrder(a, b) works by relocating b's node in
-        # that ring. Closing an N-widget loop needs region_1 to be relocated
-        # too (the wrap-around region_N->region_1 call), which resets
-        # region_1's own outgoing pointer as a side effect - silently
-        # breaking the region_1->region_2 edge set earlier. This isn't
-        # fixable by reordering the calls: with every widget used once as
-        # a source and once as a target, the dependency between the calls is
-        # circular. So each region widget calls focus_next_region/
-        # focus_previous_region below directly instead, bypassing the global
-        # chain entirely - shared via widgets/region_focus_cycle.py's
-        # RegionFocusCycleMixin, which intercepts at event() level because
-        # QAbstractItemView never lets Tab reach keyPressEvent (R1).
+        self.setup_shortcuts()
 
-        # C7: F6/Shift+F6 toggle focus between the regions area (restoring
-        # whichever region was last focused) and the status bar. Menu bar
-        # access stays on the OS's native Alt mechanism, not F6/Tab.
-        self._last_focused_region = self.region_1
-        QApplication.instance().focusChanged.connect(self._on_focus_changed)
-        self._focus_tracking_connected = True
+    def setup_shortcuts(self):
+        """WindowShortcut fires regardless of which child widget has focus,
+        which is what's wanted, without ApplicationShortcut's app-wide scope
+        - that causes ambiguous-shortcut conflicts between MainWindow
+        instances alive in the same QApplication.
 
-        # WindowShortcut (Qt's default context) fires regardless of which
-        # child widget within this window currently holds focus - exactly
-        # what's needed here - without ApplicationShortcut's app-wide scope,
-        # which caused ambiguous-shortcut conflicts between MainWindow
-        # instances left alive across tests in the same QApplication.
-        self.f6_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F6), self)
-        self.f6_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-        self.f6_shortcut.activated.connect(self._toggle_pane)
+        Ctrl+M/Ctrl+P/Ctrl+G/Ctrl+T have no QShortcut here: their menu
+        actions carry the shortcut themselves.
+        """
+        self.select_all_shortcut = QShortcut(QKeySequence("Ctrl+A"), self.region_3)
+        self.select_all_shortcut.activated.connect(self.select_all_region_3)
 
-        self.shift_f6_shortcut = QShortcut(QKeySequence("Shift+F6"), self)
-        self.shift_f6_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-        self.shift_f6_shortcut.activated.connect(self._toggle_pane)
+        def window_shortcut(sequence, slot):
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(slot)
+            return shortcut
 
-        # E2: playback tempo controls (Ref 12) are global like F6/Ctrl+M,
-        # not Note-region-scoped like arrow-key timeline navigation - they
-        # adjust a playback-wide setting, not a per-row position, so D-2's
-        # Note-region scoping rule doesn't apply to them.
-        self.tempo_faster_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F), self)
-        self.tempo_faster_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-        self.tempo_faster_shortcut.activated.connect(self.tempo_faster)
+        # C7: F6/Shift+F6 toggle between the regions area (restoring the
+        # last-focused region) and the status bar. Menu bar access stays on
+        # the OS's native Alt mechanism.
+        self.f6_shortcut = window_shortcut(Qt.Key.Key_F6, self._toggle_pane)
+        self.shift_f6_shortcut = window_shortcut("Shift+F6", self._toggle_pane)
 
-        self.tempo_slower_shortcut = QShortcut(QKeySequence(Qt.Key.Key_S), self)
-        self.tempo_slower_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-        self.tempo_slower_shortcut.activated.connect(self.tempo_slower)
+        # Tempo controls (Ref 12) are global, not Note-region-scoped like
+        # arrow-key navigation: they adjust a playback-wide setting rather
+        # than a per-row position. Playback transport is global for the
+        # same reason.
+        self.tempo_faster_shortcut = window_shortcut(Qt.Key.Key_F, self.tempo_faster)
+        self.tempo_slower_shortcut = window_shortcut(Qt.Key.Key_S, self.tempo_slower)
+        self.tempo_reset_shortcut = window_shortcut(Qt.Key.Key_D, self.tempo_reset)
+        self.play_stop_shortcut = window_shortcut(Qt.Key.Key_Space, self.toggle_play_stop)
+        self.pause_resume_shortcut = window_shortcut("Ctrl+Space", self.toggle_pause_resume)
 
-        self.tempo_reset_shortcut = QShortcut(QKeySequence(Qt.Key.Key_D), self)
-        self.tempo_reset_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-        self.tempo_reset_shortcut.activated.connect(self.tempo_reset)
+        # Ref 13: re-trigger the chord at the cursor on demand. No held-key
+        # tracking needed - AC2's "hold for the marked length" is already
+        # each note's own duration, and "or pressed again" is a plain
+        # retrigger, which play_chord's default already handles.
+        self.chord_audition_shortcut = window_shortcut(
+            "Shift+Space", self._audition_current_selection
+        )
 
-        # E5/E7: playback transport, also global (Ref 10/13) - not Note-
-        # region-scoped for the same reason F/S/D above aren't.
-        self.play_stop_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Space), self)
-        self.play_stop_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-        self.play_stop_shortcut.activated.connect(self.toggle_play_stop)
+    def setup_controllers(self):
+        regions = [self.region_1, self.region_2, self.region_3, self.region_4, self.region_5]
 
-        self.pause_resume_shortcut = QShortcut(QKeySequence("Ctrl+Space"), self)
-        self.pause_resume_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-        self.pause_resume_shortcut.activated.connect(self.toggle_pause_resume)
+        self.playback = PlaybackController(self.session, parent=self)
+        self.navigation = NavigationController(self.session, parent=self)
+        self.focus = FocusController(self, regions, self.status_bar)
+        self.presenter = RegionPresenter(
+            self.session, self.region_1, self.region_2, self.region_3,
+            self.region_4, self.region_5, self.status_bar,
+            playback_status_fields=self.playback.status_fields,
+            parent=self,
+        )
+        self.attributes = AttributeController(self.session, self.presenter, self)
+        self.persistence = ScorePersistenceController(self.session, self.region_2)
 
-        # E7 (Ref 13): re-trigger the chord at the cursor on demand,
-        # independent of navigation. No held-key tracking needed - AC2's
-        # "hold for the marked length" is already satisfied by each note's
-        # own duration (get_playback_events_for_indices's per-part
-        # duration_ms, E1's effective tempo flows through automatically),
-        # and "or pressed again" is just a plain retrigger -
-        # SynthEngine.play_chord already stops previously sounding notes
-        # before starting new ones (A8).
-        self.chord_audition_shortcut = QShortcut(QKeySequence("Shift+Space"), self)
-        self.chord_audition_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-        self.chord_audition_shortcut.activated.connect(self._play_selected_region_3_notes)
-
-        # E8/Ref 14 (Ctrl+M): no separate QShortcut here - the Options
-        # menu's checkable metronome_action (setup_menu) carries the Ctrl+M
-        # shortcut itself, same pattern as Ctrl+G/Ctrl+T's menu actions
-        # above it, not the bare-QShortcut pattern F/S/D/Space use.
-
-        self.region_1.setFocus()
+        self.focus.connect_tracking()
 
     def setup_menu(self):
-        menu_bar = self.menuBar()
-        file_menu = menu_bar.addMenu("&File")
+        actions = MenuBuilder(self, self, self.session.uk_terms).build()
+        self._actions = actions
 
-        open_action = QAction("&Open...", self)
-        open_action.setShortcut(QKeySequence.Open)
-        open_action.setStatusTip("Open a MusicXML file")
-        open_action.triggered.connect(self.open_file_dialog)
+        # Kept as individual attributes: the names the tests and the rest of
+        # the window already use.
+        self.clear_preferences_action = actions.clear_preferences
+        self.performance_report_action = actions.performance_report
+        self.first_measure_action = actions.first_measure
+        self.last_measure_action = actions.last_measure
+        self.goto_measure_action = actions.goto_measure
+        self.move_to_notes_action = actions.move_to_notes
+        self.move_to_metadata_action = actions.move_to_metadata
+        self.move_to_parts_action = actions.move_to_parts
+        self.move_to_attributes_action = actions.move_to_attributes
+        self.move_to_performance_action = actions.move_to_performance
+        self.tempo_offset_action = actions.tempo_offset
+        self.terminology_language_group = actions.terminology_group
+        self.uk_language_action = actions.uk_language
+        self.us_language_action = actions.us_language
+        self.metronome_action = actions.metronome
+        self.position_announcer_action = actions.position_announcer
+        self.attribute_order_action = actions.attribute_order
+        self.user_guide_action = actions.user_guide
+        self.about_action = actions.about
 
-        # Opens the same dialog as Open... but starting in examples/ (bundled
-        # via packaging/RecallScore.spec) instead of the last-used location -
-        # no shortcut, mnemonic E doesn't collide with Open...'s O or Exit's x.
-        open_example_action = QAction("Open E&xample Score...", self)
-        open_example_action.setStatusTip("Open a bundled example score")
-        open_example_action.triggered.connect(self.open_example_file_dialog)
+        self.persistence.clear_action = actions.clear_preferences
+        self.persistence.refresh_clear_action()
+        self.focus.first_measure_action = actions.first_measure
+        self.focus.last_measure_action = actions.last_measure
+        self.focus.update_navigation_actions_enabled()
 
-        exit_action = QAction("E&xit", self)
-        exit_action.setShortcut(QKeySequence.Quit)
-        exit_action.triggered.connect(self.close)
+    def connect_signals(self):
+        """The one place the controllers are joined up. Each is otherwise
+        unaware of the others."""
+        self.session.score_loaded.connect(self._on_score_loaded)
+        self.session.load_failed.connect(self._on_score_load_failed)
 
-        file_menu.addAction(open_action)
-        file_menu.addAction(open_example_action)
-        file_menu.addSeparator()
-        file_menu.addAction(exit_action)
+        # Both "the cursor moved" sources land on the same redraw.
+        self.navigation.position_changed.connect(self.presenter.update_timeline_views)
+        self.navigation.boundary_hit.connect(self.playback.play_boundary_cue)
+        self.playback.cursor_moved.connect(self.presenter.update_timeline_views)
+        self.playback.status_text_changed.connect(self.presenter.update_status_bar)
+        self.playback.playback_state_changed.connect(
+            self.presenter.update_playback_status_field
+        )
 
-        # Ref 27: the user is meant to stay mostly unaware .rsc files exist
-        # at all (Phase G) - these two entries are the deliberate exception,
-        # a minimal escape hatch rather than a settings UI.
-        edit_menu = menu_bar.addMenu("&Edit")
+        # Emitted from inside update_timeline_views, and delivered
+        # synchronously, so the notes still sound before the performance cue.
+        self.presenter.audition_requested.connect(self._audition_current_selection)
 
-        open_folder_action = QAction("Open Local &Folder", self)
-        open_folder_action.setStatusTip("Open the folder where saved preferences are stored")
-        open_folder_action.triggered.connect(self._open_score_config_folder)
-        edit_menu.addAction(open_folder_action)
+        self.region_2.filter_changed.connect(self.presenter.on_region_2_filter_changed)
+        self.region_3.itemSelectionChanged.connect(
+            self.presenter.on_region_3_selection_changed
+        )
 
-        self.clear_preferences_action = QAction(self._clear_preferences_action_text(), self)
-        self.clear_preferences_action.triggered.connect(self._clear_current_score_preferences)
-        edit_menu.addAction(self.clear_preferences_action)
-        self._refresh_clear_preferences_action()
+    def create_property_list(self, table_cls: type = RegionTableWidget) -> RegionTableWidget:
+        """An empty two-column property table for Region 1 or Region 4.
+        Population is RegionPresenter.populate_table's job, once a score is
+        loaded."""
+        table = table_cls(0, 2)
+        table.setHorizontalHeaderLabels(["Property", "Value"])
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        return table
 
-        # Ref 29: read-only whole-score summary (title/composer/tempo/key/
-        # time-sig, instrument note counts, anacrusis, bar count, repeat/
-        # ending/hairpin summary) - see widgets/performance_report_dialog.py.
-        # No dedicated shortcut; R doesn't collide with Open Local Folder's
-        # F or Clear Preferences' C above.
-        self.performance_report_action = QAction("Performance &Report...", self)
-        self.performance_report_action.triggered.connect(self._show_performance_report_dialog)
-        edit_menu.addAction(self.performance_report_action)
+    # --- state exposed for the widgets and tests ----------------------
 
-        # C8: Navigation duplicates, as menu items, the keyboard-only ways of
-        # moving to the start, end, or a specific measure (Refs 5, 6) - for
-        # anyone who prefers a menu over typing into the Note region.
-        # View/Options are deliberately not added yet - see tasks.txt C8.
-        navigation_menu = menu_bar.addMenu("&Navigation")
+    @property
+    def _music_data(self):
+        return self.session.music_data
 
-        # Kept as attributes, not local variables - PySide's Python wrapper
-        # for a QAction/QMenu can be garbage-collected even though the
-        # underlying C++ object is still parented and alive, leaving a
-        # "libshiboken: Internal C++ object already deleted" trap for any
-        # later code (tests included) that tries to reach it via
-        # menuBar().actions() traversal instead.
-        # C-tidy: Move to First/Last Note only make sense once focus is
-        # already in the Note region, so they're greyed out everywhere else
-        # (kept in sync by _update_navigation_actions_enabled, called from
-        # _on_focus_changed) rather than acting globally the way they did
-        # before. Move to Notes below is the deliberate exception - it's the
-        # one navigation item that stays enabled everywhere, since its whole
-        # job is getting focus into the Note region in the first place.
-        self.first_measure_action = QAction("Move to &First Note", self)
-        self.first_measure_action.setShortcut(QKeySequence(Qt.Key.Key_Home))
-        self.first_measure_action.triggered.connect(self._navigation_menu_first_measure)
+    @property
+    def synth(self):
+        return self.session.synth
 
-        self.last_measure_action = QAction("Move to &Last Note", self)
-        self.last_measure_action.setShortcut(QKeySequence(Qt.Key.Key_End))
-        self.last_measure_action.triggered.connect(self._navigation_menu_last_measure)
+    @property
+    def sequencer(self):
+        return self.playback.sequencer
 
-        self.goto_measure_action = QAction(self._goto_measure_action_text(), self)
-        self.goto_measure_action.setShortcut(QKeySequence("Ctrl+G"))
-        self.goto_measure_action.triggered.connect(self._show_goto_measure_dialog)
+    @property
+    def _uk_terms(self) -> bool:
+        return self.session.uk_terms
 
-        self.move_to_notes_action = QAction("Move to &Notes", self)
-        self.move_to_notes_action.setShortcut(QKeySequence("N"))
-        self.move_to_notes_action.triggered.connect(self._navigation_menu_move_to_notes)
+    @property
+    def _load_thread(self):
+        return self.session.load_thread
 
-        # Ref 29 follow-up: a direct jump shortcut for every region, not
-        # just Notes - user-requested letters, chosen to avoid the existing
-        # bare F/S/D tempo shortcuts (S was the user's first choice for
-        # Metadata, but that collides with tempo_slower_shortcut below; I
-        # was picked instead after flagging the conflict).
-        self.move_to_metadata_action = QAction("Move to &Info", self)
-        self.move_to_metadata_action.setShortcut(QKeySequence("I"))
-        self.move_to_metadata_action.triggered.connect(self._navigation_menu_move_to_metadata)
+    @property
+    def _last_focused_region(self):
+        return self.focus.last_focused_region
 
-        self.move_to_parts_action = QAction("Move to Parts List (&V)", self)
-        self.move_to_parts_action.setShortcut(QKeySequence("V"))
-        self.move_to_parts_action.triggered.connect(self._navigation_menu_move_to_parts)
+    @property
+    def _focus_tracking_connected(self) -> bool:
+        return self.focus.tracking_connected
 
-        self.move_to_attributes_action = QAction("Move to &Attributes", self)
-        self.move_to_attributes_action.setShortcut(QKeySequence("A"))
-        self.move_to_attributes_action.triggered.connect(self._navigation_menu_move_to_attributes)
+    # --- loading -------------------------------------------------------
 
-        self.move_to_performance_action = QAction("Move to &Performance", self)
-        self.move_to_performance_action.setShortcut(QKeySequence("P"))
-        self.move_to_performance_action.triggered.connect(self._navigation_menu_move_to_performance)
+    def open_file_dialog(self):
+        self._open_score_file_dialog(start_dir="")
 
-        navigation_menu.addAction(self.first_measure_action)
-        navigation_menu.addAction(self.last_measure_action)
-        navigation_menu.addSeparator()
-        navigation_menu.addAction(self.goto_measure_action)
-        navigation_menu.addSeparator()
-        navigation_menu.addAction(self.move_to_metadata_action)
-        navigation_menu.addAction(self.move_to_parts_action)
-        navigation_menu.addAction(self.move_to_notes_action)
-        navigation_menu.addAction(self.move_to_attributes_action)
-        navigation_menu.addAction(self.move_to_performance_action)
+    def open_example_file_dialog(self):
+        self._open_score_file_dialog(start_dir=examples_dir())
 
-        self._update_navigation_actions_enabled()
+    def _open_score_file_dialog(self, start_dir: str):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open MusicXML Score",
+            start_dir,
+            "MusicXML Files (*.xml *.musicxml *.mxl);;All Files (*)",
+        )
+        if file_path:
+            self.load_score_from_file(file_path)
 
-        # E3: Options menu's first entry - C8 deferred Options to F2's Note
-        # Display dialog, but the tempo offset dialog (Ref 12 AC5) needs
-        # somewhere to live a version earlier.
-        options_menu = menu_bar.addMenu("&Options")
+    def load_score_from_file(self, file_path: str):
+        if self.session.is_loading():
+            return
+        self._save_current_score_config()
+        self.session.load(file_path)
 
-        self.tempo_offset_action = QAction("&Tempo Offset...", self)
-        # Ctrl+T, same scope as Ctrl+G's Go to Measure dialog (C8) - fires
-        # from the main application area and the status bar, i.e. anywhere
-        # a shortcut normally works, not just when a particular region has
-        # focus (QAction's default ShortcutContext is already WindowShortcut).
-        self.tempo_offset_action.setShortcut(QKeySequence("Ctrl+T"))
-        self.tempo_offset_action.triggered.connect(self._show_tempo_offset_dialog)
-        options_menu.addAction(self.tempo_offset_action)
+    def _on_score_loaded(self, music_data):
+        """Orchestration only - which is why it stays in the shell. The order
+        matters: the saved config has to be applied to MusicData before the
+        regions render, and Region 2's own per-node toggles have to be in
+        effect before the first audition, or the opening chord includes
+        voices the user had switched off."""
+        self.setWindowTitle(f"{os.path.basename(music_data.file_path)} - Recall Score")
 
-        # F4/D-6: a submenu of two mutually exclusive, checkable items
-        # (QActionGroup with setExclusive(True)) rather than one toggle -
-        # live-tested feedback: the user wants "at least one ticked" always
-        # visible, which a single checkable action can't show as clearly as
-        # two radio-style items can. No dedicated shortcut - none is
-        # specified anywhere, and it avoids colliding with Ctrl+T/Ctrl+M.
-        terminology_menu = options_menu.addMenu("&Terminology Language")
-        self.terminology_language_group = QActionGroup(self)
-        self.terminology_language_group.setExclusive(True)
+        saved_config = self.persistence.load_for_current()
+        if saved_config is not None:
+            music_data.apply_config(saved_config)
+        self.persistence.refresh_clear_action()
 
-        self.uk_language_action = QAction("&UK", self)
-        self.uk_language_action.setCheckable(True)
-        self.uk_language_action.setChecked(self._uk_terms)
-        self.uk_language_action.triggered.connect(self._select_uk_terms)
-        self.terminology_language_group.addAction(self.uk_language_action)
-        terminology_menu.addAction(self.uk_language_action)
+        self.presenter.reset_performance_labels()
+        self.playback.attach_score(
+            music_data, mixer=saved_config.mixer if saved_config is not None else None
+        )
 
-        self.us_language_action = QAction("&US", self)
-        self.us_language_action.setCheckable(True)
-        self.us_language_action.setChecked(not self._uk_terms)
-        self.us_language_action.triggered.connect(self._select_us_terms)
-        self.terminology_language_group.addAction(self.us_language_action)
-        terminology_menu.addAction(self.us_language_action)
+        # Suppress the initial audition when there's a config to restore,
+        # and fire it once Region 2's restored state is actually in effect -
+        # otherwise the first sound heard on load includes voices that were
+        # saved as off, even though every later move excludes them.
+        self._update_ui_regions(play_all=saved_config is None)
+        if saved_config is not None:
+            self.region_2.apply_off_node_keys(
+                saved_config.parts_off, saved_config.staves_off, saved_config.voices_off
+            )
+            self._audition_current_selection()
 
-        # E8/Ref 14: checkable so its own state is announced by screen
-        # readers on focus, in addition to the Ctrl+M shortcut and the
-        # status bar's field - three ways to discover the current state.
-        self.metronome_action = QAction("Toggle &Metronome", self)
-        self.metronome_action.setCheckable(True)
-        self.metronome_action.setShortcut(QKeySequence("Ctrl+M"))
-        self.metronome_action.triggered.connect(self.toggle_metronome)
-        options_menu.addAction(self.metronome_action)
+    def _on_score_load_failed(self, error_text: str):
+        print(f"[ERROR] Failed to load score file:\n{error_text}")
 
-        # Ref 28: same checkable-action pattern as metronome_action just
-        # above, and independently toggleable from it (AC1/AC2) - both
-        # actions exist side by side, neither disables the other.
-        self.position_announcer_action = QAction("Toggle &Position Announcer", self)
-        self.position_announcer_action.setCheckable(True)
-        self.position_announcer_action.setShortcut(QKeySequence("Ctrl+P"))
-        self.position_announcer_action.triggered.connect(self.toggle_position_announcer)
-        options_menu.addAction(self.position_announcer_action)
+    def _update_ui_regions(self, play_all: bool = True):
+        if not self._music_data:
+            return
+        self.presenter.refresh_region_1()
+        self.region_2.load_score_structure(self._music_data.get_score_structure())
+        self.metronome_action.setChecked(self._music_data.metronome_enabled)
+        self.position_announcer_action.setChecked(self._music_data.position_announcer_enabled)
+        self.presenter.update_timeline_views(play_all=play_all)
 
-        # F2/Ref 15 AC4: the ordering half of the attribute-display system -
-        # scope/add-remove shipped earlier as Region 4's right-click menu
-        # (F1). No dedicated shortcut, same as Terminology Language above -
-        # mnemonic A doesn't collide with anything else in this menu (Tempo
-        # Offset and Terminology Language both already use T).
-        self.attribute_order_action = QAction("Reorder &Attributes...", self)
-        self.attribute_order_action.triggered.connect(self._show_attribute_order_dialog)
-        options_menu.addAction(self.attribute_order_action)
+    # --- navigation (delegators) --------------------------------------
 
-        help_menu = menu_bar.addMenu("&Help")
+    def navigate_timeline_left(self):
+        self.navigation.timeline_left()
 
-        self.user_guide_action = QAction("&User Guide...", self)
-        self.user_guide_action.triggered.connect(self._show_user_guide)
-        help_menu.addAction(self.user_guide_action)
+    def navigate_timeline_right(self):
+        self.navigation.timeline_right()
 
-        self.about_action = QAction("&About Recall Score...", self)
-        self.about_action.triggered.connect(self._show_about_dialog)
-        help_menu.addAction(self.about_action)
+    def navigate_measure_left(self):
+        self.navigation.measure_left()
 
-    def _region_cycle_order(self) -> list:
-        return [self.region_1, self.region_2, self.region_3, self.region_4, self.region_5]
+    def navigate_measure_right(self):
+        self.navigation.measure_right()
+
+    def navigate_timeline_home(self):
+        self.navigation.timeline_home()
+
+    def navigate_timeline_end(self):
+        self.navigation.timeline_end()
+
+    def navigate_to_typed_measure(self, digits: str):
+        self.navigation.to_typed_measure(digits)
+
+    def on_pending_digits_changed(self, digits: str):
+        self.presenter.show_pending_digits(digits)
+
+    def jump_to_performance_span_start(self):
+        self.navigation.jump_to_span(self.region_5.current_row_data(), is_start=True)
+
+    def jump_to_performance_span_end(self):
+        self.navigation.jump_to_span(self.region_5.current_row_data(), is_start=False)
+
+    # --- playback (delegators) ----------------------------------------
+
+    def toggle_play_stop(self):
+        self.playback.toggle_play_stop()
+
+    def toggle_pause_resume(self):
+        self.playback.toggle_pause_resume()
+
+    def audition_phrase(self):
+        self.playback.audition_phrase()
+
+    def tempo_faster(self):
+        self.playback.tempo_faster()
+
+    def tempo_slower(self):
+        self.playback.tempo_slower()
+
+    def tempo_reset(self):
+        self.playback.tempo_reset()
+
+    def toggle_metronome(self):
+        self.metronome_action.setChecked(self.playback.toggle_metronome())
+
+    def toggle_position_announcer(self):
+        self.position_announcer_action.setChecked(
+            self.playback.toggle_position_announcer()
+        )
+
+    def _play_boundary_cue(self):
+        self.playback.play_boundary_cue()
+
+    def _audition_current_selection(self):
+        self.playback.audition_selection(self.presenter.selected_region_3_indices())
+
+    def select_all_region_3(self):
+        self.presenter.select_all_region_3()
+
+    def on_region_3_vertical_move(self):
+        self._audition_current_selection()
+
+    # --- focus (delegators) -------------------------------------------
 
     def focus_next_region(self, current):
-        """Tab within the regions area (the MAA): cycles 1->2->3->4->5->1 and
-        cannot leave the MAA. Called directly by each region widget's
-        keyPressEvent rather than relying on Qt's global focus chain - see
-        the comment in setup_ui for why setTabOrder can't do this here."""
-        regions = self._region_cycle_order()
-        index = regions.index(current)
-        regions[(index + 1) % len(regions)].setFocus()
+        self.focus.focus_next(current)
 
     def focus_previous_region(self, current):
-        """Shift+Tab within the regions area: the reverse of focus_next_region."""
-        regions = self._region_cycle_order()
-        index = regions.index(current)
-        regions[(index - 1) % len(regions)].setFocus()
+        self.focus.focus_previous(current)
+
+    def _toggle_pane(self):
+        self.focus.toggle_pane()
 
     def _navigation_menu_first_measure(self):
         self.navigate_timeline_home()
@@ -521,8 +501,114 @@ class MainWindow(QMainWindow):
     def _navigation_menu_move_to_performance(self):
         self.region_5.setFocus()
 
-    def _goto_measure_action_text(self) -> str:
-        return f"&Go to {bar_word(self._uk_terms).capitalize()}..."
+    # --- attributes (delegators) --------------------------------------
+
+    def show_region_4_attribute_menu(self, row: int, column: int, global_pos):
+        self.attributes.show_menu(row, column, global_pos)
+
+    def _region_4_attribute_menu_actions(self, row: int) -> list:
+        return self.attributes.menu_actions(row)
+
+    def _build_region_4_attribute_menu(self, row: int):
+        return self.attributes.build_menu(row)
+
+    def _restore_region_4_focus_after_menu(self, row: int, column: int):
+        self.attributes.restore_focus_after_menu(row, column)
+
+    def _apply_display_attribute_change(self, attribute_key: str, scope: str,
+                                        notes: list, add: bool):
+        self.attributes.apply_change(attribute_key, scope, notes, add)
+
+    def _attribute_order_pairs_for_node(self, node) -> list:
+        return self.attributes.order_pairs_for_node(node)
+
+    def _show_attribute_order_dialog(self):
+        """Ref 15 AC4: scoped to whichever part/staff/voice Region 2 has
+        selected. The dialog's whole context comes from there, so that is
+        where focus returns afterwards."""
+        node = self.attributes.scope_node()
+        if node is None:
+            return
+        dialog = AttributeOrderDialog(
+            self,
+            pairs=self.attributes.order_pairs_for_node(node),
+            scope_description=node_breadcrumb(node),
+        )
+        dialog.move_requested.connect(
+            lambda attribute_key, up: self.attributes.on_order_move(
+                dialog, node, attribute_key, up
+            )
+        )
+        dialog.exec()
+        self.region_2.setFocus()
+
+    # --- presentation (delegators) ------------------------------------
+
+    def _populate_table(self, table: QTableWidget, data_dict: dict):
+        self.presenter.populate_table(table, data_dict)
+
+    def _update_timeline_views(self, play_all: bool = True):
+        self.presenter.update_timeline_views(play_all)
+
+    def _refresh_region_3_labels(self):
+        self.presenter.refresh_region_3_labels()
+
+    def _refresh_region_5(self):
+        self.presenter.refresh_region_5()
+
+    def _update_status_bar(self):
+        self.presenter.update_status_bar()
+
+    def _on_region_3_selection_changed(self):
+        self.presenter.on_region_3_selection_changed()
+
+    def _on_region_2_filter_changed(self, active_voice_tuples: set):
+        self.presenter.on_region_2_filter_changed(active_voice_tuples)
+
+    # --- persistence (delegators) -------------------------------------
+
+    def _save_current_score_config(self):
+        self.persistence.save_current()
+
+    def _open_score_config_folder(self):
+        self.persistence.open_config_folder()
+
+    def _clear_preferences_action_text(self) -> str:
+        return self.persistence.clear_action_text()
+
+    def _refresh_clear_preferences_action(self):
+        self.persistence.refresh_clear_action()
+
+    def _clear_current_score_preferences(self):
+        self.persistence.clear_current()
+
+    # --- dialects ------------------------------------------------------
+
+    def _select_uk_terms(self, checked: bool = False):
+        self.set_uk_terms(True)
+
+    def _select_us_terms(self, checked: bool = False):
+        self.set_uk_terms(False)
+
+    def set_uk_terms(self, uk_terms: bool):
+        """Options > Terminology Language. Unlike toggle_metronome this must
+        work with no score loaded - it is a global preference - and is
+        persisted immediately rather than batched to closeEvent, so it
+        survives a crash. Refreshes everything the vocabulary touches:
+        Region 1, Regions 3/4 (via the lightweight label refresh, so no
+        re-audition or lost selection) and the status bar."""
+        self.session.set_uk_terms(uk_terms)
+        app_settings.save(AppSettings(uk_terms=uk_terms))
+        self.uk_language_action.setChecked(uk_terms)
+        self.us_language_action.setChecked(not uk_terms)
+        self.goto_measure_action.setText(goto_measure_action_text(uk_terms))
+        if not self._music_data:
+            return
+        self.presenter.refresh_region_1()
+        self.presenter.refresh_region_3_labels()
+        self.presenter.update_status_bar()
+
+    # --- dialogs -------------------------------------------------------
 
     def _show_goto_measure_dialog(self):
         current_measure = None
@@ -531,7 +617,8 @@ class MainWindow(QMainWindow):
             if current_slice:
                 current_measure = current_slice.measure
         dialog = GotoMeasureDialog(
-            self, current_measure=current_measure, word=bar_word(self._uk_terms).capitalize()
+            self, current_measure=current_measure,
+            word=bar_word(self._uk_terms).capitalize(),
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             measure_number = dialog.measure_number()
@@ -540,18 +627,33 @@ class MainWindow(QMainWindow):
                 self.region_3.setFocus()
 
     def _show_tempo_offset_dialog(self):
-        """Ref 12 AC5 (E3): unlike GotoMeasureDialog, there's no obvious
-        "next place" for focus to land after a tempo change, so it returns
-        to whatever had it before the dialog opened."""
+        """Unlike GotoMeasureDialog there's no obvious "next place" for
+        focus after a tempo change, so it returns to wherever it was."""
         previous_focus = self.focusWidget()
         current_offset = self._music_data.playback_tempo_offset if self._music_data else 0.0
-        beat_unit_name = self._music_data.tempo_beat_unit_name_at() if self._music_data else "quarter"
-        dialog = TempoOffsetDialog(self, current_offset=current_offset, beat_unit_name=beat_unit_name)
+        beat_unit_name = (
+            self._music_data.tempo_beat_unit_name_at() if self._music_data else "quarter"
+        )
+        dialog = TempoOffsetDialog(
+            self, current_offset=current_offset, beat_unit_name=beat_unit_name
+        )
         if dialog.exec() == QDialog.DialogCode.Accepted and self._music_data:
             offset = dialog.tempo_offset()
             if offset is not None:
-                self._music_data.set_playback_tempo_offset(offset)
-                self._update_status_bar()
+                self.playback.set_tempo_offset(offset)
+        if previous_focus is not None:
+            previous_focus.setFocus()
+
+    def _show_performance_report_dialog(self):
+        """Ref 29: read-only, no live signal wiring - build from current
+        data, exec, restore previous focus."""
+        if not self._music_data:
+            return
+        previous_focus = self.focusWidget()
+        dialog = PerformanceReportDialog(
+            self, lines=self._music_data.get_performance_report_lines()
+        )
+        dialog.exec()
         if previous_focus is not None:
             previous_focus.setFocus()
 
@@ -567,931 +669,16 @@ class MainWindow(QMainWindow):
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(guide_path))
 
-    def _attribute_order_pairs_for_node(self, node) -> list:
-        """(attribute_key, label) pairs, in current attribute_order, for
-        every attribute present anywhere in the score for `node`'s scope -
-        the label already dialect-translated so AttributeOrderDialog itself
-        stays dialect-agnostic (same convention as GotoMeasureDialog's
-        `word` param)."""
-        voice_tuples = voice_tuples_for_node(node)
-        keys = self._music_data.attribute_keys_for_voices(voice_tuples)
-        return [(key, attribute_label(key, self._music_data.uk_terms)) for key in keys]
+    # --- teardown -------------------------------------------------------
 
-    def _show_attribute_order_dialog(self):
-        """Options > Reorder Attributes... (F2, Ref 15 AC4): scoped to
-        whichever part/staff/voice is currently selected in Region 2 - the
-        dialog's whole context comes from there, so that's also where focus
-        returns afterward (same reasoning as GotoMeasureDialog returning to
-        Region 3, rather than TempoOffsetDialog's previous-focus-restore)."""
-        if not self._music_data:
-            return
-        node = self.region_2.current_node()
-        if node is None:
-            return
-
-        dialog = AttributeOrderDialog(
-            self,
-            pairs=self._attribute_order_pairs_for_node(node),
-            scope_description=node_breadcrumb(node),
-        )
-        dialog.move_requested.connect(
-            lambda attribute_key, up: self._on_attribute_order_move(dialog, node, attribute_key, up)
-        )
-        dialog.exec()
-        self.region_2.setFocus()
-
-    def _on_attribute_order_move(self, dialog: AttributeOrderDialog, node, attribute_key: str, up: bool):
-        """Handles AttributeOrderDialog.move_requested - MusicData owns the
-        actual reorder, this just applies it and pushes the result back to
-        Region 3/4 and the (still open) dialog."""
-        if not self._music_data:
-            return
-        voice_tuples = voice_tuples_for_node(node)
-        within = self._music_data.attribute_keys_for_voices(voice_tuples)
-        if not self._music_data.move_attribute_order(attribute_key, up, within=within):
-            return
-        self._refresh_region_3_labels()
-        self._on_region_3_selection_changed()
-        dialog.refresh_list(self._attribute_order_pairs_for_node(node), preferred_key=attribute_key)
-
-    def _show_performance_report_dialog(self):
-        """Ref 29: read-only, no live signal wiring - construct with the
-        current data, exec(), restore whatever had focus before (same
-        previous-focus-restore pattern as _show_tempo_offset_dialog, since
-        there's no obvious "next place" for focus the way GotoMeasureDialog
-        has Region 3)."""
-        if not self._music_data:
-            return
-        previous_focus = self.focusWidget()
-        dialog = PerformanceReportDialog(self, lines=self._music_data.get_performance_report_lines())
-        dialog.exec()
-        if previous_focus is not None:
-            previous_focus.setFocus()
-
-    def create_property_list(self, table_cls: type = RegionTableWidget) -> RegionTableWidget:
-        """An empty two-column property table for Region 1 or Region 4.
-
-        R8: this used to take an `items` list and populate it. Both call
-        sites always passed [], and every actual population goes through
-        _populate_table once a score is loaded - so the parameter, the row
-        count derived from it and the loop were all dead.
-        """
-        table = table_cls(0, 2)
-        table.setHorizontalHeaderLabels(["Property", "Value"])
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        table.verticalHeader().setVisible(False)
-        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        table.setFocusPolicy(Qt.FocusPolicy.TabFocus)
-
-        return table
-
-    def open_file_dialog(self):
-        self._open_score_file_dialog(start_dir="")
-
-    def open_example_file_dialog(self):
-        self._open_score_file_dialog(start_dir=examples_dir())
-
-    def _open_score_file_dialog(self, start_dir: str):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Open MusicXML Score",
-            start_dir,
-            "MusicXML Files (*.xml *.musicxml *.mxl);;All Files (*)",
-        )
-
-        if file_path:
-            self.load_score_from_file(file_path)
-
-    def load_score_from_file(self, file_path: str):
-        if self._load_thread is not None:
-            return
-
-        self._save_current_score_config()
-
-        self._load_thread = ScoreLoadThread(file_path, self)
-        self._load_thread.loaded.connect(self._on_score_loaded)
-        self._load_thread.failed.connect(self._on_score_load_failed)
-        self._load_thread.finished.connect(self._on_load_thread_finished)
-        self._load_thread.start()
-
-    def _on_score_loaded(self, music_data: MusicData):
-        if self.sequencer is not None:
-            self.sequencer.stop()
-        self._music_data = music_data
-        self.setWindowTitle(f"{os.path.basename(music_data.file_path)} - Recall Score")
-        # F4/D-6: MusicData is wholly replaced on every load, but the
-        # vocabulary preference is a global one (persistence/app_settings.py),
-        # not a per-score one - reapply it here or the dialect would silently
-        # reset to MusicData's own bare-construction default (US) on every
-        # open.
-        self._music_data.uk_terms = self._uk_terms
-        # Ref 27: restore whatever this file's own part/staff/voice toggles,
-        # shown attributes, attribute order and metronome state were last
-        # left as - best-effort against the freshly-parsed score, see
-        # MusicData.apply_config. The part/staff/voice toggles themselves
-        # are restored below straight into Region 2 (apply_off_node_keys),
-        # the actual source of truth for each node's OWN on/off state
-        # independent of its ancestors - apply_config's own
-        # active_voice_filter write here is a harmless, temporary
-        # approximation that Region 2's rebuild below supersedes, same as
-        # it always has.
-        saved_config = score_config.load_for(music_data.file_path)
-        if saved_config is not None:
-            self._music_data.apply_config(saved_config)
-        self._refresh_clear_preferences_action()
-        # Ref 29: a freshly loaded score's Region 5 state must not be
-        # diffed against the previous file's leftover active-span labels.
-        self._last_performance_row_labels = None
-        self.sequencer = Sequencer(music_data, self.synth, parent=self)
-        self.sequencer.step_played.connect(self._on_sequencer_step)
-        self.sequencer.finished.connect(self._on_sequencer_finished)
-        # Live-tested regression: _update_ui_regions's own initial audition
-        # (play_all=True) used to fire before the saved toggles were handed
-        # to Region 2 below, so a file with e.g. the viola saved off was
-        # still heard playing both flute and viola the instant it loaded,
-        # even though Region 2 immediately showed the correct on/off state
-        # and every subsequent move correctly excluded it. Suppress that
-        # first audition when there's a config to restore, and fire it
-        # ourselves once Region 2's restored state is actually in effect.
-        self._update_ui_regions(play_all=saved_config is None)
-        if saved_config is not None:
-            self.region_2.apply_off_node_keys(
-                saved_config.parts_off, saved_config.staves_off, saved_config.voices_off
-            )
-            self._play_selected_region_3_notes()
-
-    def _on_score_load_failed(self, error_text: str):
-        print(f"[ERROR] Failed to load score file:\n{error_text}")
-
-    def _on_load_thread_finished(self):
-        self._load_thread = None
-
-    def navigate_timeline_left(self):
-        if not self._music_data:
-            return
-        if self._music_data.move_timeline_left():
-            self._update_timeline_views(play_all=True)
-        else:
-            self._play_boundary_cue()
-
-    def navigate_timeline_right(self):
-        if not self._music_data:
-            return
-        if self._music_data.move_timeline_right():
-            self._update_timeline_views(play_all=True)
-        else:
-            self._play_boundary_cue()
-
-    def navigate_measure_left(self):
-        if not self._music_data:
-            return
-        if self._music_data.move_timeline_left_by_measure():
-            self._update_timeline_views(play_all=True)
-        else:
-            self._play_boundary_cue()
-
-    def navigate_measure_right(self):
-        if not self._music_data:
-            return
-        if self._music_data.move_timeline_right_by_measure():
-            self._update_timeline_views(play_all=True)
-        else:
-            self._play_boundary_cue()
-
-    def on_pending_digits_changed(self, digits: str):
-        """C6/C4: while a bar number is being typed, show it in the status
-        bar's position field in place of "Measure X beat Y" - reverts once
-        the digits are cleared (Enter, Escape, or any other key)."""
-        if not self._music_data:
-            return
-        if digits:
-            fields = self._music_data.get_status_bar_fields()
-            fields[0] = f"Go to {bar_word(self._uk_terms)}: {digits}"
-            self.status_bar.set_fields(fields)
-        else:
-            self._update_status_bar()
-
-    def navigate_to_typed_measure(self, digits: str):
-        """Ref 6 (C4): Enter with pending digits in the Note region jumps to
-        that bar's first active event; an unknown bar plays the boundary cue
-        and leaves the position unchanged (AC4)."""
-        if not self._music_data:
-            return
-        measure_number = int(digits)
-        if self._music_data.jump_to_measure(measure_number):
-            self._update_timeline_views(play_all=True)
-        else:
-            self._play_boundary_cue()
-
-    def navigate_timeline_home(self):
-        if not self._music_data:
-            return
-        self._music_data.move_timeline_home()
-        self._update_timeline_views(play_all=True)
-
-    def navigate_timeline_end(self):
-        if not self._music_data:
-            return
-        self._music_data.move_timeline_end()
-        self._update_timeline_views(play_all=True)
-
-    def toggle_play_stop(self):
-        """Space (Ref 10 AC1/AC2/AC3/AC5): not playing -> start from the
-        cursor; playing -> stop, silence, and revert to where it started;
-        paused -> resume from the paused position (reported bug, live-
-        tested: this used to treat paused the same as playing and stop
-        instead, so Space after Ctrl+Space undid the pause instead of
-        continuing it - Ctrl+Space now only handles pausing, Space alone
-        handles both starting and resuming).
-        Starting from the last active note plays the boundary cue instead of
-        starting playback (reported behaviour) - there is nothing ahead of
-        the cursor to play forward, the same "can't move further" signal
-        Left/Right/Ctrl+Left/Right already give (C5)."""
-        if not self._music_data or self.sequencer is None:
-            return
-        if self.sequencer.is_paused:
-            self.sequencer.resume()
-            self._update_playback_status_field()
-        elif self.sequencer.is_playing:
-            self._stop_sequencer()
-        else:
-            start_index = self._music_data.active_event_index
-            if self._music_data.next_visible_event_index(start_index) is None:
-                self._play_boundary_cue()
-            else:
-                self.sequencer.play_from(start_index, update_cursor=True)
-                self._update_playback_status_field()
-
-    def toggle_pause_resume(self):
-        """Ctrl+Space (Ref 10 AC3): pauses. Reported bug, live-tested: this
-        used to also resume on a second press, which collided with Space's
-        own resume-when-paused job above and left users pressing Space twice
-        to get playback moving again - resuming is Space's job alone now."""
-        if self.sequencer is None:
-            return
-        if self.sequencer.is_playing:
-            self.sequencer.pause()
-            self._update_playback_status_field()
-
-    def _stop_sequencer(self):
-        """Shared by Space (E5) and Enter (E6) - both stop whatever the
-        Sequencer is currently doing before either can start something new.
-        Only a cursor-tracking run (Space's own play-from-cursor) syncs
-        active_event_index/the regions back afterward - a phrase audition
-        (E6) never moved them in the first place, but the playback-status
-        field always reflects the real state regardless."""
-        if self.sequencer is None:
-            return
-        was_tracking_cursor = self.sequencer.update_cursor
-        self.sequencer.stop()
-        if was_tracking_cursor and self._music_data:
-            self._music_data.active_event_index = self.sequencer.current_index
-            self._update_timeline_views(play_all=False)
-        else:
-            self._update_playback_status_field()
-
-    def audition_phrase(self):
-        """Enter with no pending digit buffer (Ref 11, E6): play from beat 1
-        of the current measure through the end of the next measure (AC1).
-        Re-pressing Enter while anything is already playing stops it first
-        (AC3), matching Space's own stop-if-active behaviour, rather than
-        starting a second overlapping run."""
-        if not self._music_data or self.sequencer is None:
-            return
-        if self.sequencer.is_playing or self.sequencer.is_paused:
-            self._stop_sequencer()
-            return
-
-        current = self._music_data.get_current_slice()
-        if current is None:
-            return
-        start_index = self._music_data.first_visible_event_index_of_measure(current.measure)
-        if start_index is None:
-            return
-
-        end_index = self._phrase_end_index(current.measure, start_index)
-        self.sequencer.play_from(start_index, end_index=end_index, update_cursor=False)
-        self._update_playback_status_field()
-
-    def _phrase_end_index(self, current_measure: int, start_index: int) -> int:
-        """Through the end of the NEXT measure, or the piece's own last
-        sounding event if current_measure is already the last one - bounded
-        by last_sounding_event_index() (C5) so a phrase can't run on into
-        trailing rest-only padding."""
-        last_sounding = self._music_data.last_sounding_event_index()
-        end_index = last_sounding if last_sounding is not None else self._music_data.last_event_index()
-
-        measures = self._music_data.measure_numbers()
-        pos = measures.index(current_measure)
-        if pos + 2 < len(measures):
-            measure_after_next = measures[pos + 2]
-            candidate_end = self._music_data.first_event_index_of_measure(measure_after_next) - 1
-            if candidate_end >= start_index:
-                end_index = min(end_index, candidate_end)
-        return end_index
-
-    def _on_sequencer_step(self, index: int):
-        """Ref 10 AC4: each step of a cursor-tracking run (E5's Space, not
-        E6's phrase audition) updates active_event_index and refreshes the
-        regions as playback proceeds - this is what makes "pause refreshes
-        the regions" true for free, since the regions already track the
-        live position throughout, not only at the moment of pausing."""
-        if self.sequencer is None or not self.sequencer.update_cursor or not self._music_data:
-            return
-        self._music_data.active_event_index = index
-        self._update_timeline_views(play_all=False)
-
-    def tempo_faster(self):
-        """F (Ref 12 AC3): +10bpm to the playback tempo offset, clamped to
-        the hard 30-300bpm boundary (E1). Does not move the timeline or
-        re-audition - only the status bar's tempo field changes."""
-        if not self._music_data:
-            return
-        self._music_data.set_playback_tempo_offset(self._music_data.playback_tempo_offset + 10)
-        self._update_status_bar()
-
-    def tempo_slower(self):
-        """S (Ref 12 AC3): -10bpm to the playback tempo offset."""
-        if not self._music_data:
-            return
-        self._music_data.set_playback_tempo_offset(self._music_data.playback_tempo_offset - 10)
-        self._update_status_bar()
-
-    def tempo_reset(self):
-        """D (Ref 12 AC4): reset playback tempo to the score's own tempo."""
-        if not self._music_data:
-            return
-        self._music_data.reset_playback_tempo()
-        self._update_status_bar()
-
-    def toggle_metronome(self):
-        """Ctrl+M (Ref 14): flips MusicData.metronome_enabled, keeps the
-        Options menu's checkable action and the status bar's field in sync."""
-        if not self._music_data:
-            return
-        self._music_data.toggle_metronome()
-        self.metronome_action.setChecked(self._music_data.metronome_enabled)
-        self._update_status_bar()
-
-    def toggle_position_announcer(self):
-        """Ctrl+P (Ref 28): flips MusicData.position_announcer_enabled,
-        keeps the Options menu's checkable action and the status bar's
-        field in sync - mirrors toggle_metronome exactly, but with no
-        timeline rebuild needed (see MusicData.position_announcer_enabled's
-        own comment)."""
-        if not self._music_data:
-            return
-        self._music_data.toggle_position_announcer()
-        self.position_announcer_action.setChecked(self._music_data.position_announcer_enabled)
-        self._update_status_bar()
-
-    def _select_uk_terms(self, checked: bool = False):
-        self.set_uk_terms(True)
-
-    def _select_us_terms(self, checked: bool = False):
-        self.set_uk_terms(False)
-
-    def set_uk_terms(self, uk_terms: bool):
-        """Options > Terminology Language > UK/US. Unlike toggle_metronome,
-        this must still set the preference and update the menu even with no
-        score loaded - it's a global preference (see self._uk_terms comment
-        in __init__), not a per-score one, and is persisted immediately
-        (rather than batched to closeEvent like per-file config) so it
-        survives even a crash. Refreshes every region the vocabulary
-        touches: Region 1 (Tempo credit), Region 3/4 (via the same
-        lightweight _refresh_region_3_labels F1's attribute toggle already
-        uses - no re-audition/selection loss), and the status bar.
-        _populate_table preserves each table's current row/column across the
-        rebuild (live-tested bug: Region 1/4's position was jumping to the
-        top-left cell on every terminology change)."""
-        self._uk_terms = uk_terms
-        app_settings.save(AppSettings(uk_terms=uk_terms))
-        self.uk_language_action.setChecked(uk_terms)
-        self.us_language_action.setChecked(not uk_terms)
-        self.goto_measure_action.setText(self._goto_measure_action_text())
-        if not self._music_data:
-            return
-        self._music_data.uk_terms = uk_terms
-        self._populate_table(self.region_1, self._music_data.get_region_1_data())
-        self._refresh_region_3_labels()
-        self._update_status_bar()
-
-    def _play_boundary_cue(self):
-        """Ref 2 AC4 / Ref 3 AC4: plays instead of moving, when a navigation
-        key would move past a boundary of the active timeline (C5)."""
-        self.synth.play_notes(
-            midi_notes=[self.BOUNDARY_MIDI_PITCH],
-            duration_ms=self.BOUNDARY_DURATION_MS,
-            channel=self.BOUNDARY_CHANNEL,
-            program=self.BOUNDARY_GM_PROGRAM,
-        )
-
-    def select_all_region_3(self):
-        self.region_3.selectAll()
-        self._play_selected_region_3_notes()
-
-    def on_region_3_vertical_move(self):
-        self._play_selected_region_3_notes()
-
-    def _on_region_2_filter_changed(self, active_voice_tuples: set):
-        if self._music_data:
-            self._music_data.set_active_voice_filter(active_voice_tuples)
-            self._update_timeline_views(play_all=False)
-
-    def _on_region_3_selection_changed(self):
-        if not self._music_data:
-            return
-
-        selected_indices = [item.row() for item in self.region_3.selectedIndexes()]
-        region_4_data = self._music_data.get_region_4_data_for_indices(selected_indices)
-        self._populate_table(self.region_4, region_4_data)
-
-    def _region_4_attribute_menu_actions(self, row: int) -> list:
-        """(label, callback) pairs for the Ref 15 AC4 context menu on Region
-        4 row `row` - empty if there's nothing to act on (no score loaded,
-        no selection, or an out-of-range row). Kept separate from
-        show_region_4_attribute_menu so this logic is testable without
-        driving a real (blocking) QMenu.exec() event loop - same reasoning
-        already used for GotoMeasureDialog/AboutDialog injection (C8)."""
-        if not self._music_data:
-            return []
-
-        selected_indices = [item.row() for item in self.region_3.selectedIndexes()]
-        targets = self._music_data.get_region_4_row_targets(selected_indices)
-        if not (0 <= row < len(targets)):
-            return []
-
-        attribute_key, anchor_note = targets[row]
-        selected_notes = self._music_data.notes_for_indices(selected_indices)
-        already_present = self._music_data.note_has_display_attribute(anchor_note, attribute_key)
-
-        # D-15: stave/staff is deliberately excluded from the F4 toggle -
-        # "stave" here always means the literal word, regardless of dialect.
-        if already_present:
-            scopes = [
-                ("voice", "Remove for notes in current voice"),
-                ("stave", "Remove for notes in current stave"),
-                ("part", "Remove for notes in current part"),
-                ("score", "Remove for notes in the whole score"),
-            ]
-        else:
-            scopes = [
-                ("voice", "Add to notes for this voice"),
-                ("stave", "Add to notes in same stave"),
-                ("part", "Add to notes in the same part"),
-                ("score", "Add to notes in the whole score"),
-            ]
-
-        return [
-            (
-                label,
-                # checked=False soaks up the bool QAction.triggered always
-                # passes to a connected slot - without it, that bool lands
-                # in scope's own default-arg slot instead (Qt/PySide calls
-                # a connected callable with one positional arg whenever it
-                # accepts one), silently replacing e.g. "voice" with False.
-                # Live-tested bug: every scope choice raised
-                # ValueError("Unknown display-attribute scope: False").
-                lambda checked=False, scope=scope: self._apply_display_attribute_change(
-                    attribute_key, scope, selected_notes, add=not already_present
-                ),
-            )
-            for scope, label in scopes
-        ]
-
-    def _build_region_4_attribute_menu(self, row: int) -> QMenu | None:
-        """Builds the real QMenu (with its QActions wired to
-        _region_4_attribute_menu_actions' callbacks) without calling
-        exec() - split out from show_region_4_attribute_menu so tests can
-        inspect the built menu (e.g. which action ends up first) without
-        driving a real, blocking modal loop. QMenu.exec is a
-        Shiboken-wrapped/overloaded method that does not reliably accept a
-        Python-level monkeypatch (confirmed: attempting to patch it over
-        for a test hung indefinitely instead of raising), so unlike
-        GotoMeasureDialog/AboutDialog (C8) the untestable Qt call itself
-        must be kept out of the tested method entirely, not just injected
-        around."""
-        actions = self._region_4_attribute_menu_actions(row)
-        if not actions:
-            return None
-        menu = QMenu(self)
-        for label, callback in actions:
-            menu.addAction(label).triggered.connect(callback)
-        return menu
-
-    def show_region_4_attribute_menu(self, row: int, column: int, global_pos):
-        """Region4TableWidget calls this on right-click or the Menu/
-        Application key.
-
-        Live-tested: an earlier attempt here pre-highlighted the first
-        action via exec(pos, at=first_action) and additionally queued a
-        synthetic Key_Down at the menu to try to force a real accessibility
-        announcement. Neither produced a real NVDA announcement of the
-        first item (NVDA read "blank" instead of the item's text, even
-        though the highlight itself had genuinely moved) - reverted in
-        favour of plain exec(), which needs one manual arrow press but is
-        at least unambiguous and matches ordinary (if not ideal) menu
-        behaviour. Don't re-attempt this without a way to verify against
-        real NVDA."""
-        menu = self._build_region_4_attribute_menu(row)
-        if menu is None:
-            return
-        menu.exec(global_pos)
-        self._restore_region_4_focus_after_menu(row, column)
-
-    def _restore_region_4_focus_after_menu(self, row: int, column: int):
-        """Called after the Ref 15 AC4 context menu closes, whether an
-        action fired or Escape cancelled it. Live-tested bug: selecting an
-        item rebuilds Region 4 (the triggered callback runs
-        _apply_display_attribute_change -> _refresh_region_3_labels ->
-        _on_region_3_selection_changed -> _populate_table) WHILE the
-        menu's exec() is still running (QAction.triggered fires before
-        exec() returns), and that rebuild resets the table's current cell.
-        That's exactly why Escape (which triggers no callback, no rebuild)
-        already returned focus to the right row while Enter did not - NVDA
-        kept reporting the stale menu item, and the next Down landed on
-        row 0 ("step") instead of back where the menu was opened. `column`
-        matters too - live-tested bug: this used to always restore column 0,
-        so opening the menu from the value column landed back on the key
-        column instead. Split out from show_region_4_attribute_menu so it's
-        testable without a real (blocking) exec() call."""
-        if 0 <= row < self.region_4.rowCount():
-            self.region_4.setCurrentCell(row, column)
-        self.region_4.setFocus()
-
-    def _apply_display_attribute_change(self, attribute_key: str, scope: str, notes: list, add: bool):
-        self._music_data.set_display_attribute(attribute_key, scope, notes, add)
-        self._refresh_region_3_labels()
-
-    def _play_selected_region_3_notes(self):
-        if not self._music_data:
-            return
-
-        selected_indices = [item.row() for item in self.region_3.selectedIndexes()]
-        events = self._music_data.get_playback_events_for_indices(selected_indices)
-
-        if events:
-            # Each group carries its own duration now (Ref 9 AC2/Ref 13
-            # AC2), so no separate slice-wide duration_ms is needed here -
-            # see get_playback_events_for_indices.
-            self.synth.play_chord(events)
-
-        # E8/Ref 14 AC3: stepping onto a beat position plays a metronome
-        # tick - fires even when there are no events at all (a metronome-
-        # only beat marker, Ref 14 AC4), which is why this isn't folded into
-        # the `if events:` branch above.
-        if self._music_data.metronome_enabled:
-            current = self._music_data.get_current_slice()
-            if current is not None:
-                click = click_event_for_beat(current.beat_position)
-                if click is not None:
-                    self.synth.play_click(*click)
-
-        # Ref 28 AC1/AC2: independent of the click above, same "fires even
-        # with no notes at this position" reasoning (a metronome-only beat
-        # marker still has a beat_position to announce).
-        if self._music_data.position_announcer_enabled:
-            current = self._music_data.get_current_slice()
-            if current is not None:
-                announcement = announcement_event_for_beat(current.beat_position)
-                if announcement is not None:
-                    self.synth.play_word(*announcement)
-
-    def _update_timeline_views(self, play_all: bool = True):
-        if not self._music_data:
-            return
-
-        self.region_3.blockSignals(True)
-        self.region_3.clear()
-
-        for item in self._music_data.get_region_3_data():
-            self.region_3.addItem(QListWidgetItem(item))
-
-        self.region_3.selectAll()
-        self.region_3.blockSignals(False)
-
-        # selectAll() marks every row selected but deliberately leaves the
-        # view's own "current" (focused) item untouched - clear() reset it
-        # to none, so without this NVDA has no definite item to announce
-        # after a Left/Right timeline move or a Region 2 filter change that
-        # narrows a slice down to one note. Left OUTSIDE the blockSignals
-        # window above so the selection model's real currentChanged signal
-        # fires and the accessibility bridge actually posts the
-        # notification - the same path Up/Down already gets for free from
-        # Qt's own key handling.
-        #
-        # Live-tested regression: setCurrentRow(row), the plain one-arg
-        # form, was believed to use QItemSelectionModel::NoUpdate and so
-        # leave the selectAll() selection alone - it does not. In this
-        # PySide6 version it collapses the selection down to just `row`,
-        # which silently turned "moving onto a chord selects and sounds
-        # every note in it" into "only the first note sounds" the moment a
-        # slice had more than one note. The explicit NoUpdate flag below is
-        # what actually gets the documented behaviour: current item set (for
-        # NVDA), selectAll()'s selection left untouched (for the chord).
-        if self.region_3.count() > 0:
-            self.region_3.setCurrentRow(0, QItemSelectionModel.SelectionFlag.NoUpdate)
-
-        self._on_region_3_selection_changed()
-        self._update_status_bar()
-
-        # Ref 29: sound the notes (and their retrigger-driven
-        # stop_all_notes()) before the performance cue, not after - reported
-        # bug, live-tested: with the cue fired first, play_chord's default
-        # retrigger=True immediately called stop_all_notes() right behind
-        # it, cutting the cue off almost as soon as it started. Playback
-        # (play_all=False here; the Sequencer already sounded its own chord
-        # with retrigger=False, which never calls stop_all_notes()) never
-        # hit this, which is why the cue only ever seemed to work there.
-        if play_all:
-            self._play_selected_region_3_notes()
-
-        self._refresh_region_5()
-
-    def _refresh_region_3_labels(self):
-        """Re-renders Region 3's row text after a Ref 15 AC4 attribute
-        change. Deliberately NOT _update_timeline_views: that calls
-        selectAll() (would discard a specific multi-selection) and
-        re-auditions notes that haven't moved or changed pitch - an
-        attribute toggle does neither, and row count never changes from it,
-        so text can be updated in place."""
-        if not self._music_data:
-            return
-
-        labels = self._music_data.get_region_3_data()
-        self.region_3.blockSignals(True)
-        for row, text in enumerate(labels):
-            item = self.region_3.item(row)
-            if item is not None:
-                item.setText(text)
-        self.region_3.blockSignals(False)
-
-        self._on_region_3_selection_changed()
-
-    def _refresh_region_5(self):
-        """Ref 29: recomputes Region 5's rows for the cursor's current
-        position, hooked into _update_timeline_views' single choke point -
-        every path that moves active_event_index (arrow/measure/typed-
-        measure navigation, Home/End, Region 2 filter changes, Sequencer/
-        Ref-10 playback stepping, initial load) already funnels through
-        there, so no per-navigation-method wiring is needed here.
-
-        Skips the rebuild entirely (not just the audio cue) when the active
-        label set is unchanged from last time - so Region 5's own focus/
-        selection isn't reset on every single navigation step while the
-        cursor stays inside the same span(s), and the "something changed,
-        check Region 5" cue only fires on a genuine change."""
-        if not self._music_data:
-            return
-        rows = self._music_data.get_performance_region_rows()
-        labels = [r.label for r in rows]
-        if labels == self._last_performance_row_labels:
-            return
-        self.region_5.refresh_list(rows)
-        self.synth.play_performance_cue(*performance_cue_event())
-        self._last_performance_row_labels = labels
-
-    def jump_to_performance_span_start(self):
-        """Ref 29: Region 5's Ctrl+Home - jumps the timeline cursor to the
-        focused row's span start. A hairpin row's jump_target_quarters is
-        set (a wedge can start mid-measure); a repeat/ending row's is None
-        (barlines only occur at measure boundaries), resolved via the plain
-        measure lookup instead."""
-        self._jump_to_performance_span(is_start=True)
-
-    def jump_to_performance_span_end(self):
-        """Ref 29: Region 5's Ctrl+End - jumps to the focused row's span
-        end. For a repeat/ending row this lands on the LAST sounding note
-        of the end bar (not the first), per the user's own decision on this
-        - the one place this app has a "last event in a measure" jump
-        target. A hairpin row's end can land mid-measure, so it always uses
-        the quarters-based lookup regardless."""
-        self._jump_to_performance_span(is_start=False)
-
-    def _jump_to_performance_span(self, is_start: bool):
-        if not self._music_data:
-            return
-        row = self.region_5.current_row_data()
-        if row is None:
-            return
-
-        if row.jump_target_quarters is not None:
-            index = self._music_data.slice_index_at_or_after_quarters(row.jump_target_quarters)
-        elif is_start:
-            index = self._music_data.first_visible_event_index_of_measure(row.jump_target_measure)
-        else:
-            index = self._music_data.last_visible_event_index_of_measure(row.jump_target_measure)
-
-        if index is None:
-            self._play_boundary_cue()
-            return
-
-        self._music_data.active_event_index = index
-        self._update_timeline_views(play_all=True)
-
-    def _update_status_bar(self):
-        if not self._music_data:
-            return
-        fields = self._music_data.get_status_bar_fields()
-        fields.append(self._playback_status_text())
-        fields.append(self._metronome_status_text())
-        fields.append(self._position_announcer_status_text())
-        self.status_bar.set_fields(fields)
-
-    def _metronome_status_text(self) -> str:
-        """6th status bar field (Ref 14): On/Off, since there's otherwise no
-        way to check metronome state without listening for a click - same
-        discoverability gap the 5th (playback status) field was added for."""
-        if self._music_data and self._music_data.metronome_enabled:
-            return "Metronome: On"
-        return "Metronome: Off"
-
-    def _position_announcer_status_text(self) -> str:
-        """7th status bar field (Ref 28): same discoverability reasoning as
-        the metronome's own 6th field just above."""
-        if self._music_data and self._music_data.position_announcer_enabled:
-            return "Position Announcer: On"
-        return "Position Announcer: Off"
-
-    def _playback_status_text(self) -> str:
-        """5th status bar field (Ref 10, requested): Playing/Paused/Stopped,
-        reflecting the Sequencer's state - not a MusicData concern, since it
-        describes UI/playback state rather than anything about the score."""
-        if self.sequencer is not None and self.sequencer.is_paused:
-            return "Playback: Paused"
-        if self.sequencer is not None and self.sequencer.is_playing:
-            return "Playback: Playing"
-        return "Playback: Stopped"
-
-    def _update_playback_status_field(self):
-        """Updates only the 5th field, leaving measure/beat/key/time/tempo
-        untouched - used by phrase audition (E6) and pause/resume, which
-        must not disturb the position fields the way a full
-        _update_status_bar() would."""
-        self.status_bar.set_field(
-            self.status_bar.PLAYBACK_FIELD, self._playback_status_text()
-        )
-
-    def _on_sequencer_finished(self):
-        """Reaching the end of a run (full playback, Ref 10 AC2, or a
-        phrase audition finishing on its own, Ref 11) flips is_playing to
-        False without MainWindow calling stop(). Sequencer itself now
-        reverts _current_index back to _original_start_index when this
-        happens (user decision: AC5's "stopping reverts to the original
-        start" applies to reaching the end naturally too, not just an
-        explicit interrupt) - a cursor-tracking run (Space, not a phrase
-        audition) must sync active_event_index/the regions to that reverted
-        position the same way _stop_sequencer does for an explicit stop,
-        rather than leaving them on the last note the way step_played left
-        them mid-playback."""
-        if self.sequencer.update_cursor and self._music_data:
-            self._music_data.active_event_index = self.sequencer.current_index
-            self._update_timeline_views(play_all=False)
-        self._update_playback_status_field()
-
-    def _populate_table(self, table: QTableWidget, data_dict: dict):
-        """Live-tested bug (F4): clearContents()/setRowCount() reset the
-        table's current cell to (0, 0), so a Region 1/4 row the user was
-        reading jumped to the top on every terminology-language change (or
-        any other in-place refresh). Restores the previous row/column,
-        clamped to the rebuilt table's own bounds, instead of always
-        defaulting to the top-left cell."""
-        current_row = table.currentRow()
-        current_col = table.currentColumn()
-
-        items = list(data_dict.items())
-        table.clearContents()
-        table.setRowCount(len(items))
-        for row, (key, value) in enumerate(items):
-            table.setItem(row, 0, QTableWidgetItem(str(key)))
-            table.setItem(row, 1, QTableWidgetItem(str(value)))
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-
-        if items:
-            restore_row = min(max(current_row, 0), len(items) - 1)
-            restore_col = current_col if current_col in (0, 1) else 0
-            table.setCurrentCell(restore_row, restore_col)
-
-    def _update_ui_regions(self, play_all: bool = True):
-        if not self._music_data:
-            return
-
-        self._populate_table(self.region_1, self._music_data.get_region_1_data())
-        self.region_2.load_score_structure(self._music_data.get_score_structure())
-        self.metronome_action.setChecked(self._music_data.metronome_enabled)
-        self.position_announcer_action.setChecked(self._music_data.position_announcer_enabled)
-        self._update_timeline_views(play_all=play_all)
-
-    def _on_focus_changed(self, old, now):
-        """C7: remembers which region last held focus, so F6's "regions"
-        pane stop can restore it rather than always landing on Region 1."""
-        if now in (self.region_1, self.region_2, self.region_3, self.region_4, self.region_5):
-            self._last_focused_region = now
-        self._update_navigation_actions_enabled(now)
-
-    def _update_navigation_actions_enabled(self, focus_widget=None):
-        """Move to First/Last Note (Home/End) only act on the Note region, so
-        they're greyed out whenever focus is elsewhere - otherwise pressing
-        Home/End in, say, Region 1 silently jumped the timeline underneath
-        whatever the user was actually reading there. Called with no argument
-        from setup_menu, before the initial focusChanged signal for
-        region_1's startup focus has anything to report."""
-        if focus_widget is None:
-            focus_widget = self.focusWidget()
-        in_note_region = focus_widget is self.region_3
-        self.first_measure_action.setEnabled(in_note_region)
-        self.last_measure_action.setEnabled(in_note_region)
-
-    def _current_pane(self) -> str:
-        focus = self.focusWidget()
-        if focus is not None and (focus is self.status_bar or self.status_bar.isAncestorOf(focus)):
-            return "status"
-        return "region"
-
-    def _focus_region_pane(self):
-        (self._last_focused_region or self.region_1).setFocus()
-
-    def _toggle_pane(self):
-        """F6/Shift+F6 (C7): toggle focus between the regions area
-        (restoring whichever region was last focused) and the status bar.
-        Just these two panes - menu bar access is left to the OS's native
-        Alt mechanism, not F6."""
-        if self._current_pane() == "status":
-            self._focus_region_pane()
-        else:
-            self.status_bar.first_field().setFocus()
+    def _disconnect_focus_tracking(self):
+        self.focus.disconnect_tracking()
 
     def closeEvent(self, event):
         self._save_current_score_config()
-        self._disconnect_focus_tracking()
-        if self._load_thread is not None:
-            self._load_thread.wait()
-        if self.sequencer is not None:
-            self.sequencer.stop()
+        self.focus.disconnect_tracking()
+        self.session.wait_for_load()
+        if self.playback.sequencer is not None:
+            self.playback.sequencer.stop()
         self.synth.close()
         super().closeEvent(event)
-
-    def _disconnect_focus_tracking(self):
-        """R3: focusChanged is an APPLICATION-level signal, so without this a
-        closed window stays subscribed for the life of the process and
-        _on_focus_changed keeps firing into it - reaching self.region_1 and
-        friends after the underlying C++ objects are gone ("Internal C++
-        object already deleted"). Harmless in the shipped single-window app,
-        but tests build many MainWindows in one QApplication, which is how
-        the ambiguous-shortcut problem noted in setup_ui first surfaced.
-
-        Guarded by a flag rather than try/except: closeEvent legitimately
-        runs more than once (an explicit close() followed by fixture
-        teardown, as two tests here do), and PySide6 doesn't raise on a
-        stale disconnect - it emits a RuntimeWarning and carries on, so an
-        except clause would never catch it and the noise would just
-        accumulate."""
-        if not self._focus_tracking_connected:
-            return
-        QApplication.instance().focusChanged.disconnect(self._on_focus_changed)
-        self._focus_tracking_connected = False
-
-    def _save_current_score_config(self):
-        """Ref 27: writes the currently-loaded score's part/staff/voice
-        toggles, shown attributes, attribute order and metronome state to
-        its .rsc, so they're there to restore next time this file is
-        opened. Called right before swapping in a new file
-        (load_score_from_file) and on app shutdown (closeEvent) - the two
-        points the user asked for, not on every individual toggle.
-
-        export_config() fills in its own best-effort voices_off (derived
-        from active_voice_filter, for standalone/test use with no Region 2
-        widget at all) - overwritten here with the real per-node state from
-        Region 2 itself, the only place a part/stave's OWN toggle
-        (independent of its descendants) actually lives. Reported bug,
-        live-tested: without this, a part switched off with a sub-voice
-        still individually on had that voice's own state silently lost on
-        reload - see ScoreConfig's docstring."""
-        if self._music_data is None or not self._music_data.file_path:
-            return
-        config = self._music_data.export_config()
-        config.parts_off, config.staves_off, config.voices_off = (
-            self.region_2.model_manager.get_off_node_keys()
-        )
-        score_config.save(self._music_data.file_path, config)
-
-    def _open_score_config_folder(self):
-        folder = score_config.config_dir()
-        folder.mkdir(parents=True, exist_ok=True)
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
-
-    def _clear_preferences_action_text(self) -> str:
-        if self._music_data is None or not self._music_data.file_path:
-            return "&Clear Preferences"
-        name = os.path.basename(self._music_data.file_path)
-        return f"&Clear Preferences for {name}"
-
-    def _refresh_clear_preferences_action(self):
-        has_file = self._music_data is not None and bool(self._music_data.file_path)
-        self.clear_preferences_action.setText(self._clear_preferences_action_text())
-        self.clear_preferences_action.setEnabled(has_file)
-
-    def _clear_current_score_preferences(self):
-        if self._music_data is None or not self._music_data.file_path:
-            return
-        score_config.delete_for(self._music_data.file_path)

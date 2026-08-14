@@ -1,13 +1,11 @@
 # persistence/score_config.py
 """Reading and writing a ScoreConfig (Ref 27) to its per-score .rsc file.
 
-R2: the ScoreConfig data shape itself lives in models/score_config_data.py,
-not here - this module imports PySide6 for QStandardPaths, and MusicData
-imports ScoreConfig, so keeping the dataclass here made every models/ import
-drag in the whole of Qt. ScoreConfig is re-exported below so callers can
-keep importing it from either place; the JSON key codecs stay here, since
-how a tuple key is spelled in a file is a serialisation concern rather than
-part of the data shape.
+The ScoreConfig shape itself lives in models/score_config_data.py: this
+module imports Qt for QStandardPaths, and MusicData imports ScoreConfig, so
+keeping the dataclass here dragged Qt into every models/ import. It is
+re-exported below so either import path works. The JSON key codecs stay
+here - how a tuple key is spelled in a file is serialisation, not shape.
 """
 import json
 import os
@@ -16,6 +14,7 @@ from typing import Optional
 
 from PySide6.QtCore import QStandardPaths
 
+from models.mixer_settings import MixerSettings
 from models.score_config_data import ScoreConfig, StaffKey, VoiceKey
 
 __all__ = [
@@ -52,11 +51,9 @@ def config_dir() -> Path:
 
 
 def path_for(file_path: str) -> Path:
-    """Keyed purely by the music file's own basename+extension, never by
-    its location - the user is free to move the file around and the same
-    config is found again by name alone (a deliberate choice; two
-    different files sharing a name will collide, and that's accepted as a
-    consequence of best-effort loading rather than solved here)."""
+    """Keyed by the music file's basename+extension only, never its folder,
+    so moving the file keeps its config. Two different files sharing a name
+    will collide - accepted, given loading is best-effort anyway."""
     return config_dir() / f"{os.path.basename(file_path)}.rsc"
 
 
@@ -77,6 +74,7 @@ def load_for(file_path: str) -> Optional[ScoreConfig]:
                 for k, v in data.get("voice_display_attributes", {}).items()
             },
             attribute_order=list(data.get("attribute_order", [])),
+            mixer=MixerSettings.from_dict(data.get("mixer")),
         )
     except FileNotFoundError:
         return None
@@ -99,6 +97,7 @@ def save(file_path: str, config: ScoreConfig) -> None:
             for k, v in config.voice_display_attributes.items()
         },
         "attribute_order": list(config.attribute_order),
+        "mixer": config.mixer.to_dict(),
     }
     try:
         os.makedirs(path.parent, exist_ok=True)

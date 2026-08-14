@@ -6,15 +6,10 @@ same reasoning as `tasks.txt`: the findings outlive the conversation that
 produced them. Remediation is tracked as **PHASE R** in `tasks.txt` - one line
 per finding, cross-referenced back to the R-numbers below.
 
-**Remediation status (2026-08-14): 15 of 18 fixed.** R1-R5, R7, R8, R10-R12,
-R14-R18 are done - see the per-finding "Resolved" notes and the `> DONE` notes
-in `tasks.txt`. Three remain open, each deliberately:
-
-| Open | Why it was left |
-|---|---|
-| R6 (MainWindow God object) | A real refactor with its own design decisions - deserves its own change, not a tail-end of a cleanup batch. |
-| R9 (prose-to-code ratio) | Judgement-heavy and touches nearly every file; wants an explicit call on how much history stays in the code. |
-| R13 (silent no-op while loading) | Needs a product decision: what a screen-reader user should hear when a load is already in flight. |
+**Remediation status (2026-08-14): all 18 addressed.** 17 fixed; R13's
+"silent no-op" half was closed as won't-fix on measured evidence (see its
+entry). Details in the per-finding "Resolved" notes below and the `> DONE`
+notes in `tasks.txt`.
 
 Suite after remediation: **358 passing**, pyflakes clean across the project,
 and clean under `-W error::RuntimeWarning`.
@@ -213,6 +208,35 @@ Sequencer/status-field logic, a `RegionRefresher`. Concrete duplication inside:
 - The click + announcer blocks in `_play_selected_region_3_notes` (1138-1153)
   duplicate `Sequencer._sound_current_step` (`audio/sequencer.py:155-171`).
 
+**Resolved 2026-08-14.** Split into a `controllers/` package: `ScoreSession`,
+`PlaybackController`, `NavigationController`, `RegionPresenter`,
+`AttributeController`, `FocusController`, `ScorePersistenceController`, plus
+`widgets/menu_builder.py`. `main_window.py` went 1,320 -> 682 lines and is now
+a facade of one-line delegators and read-only properties over the controllers -
+kept deliberately, since that is the API the region widgets call through
+`window()` and the tests drive.
+
+Two design points carry the weight: controllers read `session.music_data` per
+call and never cache it (MusicData is replaced wholesale on each load), and
+only `RegionPresenter` touches widgets - everything else receives
+widget-derived values as arguments, which is what makes the transport and
+navigation logic testable without a window.
+
+Verified three ways rather than asserted: the 358 pre-existing tests pass
+**unchanged** (`git diff` on `tests/` is empty; the 12 new tests are in new
+files); a 44-score behaviour baseline - playback events, Region 3/4 text,
+status fields, performance rows, report lines and Region 2 voice filtering at
+every slice - is byte-identical before and after; and an offscreen end-to-end
+smoke run exercised load, navigation, all three transport states, the toggles,
+the Tab cycle wrap-around, F6, Region 5 jumps and the dialect switch.
+
+Landed alongside it, at the user's request: inert groundwork for the wishlist's
+top audio items - `models/mixer_settings.py` (#4 mixer, #7 mute) persisted
+through `ScoreConfig`, `SynthEngine.set_channel_volume/pan`, and Region 2 solo
+(#8). No UI for any of it yet, and all default-inert: an empty mixer sends zero
+CC messages, and with nothing soloed the voice filter takes the untouched
+original code path.
+
 #### R7. Stale documentation contradicting the code
 
 `audio/metronome.py:44-48` and `audio/position_announcer.py:33, 95` still state
@@ -245,6 +269,24 @@ is to keep the *invariant* ("samplerate must be a constructor kwarg - a later
 `.setting()` call doesn't reinitialise the engine") in the code and move the
 *investigation narrative* to `tasks.txt` / commit messages.
 
+**Resolved 2026-08-14.** 608 prose lines removed across 22 files; ratio 0.60 ->
+0.44 (0.56 in the original finding counted `tools/`). Largest reductions:
+`main_window.py` -176, `models/music_data.py` -143, `audio/synth_engine.py`
+-85, `parsers/timeline_builder.py` -48, `audio/sequencer.py` -35.
+
+The rule applied: **keep what the constraint is and why the code must be this
+way; cut how it was discovered.** So non-obvious Qt/FluidSynth/music21
+behaviour and invariants that would be re-broken if unstated all stayed;
+"reported bug, live-tested", repro anecdotes, descriptions of what the old code
+did, and references to which test caught it all went - `git log` and `tasks.txt`
+already hold those. The R-number annotations added earlier the same day got the
+same treatment, being the same kind of commentary.
+
+Verified prose-only mechanically: an AST guard compares every touched file's
+tree, with docstrings blanked, against its committed version - comments never
+reach the AST, so an identical tree proves no code moved. All 22 files passed.
+Eleven specific load-bearing gotchas were spot-checked as surviving.
+
 ### LOW
 
 All but R13 resolved 2026-08-14 (see `tasks.txt` for the per-item notes).
@@ -254,12 +296,43 @@ All but R13 resolved 2026-08-14 (see `tasks.txt` for the per-item notes).
 | R10 | `models/music_data.py:260` | `_slice_is_navigable` indexes `timeline_slices[index]` after `_slice_has_visible_notes` already returned False for out-of-range. No live caller reaches it; latent `IndexError`. | fixed |
 | R11 | `widgets/region2_list_widget.py:75` | `setData(Qt.UserRole, node.node_id)` is never read back. Also the only unscoped `Qt.UserRole` in the codebase. | fixed |
 | R12 | `parsers/musicXML_reader.py:22` | Unconditional `[DEBUG]` prints on the production load path. | fixed |
-| R13 | `main_window.py:660-670` | `load_score_from_file` silently no-ops if a load is in flight - a keystroke that does nothing and says nothing is the worst failure mode for this app's users. `ScoreLoadThread` instances are also parented and never `deleteLater`'d, so one accumulates per file opened. | **open** - product decision |
+| R13 | `main_window.py:660-670` | `load_score_from_file` silently no-ops if a load is in flight - a keystroke that does nothing and says nothing is the worst failure mode for this app's users. `ScoreLoadThread` instances are also parented and never `deleteLater`'d, so one accumulates per file opened. | thread leak fixed; silent no-op **won't-fix**, see below |
 | R14 | `models/music_data.py:125-148` | `__post_init__` sets `attribute_order`, `_beat_markers` and four caches as undeclared attributes on a `@dataclass`; `attribute_order` is public API absent from the field list/`repr`/`eq`. | fixed |
 | R15 | `main_window.py:1326` | `set_field(4, ...)` hardcodes the playback field index; `StatusBarWidget` should expose a named constant. | fixed |
 | R16 | `audio/synth_engine.py:394-401` | `_stop_group` uses `list.remove((ch, note))`, removing the *first* match - two groups sounding the same pitch on the same channel (a unison across voices in one part) let one group's expiry release the other's still-ringing note. | fixed |
 | R17 | `parsers/timeline_builder.py:482-484` | `_measure_start_quarters` reads only the first direct-child `<attributes>` per measure, while `build()`'s walker applies attributes wherever they appear - a mid-measure time-signature change makes the two disagree. | fixed |
 | R18 | `latency_harness.py:128` | Unused local `app` (the only pyflakes hit in app code). `workers/score_load_worker.py:10` cites `improvements.txt`, which is not in the repo. | fixed |
+
+### R13, in full (the one finding partly declined)
+
+**The silent no-op: won't-fix, on measurement.** My original framing - "a
+keystroke that does nothing and says nothing is the worst failure mode for
+this app's users" - is true in general but wrong here, because the guard turns
+out to be unreachable. It sits at the top of `load_score_from_file`, whose only
+production caller is `_open_score_file_dialog`, i.e. it runs *after* a modal
+`QFileDialog` returns. Triggering it would mean completing an entire second
+file-picker interaction inside the previous load's window.
+
+Measured load times across every score in the repo:
+
+| Score | Notes | Load |
+|---|---|---|
+| Pachelbel's Canon (string quartet) | 3,856 | 390 ms |
+| I See Angels... | 3,345 | 350 ms |
+| Chopin Etude Op. 25/12 | 2,699 | 217 ms |
+| Typical smaller scores | 24-492 | 12-80 ms |
+
+390 ms worst case, against a human file-dialog interaction. An audible cue for
+that path would be dead code. **Revisit only if a non-dialog load path appears**
+- a recent-files list, drag-and-drop, or a command-line argument - where two
+loads genuinely could fire back to back.
+
+**The thread accumulation: fixed.** `ScoreSession._on_thread_finished` now
+calls `deleteLater()`. The thread is parented to the session, so the C++ object
+outlived the Python reference and one accumulated per file opened for the
+process's lifetime. Modest in size (the parsed score is a local inside `run()`,
+so nothing large was retained) but free to fix. Verified: eight consecutive
+loads leave zero `QThread` children alive.
 
 ---
 

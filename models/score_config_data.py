@@ -1,21 +1,18 @@
 # models/score_config_data.py
-"""R2: the ScoreConfig data shape, with no Qt dependency.
+"""The ScoreConfig data shape, deliberately free of any Qt dependency.
 
-This lived in persistence/score_config.py alongside the file I/O, which
-imports PySide6.QtCore for QStandardPaths - and since MusicData imports
-ScoreConfig (export_config/apply_config), importing anything from models/
-pulled in the whole of Qt. That silently broke the invariant
-main_window.py's detect_default_uk_terms() relies on ("models/ stays
-Qt-free", the stated reason locale detection lives in the UI layer rather
-than in models/vocabulary.py).
-
-Split so the layering matches the claim: the data shape lives here, the
-Qt-aware reading and writing of it stays in persistence/score_config.py,
-which re-exports ScoreConfig so existing imports are unaffected. Note the
-dependency direction - persistence imports models, never the reverse.
+models/ must stay Qt-free (it is why locale detection lives in
+main_window.py rather than models/vocabulary.py), and MusicData imports
+ScoreConfig - so the shape cannot live next to persistence/score_config.py's
+QStandardPaths use without dragging Qt into every models/ import. Reading
+and writing stays there and re-exports ScoreConfig, so import sites are
+unaffected. Dependency direction: persistence imports models, never the
+reverse. Guarded by test_models_package_does_not_import_qt.
 """
 from dataclasses import dataclass, field
 from typing import Dict, List, Set, Tuple
+
+from models.mixer_settings import MixerSettings
 
 VoiceKey = Tuple[str, int, int]
 StaffKey = Tuple[str, int]
@@ -31,24 +28,17 @@ class ScoreConfig:
     - a global preference, not a per-file one).
 
     parts_off/staves_off/voices_off are each that node's OWN toggle state,
-    independent of its ancestors - NOT "effectively active" (which would
-    conflate "this voice was individually switched off" with "this voice is
-    merely hidden because its part is off"). Reported bug, live-tested:
-    switching a part off with a sub-voice still individually on, then
-    reloading, used to bring the sub-voice back off too, because the only
-    thing persisted was a single flattened, ancestor-gated voice set that
-    couldn't tell those two cases apart. Region2HierarchyModel.
-    get_off_node_keys()/apply_off_node_keys() are the lossless read/write
-    side of this - MusicData.export_config()/apply_config() only fill in a
-    best-effort voices_off of their own (for standalone/test use with no
-    Region 2 widget at all), which MainWindow overwrites with the real
-    per-node sets before saving.
+    independent of its ancestors - NOT the "effectively active" set, which
+    cannot distinguish "this voice was switched off" from "this voice is
+    merely hidden because its part is off", and so loses the voice's own
+    state on reload. Region2HierarchyModel.get_off_node_keys()/
+    apply_off_node_keys() are the lossless read/write side;
+    MusicData.export_config() fills in only a best-effort voices_off for
+    standalone use, which MainWindow overwrites before saving.
 
-    All three (not-an-on-list) and voice_display_attributes/attribute_order
-    filtered against the freshly-loaded score's own known parts/staves/
-    voices/attribute keys are what make loading best-effort: a saved entry
-    that no longer corresponds to anything in the current score is simply
-    dropped rather than rejecting the whole config."""
+    Storing OFF-lists (rather than ON-lists) and filtering them against the
+    freshly loaded score is what makes loading best-effort: an entry
+    matching nothing in the current score is dropped, not fatal."""
 
     schema_version: int = 1
     parts_off: Set[str] = field(default_factory=set)
@@ -58,3 +48,6 @@ class ScoreConfig:
     position_announcer_enabled: bool = False
     voice_display_attributes: Dict[VoiceKey, Set[str]] = field(default_factory=dict)
     attribute_order: List[str] = field(default_factory=list)
+    # Wishlist #4/#7: per-instrument volume/pan and the global mute. Empty
+    # by default, which means "nothing overridden" - see MixerSettings.
+    mixer: MixerSettings = field(default_factory=MixerSettings)

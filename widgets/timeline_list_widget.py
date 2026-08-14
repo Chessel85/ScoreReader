@@ -20,18 +20,15 @@ class TimelineListWidget(RegionFocusCycleMixin, QListWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Ref 6 (C4): digits typed while focus is here build up a target bar
-        # number, jumped to on Enter and cleared on Escape or any other key
-        # that already has its own meaning (arrow keys etc) - stale pending
-        # digits silently waiting for a future Enter would be confusing.
+        # Ref 6: digits typed here build a target bar number, jumped to on
+        # Enter and cleared by Escape or any other meaningful key - stale
+        # digits waiting for a later Enter would be confusing.
         self._pending_digits = ""
 
     def _main_window(self) -> "MainWindow":
-        # This widget is only ever created by MainWindow.setup_ui and added
-        # to its central widget, so window() is always the MainWindow - a
-        # direct call here fails loudly if that ever stops being true,
-        # rather than silently no-op'ing the keystroke the way the old
-        # hasattr(main_win, ...) guards did.
+        # Only ever created by MainWindow.setup_ui, so window() is always it.
+        # Calling straight through fails loudly if that stops being true,
+        # rather than silently swallowing the keystroke.
         return self.window()  # type: ignore[return-value]
 
     def keyPressEvent(self, event):
@@ -79,25 +76,19 @@ class TimelineListWidget(RegionFocusCycleMixin, QListWidget):
         elif key == Qt.Key.Key_End:
             main_win.navigate_timeline_end()
         elif key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
-            # Qt's native ExtendedSelection arrow handling only collapses
-            # the multi-row selection down to the newly-current row as a
-            # side effect of the current row actually changing - at a
-            # boundary (Up already on the top row of a selected chord, or
-            # Down already on the bottom) there's nowhere to move to, so it
-            # no-ops and leaves every note in the chord still selected.
-            # Live-tested bug: landing on a chord then pressing Up did
-            # nothing, even though Down correctly narrowed to the next row.
-            # Explicitly re-collapsing after every Up/Down (not just at a
-            # boundary) is a no-op when the native handling already did it,
-            # and fixes the boundary case the same way.
+            # Qt's ExtendedSelection arrow handling collapses a multi-row
+            # selection only as a side effect of the current row CHANGING.
+            # At a boundary (Up on the top row of a selected chord) there is
+            # nowhere to move, so it no-ops and leaves the whole chord
+            # selected. Re-collapsing unconditionally is harmless when the
+            # native handling already did it, and fixes the boundary case.
             super().keyPressEvent(event)
             current = self.currentItem()
             if current is not None:
                 self.clearSelection()
                 current.setSelected(True)
             main_win.on_region_3_vertical_move()
-        # Tab/Shift+Tab are handled a level up, in RegionFocusCycleMixin.
-        # event() - QAbstractItemView never lets them reach keyPressEvent at
-        # all on a single-column view (R1, see that module's docstring).
+        # Tab/Shift+Tab are handled in RegionFocusCycleMixin.event() -
+        # QAbstractItemView never lets them reach keyPressEvent here.
         else:
             super().keyPressEvent(event)

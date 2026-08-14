@@ -49,40 +49,27 @@ class SynthEngine:
         self._click_sfid: Optional[int] = None
         self._active_notes: List[Tuple[int, int]] = []  # (channel, note) pairs
 
-        # One QTimer per sounding group (Ref 9 AC2/Ref 13 AC2: each part
-        # rings for its own notated duration, not the shortest duration of
-        # any part sounding at the same instant - see play_chord). Tracked
-        # here so stop_all_notes()/a retriggering play_chord() can cancel
-        # every pending one, not just the most recent.
+        # One QTimer per sounding group, so each part rings for its own
+        # notated duration rather than the shortest one sounding at that
+        # instant (Ref 9 AC2/Ref 13 AC2, see play_chord). Tracked so
+        # stop_all_notes()/a retriggering play_chord() can cancel every
+        # pending one, not just the most recent.
         self._group_off_timers: List[QTimer] = []
 
-        # E8: the metronome click gets its own tiny parallel state, entirely
-        # separate from _active_notes/_group_off_timers above - a click must
-        # not cut off a note sounding at the same beat (play_chord's
-        # stop_all_notes() would do exactly that if the click went through
-        # the same path). No timer here (see play_click's own comment for
-        # why not) - just enough bookkeeping to silence an in-progress click
-        # early if something needs to interrupt it (stop_all_notes, or a
-        # new click retriggering before the old one has finished).
+        # The click, the spoken position word and the performance cue each
+        # get their own slot, separate from _active_notes and from each
+        # other. Two reasons, both load-bearing:
+        #  - they must not go through play_chord's path, whose retrigger
+        #    stop_all_notes() would cut off notes sounding on the same beat;
+        #  - each owns a dedicated channel, because FluidSynth's
+        #    noteoff(channel, key) releases every voice matching that pair
+        #    regardless of preset, and these presets share note numbers (see
+        #    audio/position_announcer.py).
+        # No timers: a one-shot sample retires itself (see play_click).
+        # These slots exist only to interrupt one early on purpose.
         self._active_click: Optional[Tuple[int, int]] = None  # (channel, note)
-
-        # Ref 28: the position announcer gets its own parallel slot, entirely
-        # separate from _active_click above despite sharing the same click
-        # soundfont/sfid - it plays on its own dedicated channel
-        # (audio/position_announcer.py's POSITION_ANNOUNCER_CHANNEL)
-        # specifically so a click and a spoken word landing on the same beat
-        # (AC2: both can be on at once) don't fight over one shared
-        # active-note slot the way they would on a single channel - see
-        # that module's own comment for why a shared channel can't work
-        # here (FluidSynth releases by channel+key, not by preset).
-        self._active_announcement: Optional[Tuple[int, int]] = None  # (channel, note)
-
-        # Ref 29: the Performance region's change cue gets its own parallel
-        # slot too, same reasoning as _active_click/_active_announcement
-        # above - its own dedicated channel (PERFORMANCE_CUE_CHANNEL) so it
-        # can't collide with either of them or with a note ringing at the
-        # same instant.
-        self._active_performance_cue: Optional[Tuple[int, int]] = None  # (channel, note)
+        self._active_announcement: Optional[Tuple[int, int]] = None
+        self._active_performance_cue: Optional[Tuple[int, int]] = None
 
         if not FLUIDSYNTH_AVAILABLE:
             print("[WARN] pyfluidsynth or DLLs missing. Sound engine disabled.")
@@ -92,23 +79,15 @@ class SynthEngine:
 
     def _init_engine(self, soundfont_path: Optional[str]):
         try:
-            # samplerate MUST be passed to the constructor, not set
-            # afterward: pyfluidsynth's Synth.__init__ calls
-            # new_fluid_synth(self.settings) - the actual DSP engine
-            # creation - using whatever synth.sample-rate is in the
-            # settings object AT THAT MOMENT (default 44100, since it's
-            # a constructor kwarg with that default). A later
-            # self._fs.setting("synth.sample-rate", ...) call only updates
-            # the stored settings value; it does not reinitialize the
-            # already-created engine. Reported bug, live-tested and
-            # confirmed by direct measurement: with the old code (rate set
-            # only via .setting() after construction, as it used to be
-            # here), audio was actually generated at 44100 Hz while WASAPI
-            # opened the output stream at 48000 Hz (matching the real
-            # device rate) - a 48000/44100 speed-up, audible as everything
-            # playing about a semitone sharp (and, less obviously without
-            # A/B comparison, slightly fast) - not a soundfont, MIDI
-            # number, or audio-device problem.
+            # samplerate MUST be a constructor argument, never set
+            # afterwards. Synth.__init__ calls new_fluid_synth(self.settings)
+            # - the actual DSP engine creation - using whatever
+            # synth.sample-rate holds AT THAT MOMENT (default 44100). A later
+            # .setting("synth.sample-rate", ...) updates only the stored
+            # value and does not reinitialise the existing engine, so audio
+            # renders at 44100 while WASAPI opens the stream at 48000: a
+            # 48000/44100 speed-up, heard as everything playing about a
+            # semitone sharp. Confirmed by measuring rendered frequency.
             self._fs = fluidsynth.Synth(gain=0.7, samplerate=48000.0)
 
             # Optimise for low latency using WASAPI
@@ -133,33 +112,21 @@ class SynthEngine:
             self._fs = None
 
     def _load_click_soundfont(self):
-        """E8/Ref 14, tasks.txt E11/D-14/E12: a second, small,
-        project-authored soundfont (tools/wav_to_sf2.py) for the click
-        metronome and the Ref 28 position announcer - loaded alongside the
-        main GM soundfont, not instead of it, on its own sfid so
-        play_click/play_word can select it explicitly via program_select
-        without disturbing whatever's program_select'd on any other
-        channel. Missing/failing to load is non-fatal - matches
-        FluidR3_GM's own "warn and become a no-op" handling above - since a
-        fresh checkout that hasn't run the tool yet should still run, just
-        without a click/announcer sound.
+        """Loads the small project-authored soundfont (tools/wav_to_sf2.py)
+        holding the click, position-announcer and performance-cue samples -
+        alongside the main GM soundfont, not instead of it, on its own sfid
+        so play_click/play_word/play_performance_cue can program_select it
+        without disturbing any other channel. A missing or unloadable file
+        is non-fatal (same "warn and no-op" handling as FluidR3_GM): a fresh
+        checkout that hasn't run the tool should still run, just silently.
 
-        No per-note duration lookup needed here (there used to be one, read
-        from a sidecar .sf2.json) - see play_click's own comment for why a
-        one-shot sample doesn't need its duration known in code at all.
-
-        Ref 28 (user-requested): pans the click and the position announcer
-        to opposite sides so they're easier to tell apart from the music
-        and from each other - the announcer full left, the click full
-        right. Set once here rather than per-call in play_click/play_word,
-        since each has a permanently dedicated channel (MusicData.
-        RESERVED_CHANNELS keeps real instrument parts off both) - a MIDI
-        pan (CC10) setting persists on a channel until changed, so there's
-        nothing to re-apply on every note. Verified against real
-        FluidSynth (fluidsynth.Synth.get_samples(), no audio device
-        needed): CC10=0 produced silence on the right channel, CC10=127
-        silence on the left, confirming real hard-left/hard-right
-        separation rather than a partial/no-op pan."""
+        Panning is set once here, not per call: each of these channels is
+        permanently dedicated (MusicData.RESERVED_CHANNELS), and a CC10 pan
+        persists on a channel until changed. Announcer hard left and click
+        hard right so they're distinguishable from the music and each other
+        (verified: CC10=0 gives silence on the right, 127 silence on the
+        left); the performance cue centred, having no directional meaning.
+        """
         click_sf_path = os.path.join(PROJECT_ROOT, "soundfonts", "recall_score_sounds.sf2")
         if not os.path.exists(click_sf_path):
             print(f"[WARN] Click/announcer SoundFont not found: {click_sf_path}")
@@ -171,15 +138,32 @@ class SynthEngine:
         PAN_CENTER = 64
         self._fs.cc(POSITION_ANNOUNCER_CHANNEL, 10, PAN_FULL_LEFT)
         self._fs.cc(METRONOME_CHANNEL, 10, PAN_FULL_RIGHT)
-        # Ref 29: center pan - unlike the click/announcer pair, this cue has
-        # no directional meaning to preserve, it just needs its own channel
-        # (see PERFORMANCE_CUE_CHANNEL's own comment).
         self._fs.cc(PERFORMANCE_CUE_CHANNEL, 10, PAN_CENTER)
 
     def set_program(self, channel: int, program: int):
         if self._fs is None or self._sfid is None:
             return
         self._fs.program_change(channel & 0x0F, max(0, min(127, program)))
+
+    # MIDI continuous-controller numbers for the two mixer parameters.
+    VOLUME_CC = 7
+    PAN_CC = 10
+
+    def set_channel_volume(self, channel: int, value: int):
+        """Wishlist #4. Only called for a part the user has actually set a
+        level for - a channel with no override is never touched, so it keeps
+        the engine's own default."""
+        if self._fs is None:
+            return
+        self._fs.cc(channel & 0x0F, self.VOLUME_CC, max(0, min(127, value)))
+
+    def set_channel_pan(self, channel: int, value: int):
+        """Wishlist #4. Same CC the click/announcer/cue channels are panned
+        with at load time (see _load_click_soundfont), so a user override of
+        those simply replaces the fixed value."""
+        if self._fs is None:
+            return
+        self._fs.cc(channel & 0x0F, self.PAN_CC, max(0, min(127, value)))
 
     def stop_all_notes(self):
         if self._fs is None:
@@ -198,12 +182,9 @@ class SynthEngine:
         self._stop_performance_cue()
 
     def _stop_click(self):
-        """Silences a still-ringing metronome click, if any (E8). Separate
-        from the main note-off path above - see _active_click's own comment
-        - but folded into stop_all_notes() too, so pause/stop (Ref 10 AC3/
-        AC5) leave nothing orphaned. Also called from play_click() itself
-        before a new click, so a fast run of clicks cuts the previous one
-        short rather than overlapping."""
+        """Silences a still-ringing click. Called from stop_all_notes() so
+        pause/stop leave nothing orphaned, and from play_click() so a fast
+        run of clicks cuts the previous one short rather than overlapping."""
         if self._fs is None or self._active_click is None:
             return
         channel, note = self._active_click
@@ -211,10 +192,8 @@ class SynthEngine:
         self._active_click = None
 
     def _stop_announcement(self):
-        """Silences a still-ringing position-announcer word, if any (Ref
-        28) - the announcement counterpart of _stop_click above, on its own
-        channel/active-note slot so it can't cancel (or be cancelled by) a
-        click sounding at the same instant."""
+        """The announcer counterpart of _stop_click, on its own channel and
+        slot so it can't cancel (or be cancelled by) a simultaneous click."""
         if self._fs is None or self._active_announcement is None:
             return
         channel, note = self._active_announcement
@@ -222,9 +201,8 @@ class SynthEngine:
         self._active_announcement = None
 
     def _stop_performance_cue(self):
-        """Silences a still-ringing performance-region cue, if any (Ref 29)
-        - the cue counterpart of _stop_click/_stop_announcement above, on
-        its own channel/active-note slot for the same reason."""
+        """The cue counterpart of _stop_click/_stop_announcement, on its own
+        channel and slot for the same reason."""
         if self._fs is None or self._active_performance_cue is None:
             return
         channel, note = self._active_performance_cue
@@ -232,12 +210,8 @@ class SynthEngine:
         self._active_performance_cue = None
 
     def play_performance_cue(self, channel: int, bank: int, program: int, pitch: int, velocity: int):
-        """Ref 29: sounds the "check Region 5" cue - same shape and
-        one-shot-sample reasoning as play_click/play_word above (see
-        play_click's own comment for why no note-off scheduling is needed).
-        Its own channel/active-note bookkeeping (_active_performance_cue) so
-        it can't collide with a click, a spoken word, or a note ringing at
-        the same instant."""
+        """Sounds the "check Region 5" cue - same shape and one-shot-sample
+        reasoning as play_click below."""
         if self._fs is None or self._click_sfid is None:
             return
 
@@ -249,35 +223,20 @@ class SynthEngine:
         self._active_performance_cue = (ch, pitch)
 
     def play_click(self, channel: int, bank: int, program: int, pitch: int, velocity: int):
-        """E8/Ref 14: sounds a metronome click on its own dedicated channel,
-        independent of the melodic note pipeline above - does not call
-        stop_all_notes() (so it doesn't cut off notes sounding at the same
-        beat) and is not touched by a later play_chord() call. Which SAMPLE
-        plays (via program_select's explicit bank on the dedicated click
-        soundfont, self._click_sfid - see _load_click_soundfont) now
-        distinguishes the accented beat, not velocity - tasks.txt E11/D-14's
-        Claves attempt used one fixed percussion voice with velocity as the
-        only accent signal; this plays two different recorded sounds
-        instead.
+        """Sounds a metronome click on its own dedicated channel,
+        independent of the melodic pipeline: it never calls stop_all_notes()
+        (which would cut off notes on the same beat) and a later play_chord()
+        doesn't touch it. Which SAMPLE plays distinguishes the accent, via
+        program_select on the dedicated click soundfont.
 
-        No explicit note-off scheduling (there used to be one, timed from a
-        per-sample duration read from a sidecar .sf2.json): each click zone
-        in soundfonts/recall_score_sounds.sf2 is a one-shot, non-looping
-        sample (SampleModes=0, tools/wav_to_sf2.py), and FluidSynth
-        deactivates a voice on its own once such a sample's data is
-        exhausted, regardless of whether a note-off was ever sent - holding
-        the note "on" and simply never releasing it early is enough to let
-        it play to its natural end. Verified against real FluidSynth
-        (fluidsynth.Synth.get_samples(), no audio device needed): rendering
-        with no note-off at all reproduced the sample's full natural
-        length with no hang and no glitch; rendering with an early
-        note-off reproduced the original problem (abrupt cutoff via the
-        soundfont's default near-instant release envelope) - confirming
-        both that letting a one-shot finish untouched is safe and why an
-        early note-off must still be avoided. _stop_click() (called just
-        below, and from stop_all_notes()) remains the deliberate-interrupt
-        path - a fast run of clicks or an explicit stop still cuts a
-        still-ringing one short, which is the wanted behaviour there."""
+        Deliberately schedules NO note-off. Each click zone is a one-shot,
+        non-looping sample (SampleModes=0), and FluidSynth deactivates such
+        a voice once the sample data is exhausted whether or not a note-off
+        arrives - so holding it on and never releasing it lets it play to
+        its natural end. Verified by rendering both ways: untouched gives
+        the full natural length with no hang; an early note-off gives an
+        abrupt cutoff through the soundfont's near-instant release envelope.
+        _stop_click() stays the deliberate-interrupt path."""
         if self._fs is None or self._click_sfid is None:
             return
 
@@ -289,17 +248,10 @@ class SynthEngine:
         self._active_click = (ch, pitch)
 
     def play_word(self, channel: int, bank: int, program: int, pitch: int, velocity: int):
-        """Ref 28: sounds a position-announcer spoken-word sample - the
-        word counterpart of play_click above, same soundfont (self.
-        _click_sfid loads every preset in soundfonts/recall_score_sounds.sf2,
-        talking_metronome_default included, not just click_default) and the
-        same "let a one-shot finish on its own, never schedule an early
-        note-off" reasoning - see play_click's own comment. Its own
-        channel/active-note bookkeeping (_active_announcement) so a click
-        and a word landing on the same beat (Ref 28 AC2) sound together
-        instead of one cancelling the other - see
-        audio/position_announcer.py's POSITION_ANNOUNCER_CHANNEL comment
-        for why they can't share a channel."""
+        """The spoken-word counterpart of play_click - same soundfont (one
+        sfid covers every preset in it), same "never schedule a note-off"
+        reasoning, own channel and slot so a click and a word on the same
+        beat sound together instead of cancelling each other."""
         if self._fs is None or self._click_sfid is None:
             return
 
@@ -333,31 +285,21 @@ class SynthEngine:
         """Play several (channel, program, midi_notes[, duration_ms]) groups
         together.
 
-        Each part gets its own channel and GM program, so a slice with
-        notes from two parts sounds both instruments at once instead of
-        one group cutting the other off (Ref 8, Ref 9 AC2, D-5). Each
-        group's own trailing duration_ms (when present - MusicData supplies
-        it; play_notes()'s single-group callers don't) governs its own
-        note-off timer independently, so one part isn't clamped to another
-        part's shorter note sounding at the same instant (Ref 9 AC2, Ref 13
-        AC2 - reported bug: Pachelbel's Canon cello minims cut short to
-        match faster upper parts). Falls back to the outer duration_ms for
-        any group that omits its own.
+        Each part gets its own channel and GM program, so a slice spanning
+        two parts sounds both instruments rather than one cutting the other
+        off (Ref 8, Ref 9 AC2). Each group's own trailing duration_ms (when
+        present; play_notes()'s single-group callers omit it and get the
+        outer default) drives its own independent note-off timer, so one
+        part is never clamped to another part's shorter note sounding at the
+        same instant - Pachelbel's cello minims cut to a crotchet was this.
 
-        retrigger=True (the default) silences everything currently sounding
-        first - correct for discrete audition (Ref 8 AC2's "moving through
-        the timeline stops all notes currently sounding before playing new
-        notes", used by Region 3 navigation and chord audition). The
-        Sequencer (E4/Ref 10) passes retrigger=False for its natural
-        step-to-step advance during real playback: a new part's note
-        starting (e.g. Violin I entering on beat 2 while Violin II/Viola/
-        Cello are mid-minim from beat 1) must NOT cut off other parts'
-        still-ringing, unrelated notes - reported bug, live-tested, second
-        occurrence of the same underlying "one group's timing clobbers
-        another's" class of bug this method already had for duration.
-        Sequencer.play_from()/resume() still call stop_all_notes() directly
-        first, so an explicit reposition (not a natural advance) does clear
-        the deck.
+        retrigger=True (the default) silences everything sounding first,
+        which is what discrete audition wants (Ref 8 AC2 - Region 3
+        navigation, chord audition). The Sequencer passes retrigger=False
+        for its natural step-to-step advance: one part's new attack must not
+        cut off other parts' unrelated, still-ringing notes. An explicit
+        reposition (Sequencer.play_from/resume) calls stop_all_notes()
+        itself, so only the in-run advance is non-destructive.
         """
         if self._fs is None:
             return
@@ -392,19 +334,12 @@ class SynthEngine:
         timer.start(int(duration_ms))
 
     def _stop_group(self, group_notes: List[Tuple[int, int]], timer: QTimer):
-        """R16: a (channel, note) pair can legitimately appear in
-        _active_notes more than once - two voices of the same part sounding
-        a unison land on that part's one channel with the same pitch, each
-        with its own duration and its own timer. Releasing the FIRST
-        matching entry meant the shorter voice's expiry silenced the longer
-        one's still-ringing note (and left a stale entry behind that
-        stop_all_notes then re-released). Count occurrences instead: only
-        send noteoff once no other live group is still holding that pair.
-
-        This is the same class of bug as the two play_chord already carries
-        scars from - one group's timing clobbering another's - just at the
-        note level rather than the group level.
-        """
+        """A (channel, note) pair can legitimately appear in _active_notes
+        more than once: two voices of one part sounding a unison land on
+        that part's single channel at the same pitch, each with its own
+        duration and timer. So release this group's claim and only send
+        noteoff once no other live group still holds the pair - otherwise
+        the shorter voice's expiry silences the longer one."""
         if self._fs is None:
             if timer in self._group_off_timers:
                 self._group_off_timers.remove(timer)

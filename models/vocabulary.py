@@ -4,10 +4,9 @@ internal identifiers (the "measure" attribute key used for storage and menu
 wiring, method names, MusicXML type strings) are never touched by any of
 this, only the text actually rendered to the user.
 
-D-15: stave/staff is deliberately EXCLUDED from this toggle - live-tested
-feedback was that Region 2's clef names ("Treble stave", "Bass stave") should
-stay exactly as the app renders them today regardless of dialect, to keep
-this simple for now. See tasks.txt.
+D-15: stave/staff is deliberately EXCLUDED from this toggle - Region 2's
+clef names ("Treble stave", "Bass stave") stay as they are regardless of
+dialect, a simplification the user asked for.
 """
 
 UK_BASE_DURATION_NAMES = {

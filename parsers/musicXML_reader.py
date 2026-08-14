@@ -19,10 +19,6 @@ class MusicXMLReader:
         self.file_path = file_path
 
     def load(self) -> MusicData:
-        # R12: no [DEBUG] progress prints here. They ran on every load in
-        # release builds, where stdout is a log file under %LOCALAPPDATA%
-        # (main.py's _redirect_stdio_if_headless) - noise in the one place
-        # a real error report has to be legible.
         root = self._parse_xml_root()
 
         credits_dict = self._extract_credits_etree(root)
@@ -58,7 +54,7 @@ class MusicXMLReader:
 
     def _parse_xml_root(self) -> Optional[ET.Element]:
         """Parses the file once; every etree-based extractor below reads
-        from this same root instead of re-parsing the file itself (R2)."""
+        from this same root rather than re-parsing."""
         try:
             return read_musicxml_root(self.file_path)
         except Exception as e:
@@ -66,14 +62,12 @@ class MusicXMLReader:
             return None
 
     def _extract_tempo(self, score: music21.stream.Score) -> Tuple[int, str, float, str]:
-        """Returns (quarter-note BPM for playback timing, display string in
-        the score's own beat unit - e.g. "96 eighth notes per minute" for a
-        score marked eighth=96, rather than music21's quarter-converted
-        "48 BPM" - beat_unit_quarter_length and beat_unit_name, the ratio
-        and label E1 needs to convert the internal quarter-note BPM back to
-        that same beat unit live, for the status bar/F/S/D/Tempo Offset
-        dialog (Ref 12) - reported bug: those were showing/accepting the raw
-        quarter-BPM number instead of the score's own displayed tempo)."""
+        """(quarter-note BPM for playback timing, display string in the
+        score's OWN beat unit, that unit's quarter-length ratio, its name).
+
+        A score marked eighth=96 yields 48 BPM internally but must display
+        as "96 eighth notes per minute" - the ratio and name are what let
+        the status bar and tempo dialog convert back live (Ref 12)."""
         try:
             tempos = score.flatten().getElementsByClass(music21.tempo.MetronomeMark)
             if tempos:

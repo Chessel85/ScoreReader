@@ -1,22 +1,18 @@
+* Loading the Chopin file, no midi is getting played.
+* when metronome is on, but moving up and down a chord, do not sound the metronome click.
+* Notes are always sorted highest pitch to lowest pitch for a voice. and in voice order.
+* Need a mixer to control volume and panning of each instrument (not voice) plus the click and talking metronomes.  Settings should be saved per score.
 * Duration attribute is quoted as note type e.g. quaver, eighth note.  Means duration added to note region does not need the preceding word 'duration'.
-Quick attribute look up.  Use control + number row to make screen reader announce that number attribute from the attribute list e.g. Pressing control + 2 announces octave.  Can the app push text to the screen reader?
-* Score or piece summary report.  From something like view menu select Summary Report and it gives a load of info such as number of bars, range of notes, attributes present
+* can we import musescore files directly?  And midi?
+* A mute option so midi is not played.
+* Solo option for parts, staves and voices. including an unsolo all but does not include the metronomes 
+* score report should include key signature , time signature and tempo changes.
+* Quick attribute look up.  Use control + number row to make screen reader announce that number attribute from the attribute list e.g. Pressing control + 2 announces octave.  Can the app push text to the screen reader?
 * From the reorder attributes dialogue I can discover what attributes are present but I can't easily add that attribute to the note region unless I actually find an example of it and do application key.  I want an easier way to add attributes to the note region.
 Perhaps have add and remove buttons in the reorder dialogue, or perhaps a find next attribute dialogue?
-* Is it  possible to rename a repo so the URL for it does not include my gitHub username?
-* A mute option so midi is not played.
-* Solo option for parts, staves and voices.
 * support for percussion parts.
-* Notes are always sorted highest pitch to lowest pitch for a voice.
 * Notes need to account for staff symbol e.g. a piano bass stave (without a treble) seems to play too high
-* Not sure notes are sounding for their stated duration e.g. Piano in Pashelbels Canon are all minims but sound like crotchets.
 * Want an audio indicator of crossing a barline. Or does the metronome already do that?
-* Want to know about repeat barlines and codas.  goes into the summary report maybe as well as some audio indicators.
+* Want to know about codas.  
 * Need to find out more about guitar pictures, chords and lyrics and how these can be catered for.
-* When I looked at the about dialogue on my virtual machine, it said the version was January 12th 2026. It got this from 2026.1.12.
-* The build number is not being incremented every time there is a change to a py file.
-* Should we have a licence agreement?  Basically very happy for this to be open source for anyone to contribute to and to distribute.  Standard GNU or MIT licence I think as long as I'm not liable for anything.
-* when metronome is on, but moving up and down a chord, do not sound the metronome click.
-* Need to check pitches are correct. compare with reasynth in reaper.
-* Bourree contains repeats and probably codas.  ask claude i#to verify and perhaps create a test file.  but need to cope with these.  repeats need to be part of the score report.
 * There might be some tiny clicks in my headphones when Recall Score starts.  This might be indicative of something bad.  Can I make Reaper reaSynth go silent again when RS closes and restarts?

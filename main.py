@@ -4,16 +4,14 @@ import sys
 
 
 def _redirect_stdio_if_headless():
-    """A PyInstaller build with console=False (required for a GUI app - no
-    console flash on launch) runs with sys.stdout/sys.stderr set to None,
-    not just closed. This app's error handling is print()-based throughout
-    (see CLAUDE.md 'Known gaps' - Ref 25/NFR-06 want a real accessible-error
-    dialog eventually, this isn't that) - any print() call anywhere in the
-    codebase would otherwise crash with "'NoneType' object has no attribute
-    'write'" the moment something prints a warning, e.g. SynthEngine failing
-    to open an audio device on a machine with no sound card (live-tested:
-    exactly this, on a Windows 10 VM with no audio hardware). Must run
-    before any other import that could print anything."""
+    """A PyInstaller console=False build (required for a GUI app, so no
+    console flashes on launch) runs with sys.stdout/sys.stderr set to None,
+    not merely closed. This app's error handling is print()-based
+    throughout, so any warning - SynthEngine failing to open an audio device
+    on a machine with no sound card, say - would otherwise crash with
+    "'NoneType' object has no attribute 'write'".
+
+    Must run before any other import that could print."""
     if sys.stdout is not None and sys.stderr is not None:
         return
     log_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "Recall Score")

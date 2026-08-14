@@ -10,6 +10,7 @@ class Region2Node:
     node_type: str                 # 'part', 'staff', or 'voice'
     display_name: str              # Label for Column 0 (e.g., "Classical Guitar", "Treble Clef", "Voice 1")
     enabled: bool = True           # User toggle state ('on'/'off')
+    soloed: bool = False           # Wishlist #8; see get_active_voice_tuples
     part_id: str = ""
     staff_id: Optional[int] = None
     voice_id: Optional[int] = None
@@ -124,16 +125,14 @@ class Region2HierarchyModel:
     def get_off_node_keys(
         self,
     ) -> Tuple[Set[str], Set[Tuple[str, int]], Set[Tuple[str, int, int]]]:
-        """Every node's OWN enabled state (Ref 27 AC1: part, stave and voice
-        toggles are each independently persistent), as three OFF-sets -
-        (parts_off, staves_off, voices_off) - for ScoreConfig. Deliberately
-        NOT gated by ancestors (unlike get_active_voice_tuples, which is
-        Ref 7's playback/display filter): a voice that's individually on
-        but merely hidden because its part is off must still come back as
-        on once the part is switched on again, and only this ungated read
-        can tell that apart from a voice that was individually switched off
-        (reported bug, live-tested: the old save path only had the gated
-        set, so it couldn't)."""
+        """Every node's OWN enabled state, as three OFF-sets, for ScoreConfig
+        (Ref 27 AC1: part, stave and voice toggles are independently
+        persistent).
+
+        Deliberately NOT ancestor-gated, unlike get_active_voice_tuples: a
+        voice that is individually on but hidden because its part is off must
+        come back on when the part does, and only an ungated read can tell
+        that from a voice that was individually switched off."""
         parts_off: Set[str] = set()
         staves_off: Set[Tuple[str, int]] = set()
         voices_off: Set[Tuple[str, int, int]] = set()
@@ -154,15 +153,11 @@ class Region2HierarchyModel:
         staves_off: Set[Tuple[str, int]],
         voices_off: Set[Tuple[str, int, int]],
     ) -> None:
-        """Restores every node's OWN enabled state from a saved ScoreConfig
-        (the counterpart to get_off_node_keys) - e.g. after build_from_score
-        has reset every node back to its default enabled=True. A lossless
-        round trip: unlike the old set_active_voice_tuples inference, a part
-        being off and a sub-voice being individually on are stored (and
-        restored) as the independent facts they are, not collapsed into
-        one. Best-effort against a changed score: a saved key with no
-        matching node here (in either set) simply has no node to apply to
-        and is silently skipped."""
+        """Restores every node's OWN enabled state (the counterpart to
+        get_off_node_keys), e.g. after build_from_score has reset everything
+        to enabled=True. A lossless round trip - a part being off and a
+        sub-voice being individually on are independent facts, not collapsed
+        into one. Best-effort: a saved key matching no node is skipped."""
         for part in self.roots:
             part.enabled = part.part_id not in parts_off
             for staff in part.children:
@@ -172,11 +167,46 @@ class Region2HierarchyModel:
                         voice.part_id, voice.staff_id, voice.voice_id
                     ) not in voices_off
 
+    def any_soloed(self) -> bool:
+        """Wishlist #8: is anything soloed anywhere in the tree?"""
+        return any(
+            node.soloed
+            for part in self.roots
+            for node in (part, *part.children, *(v for s in part.children for v in s.children))
+        )
+
+    def toggle_solo(self, node_id: str) -> bool:
+        """Flips one node's solo state. Returns the new state."""
+        node = self._node_lookup.get(node_id)
+        if not node:
+            return False
+        node.soloed = not node.soloed
+        return node.soloed
+
+    def clear_all_solo(self) -> None:
+        """Wishlist #8's "unsolo all". Deliberately does not touch enabled
+        state - un-soloing restores whatever on/off toggles were already
+        set, rather than switching everything on."""
+        for part in self.roots:
+            part.soloed = False
+            for staff in part.children:
+                staff.soloed = False
+                for voice in staff.children:
+                    voice.soloed = False
+
     def get_active_voice_tuples(self) -> Set[Tuple[str, int, int]]:
         """
         Returns a set of (part_id, staff_id, voice_id) tuples that are currently active
         for filtering Region 3 note lists.
+
+        Wishlist #8: when anything is soloed, only voices under a soloed
+        node are active. With nothing soloed - which is every case today,
+        since no UI sets it - this falls through to the ancestor-gated
+        enabled walk below, unchanged.
         """
+        if self.any_soloed():
+            return self._soloed_voice_tuples()
+
         active_set: Set[Tuple[str, int, int]] = set()
 
         for root in self.roots:
@@ -192,13 +222,30 @@ class Region2HierarchyModel:
 
         return active_set
 
+    def _soloed_voice_tuples(self) -> Set[Tuple[str, int, int]]:
+        """Every voice under a soloed part, stave or voice. Solo overrides
+        the on/off toggles rather than intersecting with them: soloing a
+        part the user had switched off should still be heard, which is the
+        point of a solo control."""
+        active_set: Set[Tuple[str, int, int]] = set()
+        for part in self.roots:
+            for staff in part.children:
+                for voice in staff.children:
+                    if part.soloed or staff.soloed or voice.soloed:
+                        if (
+                            voice.part_id
+                            and voice.staff_id is not None
+                            and voice.voice_id is not None
+                        ):
+                            active_set.add((voice.part_id, voice.staff_id, voice.voice_id))
+        return active_set
+
 
 def voice_tuples_for_node(node: Region2Node) -> Set[Tuple[str, int, int]]:
-    """Every (part_id, staff_id, voice_id) tuple reachable below `node`,
-    regardless of enabled state - deliberately distinct from
-    get_active_voice_tuples (Ref 7's playback/display filter), since F2's
-    attribute-order dialog scopes by tree position, not by what's currently
-    toggled on/off."""
+    """Every (part_id, staff_id, voice_id) below `node`, regardless of
+    enabled state - distinct from get_active_voice_tuples, since the
+    attribute-order dialog scopes by tree position, not by what is toggled
+    on."""
     if node.node_type == "voice":
         return {(node.part_id, node.staff_id, node.voice_id)}
     if node.node_type == "staff":
@@ -211,10 +258,9 @@ def voice_tuples_for_node(node: Region2Node) -> Set[Tuple[str, int, int]]:
 
 
 def node_breadcrumb(node: Region2Node) -> str:
-    """"Piano > Bass Clef > Voice 5"-style path from the root down to
-    `node`, for the F2 attribute-order dialog's title - display_name is
-    indented with leading spaces for the flat-list rendering
-    (Region2ListWidget.refresh_list), which strip() removes here."""
+    """"Piano > Bass Clef > Voice 5" path from the root to `node`, for the
+    attribute-order dialog's title. display_name carries leading spaces for
+    the flat-list rendering, which strip() removes here."""
     parts = []
     current: Optional[Region2Node] = node
     while current is not None:

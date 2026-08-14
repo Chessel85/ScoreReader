@@ -125,12 +125,9 @@ def measure_sequencer_jitter(synth: SynthEngine) -> None:
 
 
 def main():
-    # R18: the return value must be held, not discarded. SynthEngine's
-    # note-off QTimers and the QEventLoop the jitter measurement runs both
-    # need a live QCoreApplication; letting the wrapper be garbage-collected
-    # would tear it down mid-measurement. Asserted rather than left as a
-    # bare unused local, so the reason it exists is checked, not just
-    # asserted in a comment a linter will keep flagging.
+    # Must be held, not discarded: SynthEngine's note-off QTimers and the
+    # jitter measurement's QEventLoop both need a live QCoreApplication, so
+    # letting the wrapper be collected would tear it down mid-measurement.
     app = QCoreApplication([])
     assert QCoreApplication.instance() is app
 
