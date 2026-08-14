@@ -41,9 +41,12 @@ def test_chord_notes_share_one_event_slice(timeline, chord_score):
 
     chord_slice = next(s for s in md.timeline_slices if len(s.notes) > 1)
     assert {n.step_name for n in chord_slice.notes} == {"D", "F"}
+    # Sorted highest pitch first within the instrument, regardless of the
+    # source XML's D-then-F chord order (F4 > D4).
+    assert [n.step_name for n in chord_slice.notes] == ["F", "D"]
 
     step_names = [s.notes[0].step_name for s in md.timeline_slices]
-    assert step_names == ["C", "D", "G", "A"]
+    assert step_names == ["C", "F", "G", "A"]
 
 
 def test_string_and_fret_captured_from_notations_technical(timeline, string_fret_score):

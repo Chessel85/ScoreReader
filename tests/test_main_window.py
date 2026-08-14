@@ -104,15 +104,17 @@ def test_navigating_onto_a_chord_selects_and_sounds_every_note(window, qtbot, nu
     version this app runs on, and collapsed a chord's selection down to just
     row 0. That silently turned "moving onto a chord sounds every note in
     it" into "only the first note sounds". chord_score's second slice is a
-    D+F chord - both notes must stay selected and both must sound."""
+    D+F chord - both notes must stay selected and both must sound. Ordered
+    F then D: highest pitch first, regardless of the source XML's D-then-F
+    chord order."""
     load_and_wait(window, qtbot, chord_score)
     null_synth.played.clear()
 
     window.navigate_timeline_right()  # C -> the D+F chord
 
-    assert [window.region_3.item(i).text() for i in range(window.region_3.count())] == ["D", "F"]
+    assert [window.region_3.item(i).text() for i in range(window.region_3.count())] == ["F", "D"]
     assert sorted(i.row() for i in window.region_3.selectedIndexes()) == [0, 1]
-    assert null_synth.last_played["midi_notes"] == [62, 65]
+    assert null_synth.last_played["midi_notes"] == [65, 62]
 
 
 def test_up_arrow_at_the_top_of_a_chord_collapses_selection_to_the_first_note(
@@ -161,14 +163,16 @@ def test_toggling_the_tab_staff_off_removes_the_duplicate_notes(
     window, qtbot, null_synth, score_bourree
 ):
     """B4, Ref 7/Ref 8: the Bourree sample has a notation staff and a TAB
-    staff duplicating it, so the first slice shows E,G,E,G today. Toggling
-    the TAB staff off in Region 2 (O key) must filter Region 3 down to just
-    the notation staff's E,G."""
+    staff duplicating it, so the first slice shows E,E,G,G today - highest
+    pitch first (E4 over G2), the two staves' duplicate E4s and G2s each
+    kept adjacent by the stable sort. Toggling the TAB staff off in
+    Region 2 (O key) must filter Region 3 down to just the notation
+    staff's E,G."""
     load_and_wait(window, qtbot, score_bourree)
 
     assert [
         window.region_3.item(i).text() for i in range(window.region_3.count())
-    ] == ["E", "G", "E", "G"]
+    ] == ["E", "E", "G", "G"]
 
     tab_staff_row = next(
         i for i, node in enumerate(window.region_2._current_visible_nodes)
@@ -1685,13 +1689,17 @@ def test_region_4_attribute_menu_stave_scope_fans_out_to_every_voice_on_that_sta
 ):
     """Chessel Duet's Piano staff 2 carries two real voices (5 and 6) - a
     genuine multi-voice stave, unlike a same-part/same-staff single-voice
-    fixture where stave scope would be indistinguishable from voice scope."""
+    fixture where stave scope would be indistinguishable from voice scope.
+
+    Notes are ordered highest pitch first within each part: P1 staff 1
+    voice 1 G5(79), P1 staff 2 voice 6 G3(55), P1 staff 2 voice 5 D3(50),
+    then P2 staff 1 voice 1 D4(62), P2 staff 1 voice 2 D3(50)."""
     load_and_wait(window, qtbot, score_duet)
-    assert _region_3_labels(window) == ["G", "D", "G", "D", "D"]
+    assert _region_3_labels(window) == ["G", "G", "D", "D", "D"]
 
     window.region_3.clearSelection()
     window.region_3.setCurrentRow(1)
-    window.region_3.item(1).setSelected(True)  # row 1: P1 staff 2 voice 5, "D"
+    window.region_3.item(1).setSelected(True)  # row 1: P1 staff 2 voice 6, "G"
     assert [i.row() for i in window.region_3.selectedIndexes()] == [1]
 
     actions = window._region_4_attribute_menu_actions(1)  # row 1 = octave
@@ -1700,8 +1708,8 @@ def test_region_4_attribute_menu_stave_scope_fans_out_to_every_voice_on_that_sta
 
     labels = _region_3_labels(window)
     assert labels[0] == "G", "P1 staff 1 voice 1 untouched"
-    assert labels[1].startswith("D, octave "), "P1 staff 2 voice 5 - the note the menu was opened on"
-    assert labels[2].startswith("G, octave "), "P1 staff 2 voice 6 - same stave, different voice"
+    assert labels[1].startswith("G, octave "), "P1 staff 2 voice 6 - the note the menu was opened on"
+    assert labels[2].startswith("D, octave "), "P1 staff 2 voice 5 - same stave, different voice"
     assert labels[3] == "D" and labels[4] == "D", "P2's notes untouched"
 
 

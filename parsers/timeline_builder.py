@@ -386,6 +386,31 @@ class TimelineBuilder:
 
         sorted_keys = sorted(buckets.keys(), key=lambda k: (k[0], k[1]))
 
+        # Region 3/4 must read highest-to-lowest pitch within each
+        # instrument, regardless of how the source XML orders a chord's
+        # notes (a real MuseScore guitar-tab export was found writing
+        # chords lowest-string/lowest-pitch first, reported bug: measures
+        # 8-9 of files/bach-bourree-tab/score.xml). Notes are already
+        # grouped by part by construction - the loop above finishes one
+        # part's measures entirely before starting the next, so entries
+        # sharing a bucket never interleave across parts - but a plain
+        # pitch-only sort would still break that grouping whenever one
+        # part's pitch range overlaps another's. part_order pins each
+        # note to its part's position first and sorts by pitch only within
+        # that group; ties (e.g. the same chord duplicated across a
+        # notation stave and a tab stave) keep their original relative
+        # order via Python's stable sort. Rests (midi_pitch None) sort
+        # last within their part - they don't sound, so their position
+        # among sounding notes doesn't matter.
+        part_order = {p.attrib.get("id", ""): i for i, p in enumerate(root.findall("part"))}
+
+        def _pitch_sort_key(note: NoteData) -> Tuple[int, float]:
+            pitch_component = -note.midi_pitch if note.midi_pitch is not None else float("inf")
+            return (part_order.get(note.part_id, 0), pitch_component)
+
+        for bucket_notes in buckets.values():
+            bucket_notes.sort(key=_pitch_sort_key)
+
         slices = []
         for m_num, offset_q in sorted_keys:
             notes = buckets[(m_num, offset_q)]
