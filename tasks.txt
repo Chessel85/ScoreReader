@@ -1523,6 +1523,83 @@ D-18 Region 2 rebuild clobbered a restored Ref 27 voice filter on reload
 
 
 ###
+PHASE R - CODE REVIEW REMEDIATION (2026-08-14)           (18 tasks)
+###
+  Findings from a full senior Python/PySide6 review of the codebase at
+  commit ab860ae. Full detail - evidence, measurements, suggested fixes -
+  is in code_review_2026-08-14.md at the repo root; the R-numbers here are
+  that document's own numbering. Not requirement-driven (no Ref numbers):
+  this is code health, so nothing here appears in the COVERAGE CHECK below.
+  Review scores: performance 8.5/10, simplification 6/10, readability
+  6.5/10, architecture 7.5/10, technical debt 8/10, tests 9/10.
+
+HIGH
+[x] R1  Region 2/3 Tab handlers are dead code - QAbstractItemView eats Tab at
+        event() level before keyPressEvent, as region5_list_widget.py already
+        documents. The focus cycle currently works only because Qt's native
+        chain coincidentally matches creation order.
+        > DONE 2026-08-14. Extracted the Region 5 event()-level interception
+          into widgets/region_focus_cycle.py (RegionFocusCycleMixin), applied
+          to all four QAbstractItemView-based region widgets. Both Shift+Tab
+          conventions (Key_Backtab, and Key_Tab+ShiftModifier) checked in one
+          place. Tests assert the handler itself fires, not just that focus
+          happened to land right - the old coincidence would pass a
+          focus-only assertion.
+[x] R2  models/ transitively imports PySide6 (music_data -> score_config ->
+        QStandardPaths), breaking the invariant main_window.py:52 relies on.
+        > DONE 2026-08-14. ScoreConfig dataclass + the VoiceKey/StaffKey
+          aliases moved to models/score_config_data.py (stdlib only);
+          persistence/score_config.py keeps the Qt-aware I/O AND the JSON
+          key codecs (how a tuple key is spelled in a file is a
+          serialisation concern, not part of the data shape) and re-exports
+          ScoreConfig, so every existing import site is unchanged.
+          test_models_package_does_not_import_qt in tests/test_harness.py
+          guards it - runs in a subprocess, since this test session already
+          has PySide6 loaded and in-process sys.modules can't attribute it.
+          Verified meaningful, not vacuous: importing models/* leaves 0
+          PySide6 modules loaded, importing persistence.score_config leaves 15.
+
+MEDIUM
+[ ] R3  QApplication.focusChanged connected in setup_ui, never disconnected -
+        destroyed windows keep receiving it (main_window.py:227)
+[ ] R4  TimelineBuilder: identical measure-number parse block x5, and four
+        separate _MeasureOffsetWalker passes over the first part
+[ ] R5  <part-name> read independently by MusicXMLReader and TimelineBuilder
+        and required to match verbatim - TimelineBuilder already receives
+        parts_info and can derive it instead of re-reading
+[ ] R6  MainWindow is a 1,469-line God object - split MenuBuilder /
+        PlaybackController / RegionRefresher; three duplicated
+        selectedIndexes idioms; nine near-identical navigation one-liners
+[ ] R7  Stale docs: metronome.py/position_announcer.py still describe the
+        removed .sf2.json sidecar; music_data.py:1150 says two reserved
+        channels when there are three
+[ ] R8  create_property_list's items parameter and population loop are dead -
+        both call sites pass []
+[ ] R9  Prose-to-code ratio 0.56 - keep the invariants in the code, move the
+        bug-investigation narratives to tasks.txt/commit messages
+
+LOW
+[ ] R10 _slice_is_navigable: latent IndexError for an out-of-range index with
+        the metronome on (music_data.py:260)
+[ ] R11 Region2ListWidget stores node_id via setData and never reads it back;
+        also the codebase's only unscoped Qt.UserRole
+[ ] R12 Unconditional [DEBUG] prints on the production load path
+        (musicXML_reader.py:22)
+[ ] R13 load_score_from_file silently no-ops while a load is in flight (no
+        cue at all for a screen-reader user); ScoreLoadThread instances are
+        parented and never deleteLater'd
+[ ] R14 MusicData.__post_init__ sets undeclared attributes on a dataclass -
+        attribute_order is public API missing from the field list
+[ ] R15 set_field(4, ...) hardcodes the playback status field index
+[ ] R16 SynthEngine._stop_group's list.remove releases the first matching
+        (channel, note) - a unison across two groups cuts the wrong one
+[ ] R17 _measure_start_quarters reads only the first direct-child <attributes>
+        per measure; build()'s walker applies them anywhere
+[ ] R18 latency_harness.py unused local 'app'; score_load_worker.py cites
+        improvements.txt, which is not in the repo
+
+
+###
 COVERAGE CHECK - every requirement appears at least once
   Ref  1 D2        Ref  8 A8,B4     Ref 15 F1,F2     Ref 22 H3,H4
   Ref  2 C5        Ref  9 A8,E10    Ref 16 A5,F3     Ref 23 K1

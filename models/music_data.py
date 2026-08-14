@@ -11,9 +11,9 @@ from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
 from models.performance_region_row import PerformanceRegionRow
 from models.repeat_span import RepeatSpan
+from models.score_config_data import ScoreConfig
 from models.tempo_change import TempoChange
 from parsers.timeline_builder import TimelineBuilder
-from persistence.score_config import ScoreConfig
 
 
 @dataclass

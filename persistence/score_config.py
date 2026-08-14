@@ -1,53 +1,27 @@
 # persistence/score_config.py
+"""Reading and writing a ScoreConfig (Ref 27) to its per-score .rsc file.
+
+R2: the ScoreConfig data shape itself lives in models/score_config_data.py,
+not here - this module imports PySide6 for QStandardPaths, and MusicData
+imports ScoreConfig, so keeping the dataclass here made every models/ import
+drag in the whole of Qt. ScoreConfig is re-exported below so callers can
+keep importing it from either place; the JSON key codecs stay here, since
+how a tuple key is spelled in a file is a serialisation concern rather than
+part of the data shape.
+"""
 import json
 import os
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Optional
 
 from PySide6.QtCore import QStandardPaths
 
-VoiceKey = Tuple[str, int, int]
-StaffKey = Tuple[str, int]
+from models.score_config_data import ScoreConfig, StaffKey, VoiceKey
 
-
-@dataclass
-class ScoreConfig:
-    """Per-file config (Ref 27): which part/staff/voice combinations are
-    switched off, which optional attributes are shown against notes in each
-    voice, the order those attributes render in, and whether the metronome
-    was on - everything MainWindow needs to restore a score to how the user
-    last left it. Deliberately excludes language (persistence/app_settings.py
-    - a global preference, not a per-file one).
-
-    parts_off/staves_off/voices_off are each that node's OWN toggle state,
-    independent of its ancestors - NOT "effectively active" (which would
-    conflate "this voice was individually switched off" with "this voice is
-    merely hidden because its part is off"). Reported bug, live-tested:
-    switching a part off with a sub-voice still individually on, then
-    reloading, used to bring the sub-voice back off too, because the only
-    thing persisted was a single flattened, ancestor-gated voice set that
-    couldn't tell those two cases apart. Region2HierarchyModel.
-    get_off_node_keys()/apply_off_node_keys() are the lossless read/write
-    side of this - MusicData.export_config()/apply_config() only fill in a
-    best-effort voices_off of their own (for standalone/test use with no
-    Region 2 widget at all), which MainWindow overwrites with the real
-    per-node sets before saving.
-
-    All three (not-an-on-list) and voice_display_attributes/attribute_order
-    filtered against the freshly-loaded score's own known parts/staves/
-    voices/attribute keys are what make loading best-effort: a saved entry
-    that no longer corresponds to anything in the current score is simply
-    dropped rather than rejecting the whole config."""
-
-    schema_version: int = 1
-    parts_off: Set[str] = field(default_factory=set)
-    staves_off: Set[StaffKey] = field(default_factory=set)
-    voices_off: Set[VoiceKey] = field(default_factory=set)
-    metronome_enabled: bool = False
-    position_announcer_enabled: bool = False
-    voice_display_attributes: Dict[VoiceKey, Set[str]] = field(default_factory=dict)
-    attribute_order: List[str] = field(default_factory=list)
+__all__ = [
+    "ScoreConfig", "StaffKey", "VoiceKey",
+    "config_dir", "path_for", "load_for", "save", "delete_for",
+]
 
 
 def _encode_voice_key(key: VoiceKey) -> str:
