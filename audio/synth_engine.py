@@ -141,9 +141,20 @@ class SynthEngine:
         self._fs.cc(PERFORMANCE_CUE_CHANNEL, 10, PAN_CENTER)
 
     def set_program(self, channel: int, program: int):
+        """Pin the channel to the main GM SoundFont explicitly via
+        program_select, not the plain program_change MIDI message. The
+        click/announcer/cue SoundFont (_load_click_soundfont) is loaded
+        after this one and happens to define presets at bank 0 / program
+        0-2 (GM's own Acoustic/Bright/Electric Grand Piano programs) -
+        program_change does a bank/program lookup across every loaded
+        SoundFont, most-recently-loaded first, so an un-pinned piano part
+        silently resolved to the click font's spoken-word samples instead
+        of the real GM piano preset (reported bug, live-tested: piano parts
+        producing no sound at all, since those samples only cover MIDI
+        pitches 60-69)."""
         if self._fs is None or self._sfid is None:
             return
-        self._fs.program_change(channel & 0x0F, max(0, min(127, program)))
+        self._fs.program_select(channel & 0x0F, self._sfid, 0, max(0, min(127, program)))
 
     # MIDI continuous-controller numbers for the two mixer parameters.
     VOLUME_CC = 7
