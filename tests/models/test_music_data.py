@@ -1147,6 +1147,8 @@ def test_export_then_apply_config_round_trips_full_state(
     md.move_attribute_order("octave", up=True)
     md.toggle_metronome()
     md.toggle_position_announcer()
+    md.mixer.set_volume("P1", 86)
+    md.mixer.set_pan("click", 0)
 
     config = md.export_config()
 
@@ -1158,6 +1160,27 @@ def test_export_then_apply_config_round_trips_full_state(
     assert fresh.attribute_order == md.attribute_order
     assert fresh.metronome_enabled is True
     assert fresh.position_announcer_enabled is True
+    assert fresh.mixer.volume_for("P1") == 86
+    assert fresh.mixer.pan_for("click") == 0
+
+
+def test_export_config_copies_the_mixer_not_alias_it(timeline, minimal_score):
+    """Wishlist #4: export_config()/apply_config() must hand back an
+    independent MixerSettings, or a later live edit to md.mixer (e.g. from
+    the Mixer dialog) would silently mutate an already-saved ScoreConfig."""
+    md = timeline(minimal_score)
+    md.mixer.set_volume("P1", 50)
+
+    config = md.export_config()
+    md.mixer.set_volume("P1", 10)
+
+    assert config.mixer.volume_for("P1") == 50
+
+    fresh = timeline(minimal_score)
+    fresh.apply_config(config)
+    fresh.mixer.set_volume("P1", 99)
+
+    assert config.mixer.volume_for("P1") == 50
 
 
 def test_apply_config_is_best_effort_against_a_mismatched_score(timeline, minimal_score):

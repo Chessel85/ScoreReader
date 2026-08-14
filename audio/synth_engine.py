@@ -96,8 +96,16 @@ class SynthEngine:
             self._fs.start(driver="wasapi")
 
             # Resolve SoundFont path
+            # TEST SWITCH (user-requested, wishlist #4 pan investigation):
+            # temporarily pointed at Airfont_380_final.sf2 instead of
+            # FluidR3_GM.sf2, to compare whether its instrument patches use
+            # the same baked-in dual hard-panned-zone stereo-width trick
+            # that defeats the Mixer dialog's channel pan on FluidR3_GM (see
+            # audio/synth_engine.py git history / the mixer-dialog pan
+            # investigation for the confirmed root cause). Revert to
+            # FluidR3_GM.sf2 here if this doesn't turn out better.
             if not soundfont_path:
-                soundfont_path = os.path.join(PROJECT_ROOT, "soundfonts", "FluidR3_GM.sf2")
+                soundfont_path = os.path.join(PROJECT_ROOT, "soundfonts", "Airfont_380_final.sf2")
 
             if os.path.exists(soundfont_path):
                 self._sfid = self._fs.sfload(soundfont_path)

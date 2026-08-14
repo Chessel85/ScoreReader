@@ -24,6 +24,7 @@ class Actions:
     open_folder: Optional[QAction] = None
     clear_preferences: Optional[QAction] = None
     performance_report: Optional[QAction] = None
+    mixer: Optional[QAction] = None
     first_measure: Optional[QAction] = None
     last_measure: Optional[QAction] = None
     goto_measure: Optional[QAction] = None
@@ -125,6 +126,14 @@ class MenuBuilder:
             "Performance &Report...", self.slots._show_performance_report_dialog
         )
         edit_menu.addAction(a.performance_report)
+
+        # Wishlist #4: volume/pan per instrument plus the click, position
+        # announcer and performance-cue channels.
+        a.mixer = self._action(
+            "&Mixer...", self.slots._show_mixer_dialog, "Ctrl+Shift+X",
+            status_tip="Set volume and pan for each instrument and sound",
+        )
+        edit_menu.addAction(a.mixer)
 
     def _navigation_menu(self, menu_bar, a: Actions) -> None:
         # Navigation duplicates, as menu items, the keyboard-only ways of

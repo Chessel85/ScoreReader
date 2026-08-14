@@ -1,5 +1,5 @@
 # controllers/playback_controller.py
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from PySide6.QtCore import QObject, Signal
 
@@ -8,6 +8,7 @@ from audio.performance_cue import PERFORMANCE_CUE_CHANNEL
 from audio.position_announcer import POSITION_ANNOUNCER_CHANNEL, announcement_event_for_beat
 from audio.sequencer import Sequencer
 from models import mixer_settings
+from models.mixer_settings import MixerSettings
 
 
 class PlaybackController(QObject):
@@ -49,6 +50,10 @@ class PlaybackController(QObject):
         # Groundwork for wishlist #7 (mute): consulted before anything
         # sounds. False throughout today, so every path is unchanged.
         self._muted = False
+        # Mixer dialog edit-session state (begin/set/commit/cancel_mixer_edit
+        # below) - None outside of an open dialog.
+        self._mixer_edit_original: Optional[MixerSettings] = None
+        self._mixer_edit_working: Optional[MixerSettings] = None
 
     @property
     def music_data(self):
@@ -69,15 +74,17 @@ class PlaybackController(QObject):
         if muted:
             self.synth.stop_all_notes()
 
-    def attach_score(self, music_data, mixer=None) -> None:
+    def attach_score(self, music_data) -> None:
         """Called on every load: stop whatever the previous score was doing,
-        build that score's own Sequencer, and push any saved mixer state."""
+        build that score's own Sequencer, and push the score's own saved
+        mixer state (music_data.mixer - already populated by apply_config()
+        before this runs, see main_window.py's _on_score_loaded)."""
         if self.sequencer is not None:
             self.sequencer.stop()
         self.sequencer = Sequencer(music_data, self.synth, parent=self)
         self.sequencer.step_played.connect(self._on_sequencer_step)
         self.sequencer.finished.connect(self._on_sequencer_finished)
-        self.apply_mixer(mixer)
+        self.apply_mixer(music_data.mixer)
 
     def apply_mixer(self, mixer) -> None:
         """Wishlist #4: push a score's saved volume/pan overrides onto their
@@ -111,6 +118,108 @@ class PlaybackController(QObject):
             pan = mixer.pan_for(key)
             if pan is not None:
                 self.synth.set_channel_pan(channel, pan)
+
+    # --- mixer dialog (wishlist #4) -----------------------------------
+
+    def mixer_rows(self) -> List[Tuple[str, str, int]]:
+        """(key, label, channel) for every mixer-controllable channel: each
+        real instrument part, in parts_info order, plus the click, position
+        announcer and performance-cue channels. The Mixer dialog's list is
+        built from this."""
+        rows: List[Tuple[str, str, int]] = []
+        if self.music_data:
+            for part in self.music_data.parts_info:
+                rows.append((part.part_id, part.name, self.music_data.get_channel_for_part(part.part_id)))
+        rows.append((mixer_settings.CLICK, "Metronome", METRONOME_CHANNEL))
+        rows.append((mixer_settings.ANNOUNCER, "Position Announcer", POSITION_ANNOUNCER_CHANNEL))
+        rows.append((mixer_settings.CUE, "Performance Cue", PERFORMANCE_CUE_CHANNEL))
+        return rows
+
+    def _mixer_channel(self, key: str) -> Optional[int]:
+        for row_key, _, channel in self.mixer_rows():
+            if row_key == key:
+                return channel
+        return None
+
+    def begin_mixer_edit(self) -> List[Tuple[str, str, int, int]]:
+        """Opens a Mixer dialog edit session: snapshots the score's current
+        mixer twice - once untouched (for cancel_mixer_edit to revert to),
+        once as the working copy set_mixer_volume/set_mixer_pan mutate -
+        and returns (key, label, volume_percent, pan_percent) per row for
+        MixerDialog to display. A row with no override shows the channel's
+        REAL current default (100% volume everywhere; 0% pan for a part,
+        but the click/announcer's own hard-right/hard-left pan - see
+        mixer_settings.default_pan_for), not an arbitrary placeholder."""
+        if not self.music_data:
+            return []
+        self._mixer_edit_original = self.music_data.mixer.copy()
+        self._mixer_edit_working = self.music_data.mixer.copy()
+        rows = []
+        for key, label, _ in self.mixer_rows():
+            volume_cc = self._mixer_edit_working.volume_for(key)
+            if volume_cc is None:
+                volume_cc = mixer_settings.DEFAULT_VOLUME
+            pan_cc = self._mixer_edit_working.pan_for(key)
+            if pan_cc is None:
+                pan_cc = mixer_settings.default_pan_for(key)
+            rows.append((
+                key, label,
+                mixer_settings.cc_to_volume_percent(volume_cc),
+                mixer_settings.cc_to_pan_percent(pan_cc),
+            ))
+        return rows
+
+    def set_mixer_volume(self, key: str, percent: int) -> None:
+        """Live preview: pushed to the synth immediately, and recorded on
+        the working copy - music_data.mixer itself isn't touched until
+        commit_mixer_edit (OK)."""
+        if self._mixer_edit_working is None:
+            return
+        cc = mixer_settings.volume_percent_to_cc(percent)
+        self._mixer_edit_working.set_volume(key, cc)
+        channel = self._mixer_channel(key)
+        if channel is not None:
+            self.synth.set_channel_volume(channel, cc)
+
+    def set_mixer_pan(self, key: str, percent: int) -> None:
+        """Pan counterpart of set_mixer_volume - same live-preview shape."""
+        if self._mixer_edit_working is None:
+            return
+        cc = mixer_settings.pan_percent_to_cc(percent)
+        self._mixer_edit_working.set_pan(key, cc)
+        channel = self._mixer_channel(key)
+        if channel is not None:
+            self.synth.set_channel_pan(channel, cc)
+
+    def commit_mixer_edit(self) -> None:
+        """OK: the working copy becomes the score's real mixer - already
+        fully live on the synth from set_mixer_volume/set_mixer_pan's
+        incremental pushes, so there is nothing further to send."""
+        if self.music_data and self._mixer_edit_working is not None:
+            self.music_data.mixer = self._mixer_edit_working
+        self._mixer_edit_original = None
+        self._mixer_edit_working = None
+
+    def cancel_mixer_edit(self) -> None:
+        """Cancel: put the synth back exactly as it was before the dialog
+        opened. Every mixer-controllable channel is resent unconditionally,
+        not just ones touched this session - a live preview may have pushed
+        CC to a channel that had no prior override at all, and apply_mixer()
+        alone would skip resending anything for such a channel. music_data.
+        mixer is left untouched throughout."""
+        if self.music_data and self._mixer_edit_original is not None:
+            original = self._mixer_edit_original
+            for key, _, channel in self.mixer_rows():
+                volume_cc = original.volume_for(key)
+                self.synth.set_channel_volume(
+                    channel, volume_cc if volume_cc is not None else mixer_settings.DEFAULT_VOLUME
+                )
+                pan_cc = original.pan_for(key)
+                self.synth.set_channel_pan(
+                    channel, pan_cc if pan_cc is not None else mixer_settings.default_pan_for(key)
+                )
+        self._mixer_edit_original = None
+        self._mixer_edit_working = None
 
     # --- transport ---------------------------------------------------
 

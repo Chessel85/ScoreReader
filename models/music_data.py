@@ -7,6 +7,7 @@ from models.ending_span import EndingSpan
 from models.event_slice import EventSlice
 from models.hairpin_span import HairpinSpan
 from models.key_signatures import FIFTHS_MAP
+from models.mixer_settings import MixerSettings
 from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
 from models.performance_region_row import PerformanceRegionRow
@@ -82,6 +83,15 @@ class MusicData:
     # event already exists and never create one, so there is nothing to
     # splice in or out.
     position_announcer_enabled: bool = False
+
+    # Wishlist #4: per-score volume/pan overrides, live on MusicData like
+    # every other per-score setting above - export_config()/apply_config()
+    # carry it the same way, so it survives a load/save round trip instead
+    # of being read once at load and discarded (which is what happened
+    # before this field existed: PlaybackController.attach_score received a
+    # mixer only as a local variable, and the next save silently wrote back
+    # an empty one).
+    mixer: MixerSettings = field(default_factory=MixerSettings)
 
     # F4/D-6: UK vs US terminology. main_window.py owns the real startup
     # default (OS-locale-detected) and re-applies it after every load, since
@@ -796,6 +806,7 @@ class MusicData:
                 k: set(v) for k, v in self.voice_display_attributes.items()
             },
             attribute_order=list(self.attribute_order),
+            mixer=self.mixer.copy(),
         )
 
     def apply_config(self, config: ScoreConfig) -> None:
@@ -820,6 +831,7 @@ class MusicData:
 
         self.set_metronome_enabled(config.metronome_enabled)
         self.set_position_announcer_enabled(config.position_announcer_enabled)
+        self.mixer = config.mixer.copy()
 
     def get_midi_notes_for_indices(self, selected_indices: List[int]) -> List[int]:
         notes = self._visible_notes()

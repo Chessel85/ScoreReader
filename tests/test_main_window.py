@@ -13,6 +13,7 @@ from main_window import MainWindow, detect_default_uk_terms
 from widgets.about_dialog import AboutDialog
 from widgets.attribute_order_dialog import AttributeOrderDialog
 from widgets.goto_measure_dialog import GotoMeasureDialog
+from widgets.mixer_dialog import MixerDialog
 from widgets.tempo_offset_dialog import TempoOffsetDialog
 
 
@@ -1010,6 +1011,119 @@ def test_attribute_order_persists_per_file_not_across_different_files(
 
     load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
     assert window._music_data.attribute_order[0] == "octave"
+
+
+# --- Wishlist #4: Mixer dialog ------------------------------------------
+
+def _fake_mixer_dialog(monkeypatch, window, *, accept: bool, on_exec=None):
+    """Builds a real MixerDialog from the window's own current rows, fakes
+    exec() to optionally run on_exec(dialog) (e.g. emit a signal, matching
+    the AttributeOrderDialog injection convention above) and then return
+    Accepted/Rejected, and patches main_window.MixerDialog to hand it back
+    regardless of constructor args."""
+    dialog = MixerDialog(window, rows=window.playback.begin_mixer_edit())
+
+    def fake_exec():
+        if on_exec is not None:
+            on_exec(dialog)
+        return QDialog.DialogCode.Accepted if accept else QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(dialog, "exec", fake_exec)
+    monkeypatch.setattr("main_window.MixerDialog", lambda parent, rows: dialog)
+    return dialog
+
+
+def test_mixer_dialog_rows_cover_every_part_plus_click_announcer_and_cue(
+    window, qtbot, score_duet
+):
+    load_and_wait(window, qtbot, score_duet)
+
+    rows = window.playback.begin_mixer_edit()
+
+    assert [label for _, label, _, _ in rows] == [
+        "Piano", "Classical Guitar", "Metronome", "Position Announcer", "Performance Cue",
+    ]
+    # No saved mixer yet: every row shows the real engine default, not a
+    # placeholder - parts/cue centred, click hard right, announcer hard left.
+    assert [pan for _, _, _, pan in rows] == [0, 0, 100, -100, 0]
+
+
+def test_mixer_dialog_ok_commits_and_persists_the_change(window, qtbot, minimal_score, monkeypatch):
+    load_and_wait(window, qtbot, minimal_score)
+    part_id = window._music_data.parts_info[0].part_id
+
+    def edit(dialog):
+        dialog.row_list.setCurrentRow(0)
+        dialog.volume_spin.setValue(68)
+        dialog.pan_spin.setValue(-100)
+
+    dialog = _fake_mixer_dialog(monkeypatch, window, accept=True, on_exec=edit)
+    window._show_mixer_dialog()
+
+    # Volume is a perceived-loudness multiplier of the default (100 CC),
+    # via a sqrt curve compensating FluidSynth's own audio-taper CC7
+    # response - 68% -> round(100 * sqrt(0.68)) == 82.
+    assert window._music_data.mixer.volume_for(part_id) == 82
+    assert window._music_data.mixer.pan_for(part_id) == 0      # -100% -> full left CC 0
+    assert (0, 82) in window.synth.volume_changes
+    assert (0, 0) in window.synth.pan_changes
+
+    # Ref 27-style persistence: reload the same file and the override
+    # must still be there (load_score_from_file saves the outgoing file's
+    # config before swapping, same mechanism attribute_order relies on).
+    load_and_wait(window, qtbot, minimal_score)
+    assert window._music_data.mixer.volume_for(part_id) == 82
+
+
+def test_mixer_dialog_cancel_reverts_the_synth_and_leaves_the_mixer_untouched(
+    window, qtbot, minimal_score, monkeypatch
+):
+    load_and_wait(window, qtbot, minimal_score)
+    part_id = window._music_data.parts_info[0].part_id
+    channel = window._music_data.get_channel_for_part(part_id)
+
+    def edit(dialog):
+        dialog.row_list.setCurrentRow(0)
+        dialog.volume_spin.setValue(20)  # live-previewed, never committed
+
+    dialog = _fake_mixer_dialog(monkeypatch, window, accept=False, on_exec=edit)
+    window._show_mixer_dialog()
+
+    assert window._music_data.mixer.is_empty()
+    # The live preview did push a CC while the dialog was open - 20% via the
+    # sqrt curve is round(100 * sqrt(0.2)) == 45.
+    assert (channel, 45) in window.synth.volume_changes
+    # ...and cancelling explicitly put the channel back to its true default -
+    # cancel_mixer_edit resends every row, not just this one, so check the
+    # revert batch (the calls made after the live-preview one) rather than
+    # assuming this channel's revert is the very last entry overall.
+    revert_calls = window.synth.volume_changes[window.synth.volume_changes.index((channel, 45)) + 1:]
+    assert (channel, 100) in revert_calls
+
+
+def test_mixer_dialog_preview_plays_without_moving_the_main_cursor(
+    window, qtbot, minimal_score, monkeypatch
+):
+    """Alt+P / the Preview button reuses PlaybackController.audition_phrase
+    (Ref 11) - update_cursor=False, so the main timeline cursor and Region 3
+    selection are untouched by opening the Mixer and previewing from it."""
+    load_and_wait(window, qtbot, minimal_score)
+    cursor_before = window._music_data.active_event_index
+    window.synth.played.clear()
+
+    dialog = _fake_mixer_dialog(
+        monkeypatch, window, accept=True, on_exec=lambda d: d.preview_requested.emit()
+    )
+    window._show_mixer_dialog()
+
+    assert window.synth.played != []
+    assert window._music_data.active_event_index == cursor_before
+
+
+def test_mixer_dialog_does_nothing_with_no_score_loaded(window, qtbot):
+    """Guards the same way _show_performance_report_dialog does - opening
+    the Mixer before any file is loaded must not crash."""
+    window._show_mixer_dialog()
 
 
 def test_f_s_d_shortcuts_fire_from_any_region(window, qtbot, minimal_score):

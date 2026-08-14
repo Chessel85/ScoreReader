@@ -31,6 +31,7 @@ from widgets.about_dialog import AboutDialog
 from widgets.attribute_order_dialog import AttributeOrderDialog
 from widgets.goto_measure_dialog import GotoMeasureDialog
 from widgets.menu_builder import MenuBuilder, goto_measure_action_text
+from widgets.mixer_dialog import MixerDialog
 from widgets.performance_report_dialog import PerformanceReportDialog
 from widgets.region2_list_widget import Region2ListWidget
 from widgets.region2_manager import node_breadcrumb
@@ -240,6 +241,7 @@ class MainWindow(QMainWindow):
         # the window already use.
         self.clear_preferences_action = actions.clear_preferences
         self.performance_report_action = actions.performance_report
+        self.mixer_action = actions.mixer
         self.first_measure_action = actions.first_measure
         self.last_measure_action = actions.last_measure
         self.goto_measure_action = actions.goto_measure
@@ -368,9 +370,7 @@ class MainWindow(QMainWindow):
         self.persistence.refresh_clear_action()
 
         self.presenter.reset_performance_labels()
-        self.playback.attach_score(
-            music_data, mixer=saved_config.mixer if saved_config is not None else None
-        )
+        self.playback.attach_score(music_data)
 
         # Suppress the initial audition when there's a config to restore,
         # and fire it once Region 2's restored state is actually in effect -
@@ -654,6 +654,27 @@ class MainWindow(QMainWindow):
             self, lines=self._music_data.get_performance_report_lines()
         )
         dialog.exec()
+        if previous_focus is not None:
+            previous_focus.setFocus()
+
+    def _show_mixer_dialog(self):
+        """Wishlist #4. rows/commit/cancel all live on PlaybackController -
+        this dialog is a pure view (see widgets/mixer_dialog.py's own
+        docstring), so the only thing this method does is wire its signals
+        and decide commit vs. revert from exec()'s result."""
+        if not self._music_data:
+            return
+        previous_focus = self.focusWidget()
+        dialog = MixerDialog(self, rows=self.playback.begin_mixer_edit())
+        dialog.volume_changed.connect(self.playback.set_mixer_volume)
+        dialog.pan_changed.connect(self.playback.set_mixer_pan)
+        dialog.preview_requested.connect(self.playback.audition_phrase)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.playback.commit_mixer_edit()
+        else:
+            self.playback.cancel_mixer_edit()
+        if self.sequencer is not None and (self.sequencer.is_playing or self.sequencer.is_paused):
+            self.playback.stop()
         if previous_focus is not None:
             previous_focus.setFocus()
 

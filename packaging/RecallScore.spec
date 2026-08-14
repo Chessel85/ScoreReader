@@ -25,9 +25,17 @@ PACKAGING_DIR = SPECPATH
 
 datas = [
     (os.path.join(REPO_ROOT, "bin", "*.dll"), "bin"),
-    (os.path.join(REPO_ROOT, "soundfonts", "FluidR3_GM.sf2"), "soundfonts"),
+    # Airfont_380_final.sf2, not FluidR3_GM.sf2: switched as the app's
+    # default (audio/synth_engine.py) after FluidR3_GM's piano/viola
+    # patches turned out to bake in a dual hard-left/hard-right zone layer
+    # per note (a common GM soundfont "stereo width" trick) that defeated
+    # the Mixer dialog's channel pan (wishlist #4) - confirmed by parsing
+    # both .sf2 files' own generator data, and live-tested against
+    # Airfont_380's differently-built piano/viola patches, which pan
+    # correctly.
+    (os.path.join(REPO_ROOT, "soundfonts", "Airfont_380_final.sf2"), "soundfonts"),
     # Click metronome/position announcer sounds (Ref 14/28, tasks.txt
-    # E11/D-14) - unlike FluidR3_GM.sf2 above, this one IS checked into
+    # E11/D-14) - unlike the main soundfont above, this one IS checked into
     # git (.gitignore has an explicit exception for it - it's a few
     # hundred KB, project-authored via tools/wav_to_sf2.py, not a 148 MB
     # third-party download) but still needs bundling explicitly since

@@ -18,9 +18,17 @@ class NullSynth:
         self.clicks: List[Dict[str, Any]] = []
         self.words: List[Dict[str, Any]] = []
         self.performance_cues: List[Dict[str, Any]] = []
+        self.volume_changes: List[tuple] = []
+        self.pan_changes: List[tuple] = []
 
     def set_program(self, channel: int, program: int) -> None:
         self.program_changes.append((channel, program))
+
+    def set_channel_volume(self, channel: int, value: int) -> None:
+        self.volume_changes.append((channel, value))
+
+    def set_channel_pan(self, channel: int, value: int) -> None:
+        self.pan_changes.append((channel, value))
 
     def stop_all_notes(self) -> None:
         self.stop_count += 1

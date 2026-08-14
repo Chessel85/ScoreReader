@@ -36,12 +36,15 @@ pyfluidsynth (Python binding, vendored via pip into the frozen bundle)
   License: GNU Lesser General Public License v2.1 or later (LGPL-2.1+)
   https://github.com/nwhitehead/pyfluidsynth
 
-FluidR3_GM.sf2 (SoundFont, General MIDI instrument samples)
-  Author: Frank Wen (release archive originally distributed as "FluidR3
-  GM"). This build does not carry the original license text bundled
-  upstream with the .sf2 - if you redistribute this installer, attach the
-  soundfont's own license file alongside this notice rather than relying on
-  this summary.
+Airfont_380_final.sf2 (SoundFont, General MIDI instrument samples)
+  A freely-distributed third-party SoundFont; exact author/license terms
+  not yet confirmed for this notice - resolve and fill in before this
+  installer is redistributed. This build does not carry any original
+  license text bundled upstream with the .sf2 - attach the soundfont's own
+  license file alongside this notice rather than relying on this summary.
+  (Replaces FluidR3_GM.sf2, formerly bundled here, dropped after Ref 4's
+  Mixer dialog investigation found its instrument patches bake in a stereo-
+  width trick that defeats per-channel pan control.)
 
 PySide6 / Qt (LGPL-3.0, dynamically linked via the Qt for Python wheels) and
 music21 (BSD-3-Clause) are also embedded but are Python packages, not
