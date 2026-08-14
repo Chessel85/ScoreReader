@@ -15,7 +15,7 @@ from typing import Optional, Tuple
 # attempts (a synthesized sawtooth lead, then GM percussion Claves with
 # velocity distinguishing the accent) before landing here - a small
 # project-authored soundfont (tools/wav_to_sf2.py, built from
-# tools/config.ini, checked into soundfonts/recall_score_sounds.sf2/.json
+# tools/config.ini, checked into soundfonts/recall_score_sounds.sf2
 # despite soundfonts/ otherwise being gitignored - see .gitignore's own
 # comment). SynthEngine loads it as a SECOND soundfont alongside
 # FluidR3_GM and selects it explicitly via program_select on
@@ -41,10 +41,14 @@ def click_event_for_beat(beat_position: float) -> Optional[Tuple[int, int, int, 
     position, or None if beat_position isn't a whole beat - main beats are
     always whole numbers in the score's own ts-relative units (Ref 18), so
     this is the same test for "is this a beat" everywhere it's needed.
-    Duration isn't decided here: SynthEngine.play_click looks each
-    sample's own natural duration up from the sidecar
-    soundfonts/recall_score_sounds.sf2.json this module has no need to
-    know about (keeps this function a pure lookup, no file I/O)."""
+
+    Duration isn't decided here, and isn't decided anywhere: each click zone
+    is a one-shot, non-looping sample, and FluidSynth retires such a voice
+    by itself once the sample data runs out, with no note-off needed. (R7:
+    this used to describe SynthEngine.play_click reading per-sample
+    durations from a sidecar soundfonts/recall_score_sounds.sf2.json - that
+    sidecar was removed along with the scheduling it fed, see play_click's
+    own comment. The description outlived the mechanism.)"""
     if not float(beat_position).is_integer():
         return None
     pitch = METRONOME_ACCENT_NOTE if beat_position == 1 else METRONOME_OFFBEAT_NOTE

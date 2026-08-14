@@ -1560,43 +1560,114 @@ HIGH
           PySide6 modules loaded, importing persistence.score_config leaves 15.
 
 MEDIUM
-[ ] R3  QApplication.focusChanged connected in setup_ui, never disconnected -
+[x] R3  QApplication.focusChanged connected in setup_ui, never disconnected -
         destroyed windows keep receiving it (main_window.py:227)
-[ ] R4  TimelineBuilder: identical measure-number parse block x5, and four
+        > DONE 2026-08-14. _disconnect_focus_tracking(), called from
+          closeEvent, guarded by a _focus_tracking_connected flag rather than
+          try/except: closeEvent legitimately runs twice (an explicit close()
+          then fixture teardown, as two tests do) and PySide6 does NOT raise
+          on a stale disconnect - it emits a RuntimeWarning and carries on,
+          so an except clause would never have caught it. The suite now runs
+          clean under -W error::RuntimeWarning.
+[x] R4  TimelineBuilder: identical measure-number parse block x5, and four
         separate _MeasureOffsetWalker passes over the first part
-[ ] R5  <part-name> read independently by MusicXMLReader and TimelineBuilder
+        > DONE 2026-08-14. _measure_number()/_raw_measure_number() module
+          helpers replace all five hand-written copies. _measure_start_quarters,
+          _tempo_changes, _repeat_and_ending_spans and _hairpin_spans collapse
+          into one _scan_first_part() returning a _FirstPartScan, with
+          _step_barline/_step_wedge as per-element helpers (-148 lines).
+          Verified behaviour-preserving by diffing slices, tempo_changes,
+          repeat/ending/hairpin spans, beat_markers and total_measures between
+          the pre- and post-refactor parsers across all 44 scores in files/,
+          examples/ and tests/fixtures/: zero differences.
+[x] R5  <part-name> read independently by MusicXMLReader and TimelineBuilder
         and required to match verbatim - TimelineBuilder already receives
         parts_info and can derive it instead of re-reading
+        > DONE 2026-08-14. TimelineBuilder._part_names() derives from
+          parts_info when present, keeping the etree read only for the
+          no-reader path (MusicData(file_path=...) built directly, which has
+          no parts_info). Agreement is now structural rather than a convention
+          to remember. Two regression tests: one hands TimelineBuilder a
+          parts_info the file itself contradicts (proving the XML is no longer
+          consulted), one covers the fallback. Re-checked end to end on the
+          Korean-<part-name> bourree - the report shows 492 notes, not 0.
 [ ] R6  MainWindow is a 1,469-line God object - split MenuBuilder /
         PlaybackController / RegionRefresher; three duplicated
         selectedIndexes idioms; nine near-identical navigation one-liners
-[ ] R7  Stale docs: metronome.py/position_announcer.py still describe the
+[x] R7  Stale docs: metronome.py/position_announcer.py still describe the
         removed .sf2.json sidecar; music_data.py:1150 says two reserved
         channels when there are three
-[ ] R8  create_property_list's items parameter and population loop are dead -
+        > DONE 2026-08-14. Both docstrings now state the real mechanism (a
+          one-shot sample retires itself; no note-off scheduling anywhere) and
+          say explicitly that the sidecar description outlived the sidecar.
+          The remaining .sf2.json mentions in synth_engine.py and
+          tools/wav_to_sf2.py are correct - they document the removal.
+[x] R8  create_property_list's items parameter and population loop are dead -
         both call sites pass []
+        > DONE 2026-08-14. Parameter and loop removed, both call sites
+          updated. Population is _populate_table's job and always was.
 [ ] R9  Prose-to-code ratio 0.56 - keep the invariants in the code, move the
         bug-investigation narratives to tasks.txt/commit messages
 
 LOW
-[ ] R10 _slice_is_navigable: latent IndexError for an out-of-range index with
+[x] R10 _slice_is_navigable: latent IndexError for an out-of-range index with
         the metronome on (music_data.py:260)
-[ ] R11 Region2ListWidget stores node_id via setData and never reads it back;
+        > DONE 2026-08-14. Given its own bounds check -
+          _slice_has_visible_notes returns False for both "out of range" and
+          "in range but nothing visible", so the guard could never have been
+          inherited from it.
+[x] R11 Region2ListWidget stores node_id via setData and never reads it back;
         also the codebase's only unscoped Qt.UserRole
-[ ] R12 Unconditional [DEBUG] prints on the production load path
+        > DONE 2026-08-14. Removed; current_node() resolves a row through
+          _current_visible_nodes, which is built from the same list in the
+          same order.
+[x] R12 Unconditional [DEBUG] prints on the production load path
         (musicXML_reader.py:22)
+        > DONE 2026-08-14. Both removed. In a release build stdout is the
+          log file under %LOCALAPPDATA% (main.py's
+          _redirect_stdio_if_headless) - the one place a real error report
+          has to stay legible.
 [ ] R13 load_score_from_file silently no-ops while a load is in flight (no
         cue at all for a screen-reader user); ScoreLoadThread instances are
         parented and never deleteLater'd
-[ ] R14 MusicData.__post_init__ sets undeclared attributes on a dataclass -
+[x] R14 MusicData.__post_init__ sets undeclared attributes on a dataclass -
         attribute_order is public API missing from the field list
-[ ] R15 set_field(4, ...) hardcodes the playback status field index
-[ ] R16 SynthEngine._stop_group's list.remove releases the first matching
+        > DONE 2026-08-14. attribute_order is now a declared field
+          (default_factory=list, since DISPLAY_ATTRIBUTE_ORDER isn't bound yet
+          at field-definition time); __post_init__ fills it only when empty,
+          so a caller-supplied order is honoured. The private caches
+          (_beat_markers, _real_timeline_slices, the visibility caches) stay
+          undeclared deliberately - internal, not API.
+[x] R15 set_field(4, ...) hardcodes the playback status field index
+        > DONE 2026-08-14. StatusBarWidget exposes named field indices
+          (POSITION_FIELD .. POSITION_ANNOUNCER_FIELD); MainWindow uses
+          PLAYBACK_FIELD.
+[x] R16 SynthEngine._stop_group's list.remove releases the first matching
         (channel, note) - a unison across two groups cuts the wrong one
-[ ] R17 _measure_start_quarters reads only the first direct-child <attributes>
+        > DONE 2026-08-14. Reference-counted: the group's claim is removed
+          from _active_notes, and noteoff is sent only once no other live
+          group still holds that (channel, note). New tests/audio/
+          test_synth_engine.py covers the unison case, the ordinary case and
+          the no-engine path - instances built via object.__new__ with a
+          recording stand-in for _fs, since conftest blocks real engine
+          construction (D-7).
+[x] R17 _measure_start_quarters reads only the first direct-child <attributes>
         per measure; build()'s walker applies them anywhere
-[ ] R18 latency_harness.py unused local 'app'; score_load_worker.py cites
+        > DONE 2026-08-14, as part of R4's consolidation. Measure LENGTH is
+          computed from the signature snapshotted at the measure's first
+          <attributes> (a time signature change takes effect at a barline);
+          every other consumer reads the walker's live value, so a mid-measure
+          <attributes> still affects offsets after it. Same behaviour as
+          before, but now one explicit decision instead of two methods
+          accidentally disagreeing.
+[x] R18 latency_harness.py unused local 'app'; score_load_worker.py cites
         improvements.txt, which is not in the repo
+        > DONE 2026-08-14. The QCoreApplication must be held (its QTimers
+          and the jitter measurement's QEventLoop depend on it), so it is now
+          asserted against QCoreApplication.instance() rather than left as a
+          bare unused local. Stale improvements.txt reference dropped. Also
+          removed an unused pytest import in test_timeline_characterisation.py
+          - pyflakes is now completely clean across the project.
 
 
 ###

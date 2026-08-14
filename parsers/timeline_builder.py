@@ -1,5 +1,6 @@
 # parsers/timeline_builder.py
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from models.duration_units import beat_unit_display_name, beat_unit_quarter_length
@@ -17,6 +18,28 @@ from parsers.xml_source import read_musicxml_root
 def _duration_divs(elem) -> int:
     dur_el = elem.find("duration")
     return int(dur_el.text.strip()) if (dur_el is not None and dur_el.text) else 0
+
+
+def _raw_measure_number(measure_elem) -> int:
+    """The <measure number="..."> attribute as an int, defaulting to 1 for a
+    missing or non-numeric one (MusicXML permits things like "X1" for an
+    editorially-added bar)."""
+    try:
+        return int(measure_elem.attrib.get("number", "1"))
+    except ValueError:
+        return 1
+
+
+def _measure_number(measure_elem, needs_reindex: bool) -> int:
+    """R4: the measure number this app uses, i.e. the raw one shifted down by
+    one when a pickup bar has to become measure 0 (Ref 17).
+
+    This five-line read used to be written out by hand in all five passes
+    over the document. They were identical, which meant a change to the
+    pickup convention had to be made five times and correctly each time -
+    exactly the kind of drift the part-name duplication (R5) had already
+    caused a real bug with."""
+    return _raw_measure_number(measure_elem) - 1 if needs_reindex else _raw_measure_number(measure_elem)
 
 
 def _apply_attributes(
@@ -96,6 +119,23 @@ class _MeasureOffsetWalker:
         return None
 
 
+@dataclass
+class _FirstPartScan:
+    """Everything one walk of the first <part> produces (R4).
+
+    Exists so _scan_first_part can return five related results without a
+    five-element tuple at the call site - and so the per-element helpers
+    (_step_barline/_step_wedge) have somewhere to append to as they go.
+    """
+
+    measure_start_quarters: Dict[int, float] = field(default_factory=dict)
+    measure_ts_fifths: Dict[int, Tuple[int, int, int]] = field(default_factory=dict)
+    tempo_changes: List[TempoChange] = field(default_factory=list)
+    repeat_spans: List[RepeatSpan] = field(default_factory=list)
+    ending_spans: List[EndingSpan] = field(default_factory=list)
+    hairpin_spans: List[HairpinSpan] = field(default_factory=list)
+
+
 class TimelineBuilder:
     """Builds the flat, sorted EventSlice timeline for a MusicXML file.
 
@@ -142,6 +182,37 @@ class TimelineBuilder:
         # measure (rests are skipped entirely from timeline_slices).
         self.total_measures: int = 0
 
+    def _part_names(self, root, default_part_name: str) -> Dict[str, str]:
+        """part_id -> the name shown against every note of that part.
+
+        R5: taken from parts_info when the caller has it (i.e. every real
+        app load, where MusicXMLReader has already read the part list),
+        rather than re-reading <part-list>/<score-part>/<part-name> here.
+        The two reads used to be independent and were required to agree
+        exactly - CLAUDE.md documented that as a standing invariant after
+        they diverged once and made the Performance Report show "0 notes"
+        for a fully-noted part (a MuseScore export whose <part-name> is
+        Korean; one reader filtered non-ASCII names, the other didn't).
+        Deriving the names removes the invariant instead of restating it.
+
+        The etree fallback below is still needed for the no-reader path:
+        MusicData(file_path=...) built directly (timeline tests, and
+        TimelineBuilder's own fast path) has no parts_info at all.
+        """
+        if self.parts_info:
+            return {p.part_id: p.name for p in self.parts_info}
+
+        part_names: Dict[str, str] = {}
+        for sp in root.findall(".//part-list/score-part"):
+            sp_id = sp.attrib.get("id", "")
+            name_elem = sp.find("part-name")
+            part_names[sp_id] = (
+                name_elem.text.strip()
+                if name_elem is not None and name_elem.text
+                else default_part_name
+            )
+        return part_names
+
     def build(self) -> List[EventSlice]:
         root = self._root
         if root is None:
@@ -152,24 +223,16 @@ class TimelineBuilder:
                 return []
 
         default_part_name = self.parts_info[0].name if self.parts_info else "Classical Guitar"
-
-        part_names: Dict[str, str] = {}
-        for sp in root.findall(".//part-list/score-part"):
-            sp_id = sp.attrib.get("id", "")
-            name_elem = sp.find("part-name")
-            part_names[sp_id] = (
-                name_elem.text.strip() if name_elem is not None and name_elem.text else default_part_name
-            )
+        part_names = self._part_names(root, default_part_name)
 
         first_measure_number, needs_reindex, pickup_filled_quarters = self._detect_pickup(root)
-        measure_start_quarters, measure_ts_fifths = self._measure_start_quarters(
-            root, needs_reindex, pickup_filled_quarters
-        )
-        self.tempo_changes = self._tempo_changes(root, needs_reindex, measure_start_quarters)
-        self.repeat_spans, self.ending_spans = self._repeat_and_ending_spans(root, needs_reindex)
-        self.hairpin_spans = self._hairpin_spans(
-            root, needs_reindex, measure_start_quarters, pickup_filled_quarters
-        )
+        scan = self._scan_first_part(root, needs_reindex, pickup_filled_quarters)
+        measure_start_quarters = scan.measure_start_quarters
+        measure_ts_fifths = scan.measure_ts_fifths
+        self.tempo_changes = scan.tempo_changes
+        self.repeat_spans = scan.repeat_spans
+        self.ending_spans = scan.ending_spans
+        self.hairpin_spans = scan.hairpin_spans
         self.total_measures = max(measure_start_quarters.keys()) if measure_start_quarters else 0
 
         buckets: Dict[Tuple[int, float], List[NoteData]] = {}
@@ -188,13 +251,7 @@ class TimelineBuilder:
             full_bar_quarters = time_sig_num * beat_unit_quarter_len
 
             for m in part.findall("measure"):
-                m_attr_num = m.attrib.get("number", "1")
-                try:
-                    raw_m_num = int(m_attr_num)
-                except ValueError:
-                    raw_m_num = 1
-
-                m_num = raw_m_num - 1 if needs_reindex else raw_m_num
+                m_num = _measure_number(m, needs_reindex)
 
                 walker = _MeasureOffsetWalker(divisions, time_sig_num, time_sig_den, fifths)
                 # F3/Ref 16 AC3: a MuseScore-style dynamics mark is a
@@ -441,103 +498,198 @@ class TimelineBuilder:
                 beat += 1.0
         return markers
 
-    def _measure_start_quarters(
+    def _scan_first_part(
         self, root, needs_reindex: bool, pickup_filled_quarters: float
-    ) -> Tuple[Dict[int, float], Dict[int, Tuple[int, int, int]]]:
-        """E4: real elapsed quarters-from-piece-start at which each measure
-        begins, independent of any part's own note content - notes within a
-        measure already carry their own quarter offset from the start of
-        that measure (offset_q, the same value used as half the (measure,
-        offset) bucket key above), so adding this gives absolute timing.
+    ) -> "_FirstPartScan":
+        """One walk of the first <part>, collecting everything score-wide.
 
-        Also returns each measure's own (ts_num, ts_den, fifths) as of that
-        measure's own <attributes> - the per-measure beat range/key state
-        the E9 synthetic beat-marker pass needs, collected in this same walk
-        rather than a second one.
+        R4: this was four separate methods (_measure_start_quarters,
+        _tempo_changes, _repeat_and_ending_spans, _hairpin_spans), each
+        re-walking the same measures with its own copy of the measure-number
+        parse and - for three of them - its own _MeasureOffsetWalker. They
+        were four chances for the pickup/offset handling to drift apart, and
+        four places to update for any change to it.
 
-        Walked from the first <part> only (mirrors _detect_pickup), on the
-        same assumption the main per-part loop above makes when a part
-        doesn't redeclare its own <time>: time signature applies uniformly
-        across parts within a measure.
+        Everything here is read from the FIRST <part> only, the established
+        "structural, not per-voice" convention (_detect_pickup does the
+        same): time signatures, tempo markings, repeat barlines, endings and
+        hairpins are all score-wide properties, not something that could
+        sensibly vary between parts of the same score.
+
+        R17: measure length is computed from the time signature in effect at
+        the START of each measure (snapshotted at its first <attributes>),
+        which is what the old _measure_start_quarters did via
+        m.find("attributes") and what MusicXML means - a time signature
+        change takes effect at a barline. Every other consumer here reads
+        the walker's live value, so a mid-measure <attributes> still affects
+        offsets for anything after it, exactly as before. The two readings
+        used to differ by accident (one method used find(), the others a
+        walker); now the difference is explicit and deliberate.
         """
+        scan = _FirstPartScan()
         first_part = root.find("part")
         if first_part is None:
-            return {}, {}
+            return scan
 
-        starts: Dict[int, float] = {}
-        measure_ts_fifths: Dict[int, Tuple[int, int, int]] = {}
         running_total = 0.0
-        ts_num, ts_den, fifths = 4, 4, 0
-
-        for m in first_part.findall("measure"):
-            m_attr_num = m.attrib.get("number", "1")
-            try:
-                raw_m_num = int(m_attr_num)
-            except ValueError:
-                raw_m_num = 1
-            m_num = raw_m_num - 1 if needs_reindex else raw_m_num
-
-            starts[m_num] = running_total
-
-            attrs_elem = m.find("attributes")
-            if attrs_elem is not None:
-                _, ts_num, ts_den, fifths = _apply_attributes(attrs_elem, 1, ts_num, ts_den, fifths)
-
-            measure_ts_fifths[m_num] = (ts_num, ts_den, fifths)
-
-            full_bar_quarters = ts_num * (4.0 / ts_den)
-            running_total += pickup_filled_quarters if m_num == 0 else full_bar_quarters
-
-        return starts, measure_ts_fifths
-
-    def _tempo_changes(
-        self, root, needs_reindex: bool, measure_start_quarters: Dict[int, float]
-    ) -> List[TempoChange]:
-        """Ref 12 "multi-tempo scope": every <direction> carrying a
-        <sound tempo=.../> + <metronome> marking, at the real elapsed
-        position it occurs - not just the score's first one
-        (MusicXMLReader._extract_tempo only ever looks at tempos[0]).
-        Walked from the first <part> only, same assumption
-        _measure_start_quarters makes, using the same _MeasureOffsetWalker
-        so a mid-measure marking (not just one at beat 1) lands at the
-        right offset.
-
-        MusicXML's <sound tempo="X"> is always quarter notes per minute
-        regardless of the marking's own beat unit, so it's used directly as
-        TempoChange.tempo_bpm with no conversion - only the beat-unit
-        display fields need translating from <beat-unit>/<beat-unit-dot>
-        for the status bar/dialog to show the number the way the score
-        itself is marked (e.g. "96 eighth notes per minute").
-        """
-        first_part = root.find("part")
-        if first_part is None:
-            return []
-
-        changes: List[TempoChange] = []
         divisions, ts_num, ts_den, fifths = 1, 4, 4, 0
+        open_repeat_measure: Optional[int] = None
+        open_endings: Dict[int, int] = {}
+        # Unlike pending_dynamics in build() (reset per measure), an open
+        # wedge must persist ACROSS measures - a hairpin routinely spans
+        # several bars.
+        # (kind, start_measure, start_beat_position, start_quarters_from_start)
+        open_wedge: Optional[Tuple[str, int, float, float]] = None
 
         for m in first_part.findall("measure"):
-            m_attr_num = m.attrib.get("number", "1")
-            try:
-                raw_m_num = int(m_attr_num)
-            except ValueError:
-                raw_m_num = 1
-            m_num = raw_m_num - 1 if needs_reindex else raw_m_num
+            m_num = _measure_number(m, needs_reindex)
+            # Set before walking the measure's contents, so the tempo and
+            # hairpin handlers below can resolve their own absolute
+            # positions against it as they go.
+            scan.measure_start_quarters[m_num] = running_total
 
             walker = _MeasureOffsetWalker(divisions, ts_num, ts_den, fifths)
+            measure_ts: Optional[Tuple[int, int, int]] = None
 
             for elem in m:
                 walker.step(elem)
 
-                if elem.tag == "direction":
-                    change = self._tempo_change_from_direction(elem, m_num, walker, measure_start_quarters)
+                if elem.tag == "attributes":
+                    if measure_ts is None:
+                        measure_ts = (walker.ts_num, walker.ts_den, walker.fifths)
+                elif elem.tag == "direction":
+                    change = self._tempo_change_from_direction(
+                        elem, m_num, walker, scan.measure_start_quarters
+                    )
                     if change is not None:
-                        changes.append(change)
+                        scan.tempo_changes.append(change)
+                    open_wedge = self._step_wedge(
+                        elem, m_num, walker, scan, open_wedge, pickup_filled_quarters
+                    )
+                elif elem.tag == "barline":
+                    open_repeat_measure = self._step_barline(
+                        elem, m_num, scan, open_repeat_measure, open_endings
+                    )
 
-            divisions, ts_num, ts_den, fifths = walker.divisions, walker.ts_num, walker.ts_den, walker.fifths
+            if measure_ts is None:
+                # No <attributes> in this measure, so nothing could have
+                # changed the carried-in signature - the walker's values are
+                # still exactly those.
+                measure_ts = (walker.ts_num, walker.ts_den, walker.fifths)
+            scan.measure_ts_fifths[m_num] = measure_ts
 
-        changes.sort(key=lambda c: c.quarters_from_start)
-        return changes
+            full_bar_quarters = measure_ts[0] * (4.0 / measure_ts[1])
+            running_total += pickup_filled_quarters if m_num == 0 else full_bar_quarters
+
+            divisions, ts_num, ts_den, fifths = (
+                walker.divisions, walker.ts_num, walker.ts_den, walker.fifths
+            )
+
+        scan.tempo_changes.sort(key=lambda c: c.quarters_from_start)
+        return scan
+
+    def _step_barline(
+        self,
+        barline_parent,
+        m_num: int,
+        scan: "_FirstPartScan",
+        open_repeat_measure: Optional[int],
+        open_endings: Dict[int, int],
+    ) -> Optional[int]:
+        """Ref 29: <barline>/<repeat> and <barline>/<ending>, paired by
+        simple open/close tracking in document order. Returns the new
+        "currently open forward repeat" measure (None once closed).
+
+        A <repeat direction="forward"/> opens a RepeatSpan, closed by the
+        next <repeat direction="backward"/> - a second forward before any
+        close replaces the open one, since nested repeat barlines aren't a
+        real notation concept. A backward repeat with no open forward
+        defaults its start to measure 1, the standard reading of an unmarked
+        opening repeat. <ending number="N" type="start"> opens EndingSpan N,
+        closed by the next stop/discontinue for that SAME number (start and
+        close are very often the same measure - a 1st/2nd-ending pair
+        typically lives on one bar's left and right barlines).
+        """
+        repeat_el = barline_parent.find("repeat")
+        if repeat_el is not None:
+            direction = repeat_el.attrib.get("direction")
+            if direction == "forward":
+                open_repeat_measure = m_num
+            elif direction == "backward":
+                start = open_repeat_measure if open_repeat_measure is not None else 1
+                scan.repeat_spans.append(RepeatSpan(start_measure=start, end_measure=m_num))
+                open_repeat_measure = None
+
+        ending_el = barline_parent.find("ending")
+        if ending_el is not None:
+            number_attr = ending_el.attrib.get("number", "").strip()
+            first_token = number_attr.replace(",", " ").split()[0] if number_attr else ""
+            try:
+                number = int(first_token)
+            except ValueError:
+                return open_repeat_measure
+            ending_type = ending_el.attrib.get("type")
+            if ending_type == "start":
+                open_endings[number] = m_num
+            elif ending_type in ("stop", "discontinue"):
+                start = open_endings.pop(number, m_num)
+                scan.ending_spans.append(
+                    EndingSpan(number=number, start_measure=start, end_measure=m_num)
+                )
+
+        return open_repeat_measure
+
+    def _step_wedge(
+        self,
+        direction_elem,
+        m_num: int,
+        walker: "_MeasureOffsetWalker",
+        scan: "_FirstPartScan",
+        open_wedge: Optional[Tuple[str, int, float, float]],
+        pickup_filled_quarters: float,
+    ) -> Optional[Tuple[str, int, float, float]]:
+        """Ref 29: crescendo/diminuendo hairpins (<direction>/
+        <direction-type>/<wedge>). Returns the new open-wedge state.
+
+        MusicXML's wedge `number` attribute (default 1) disambiguates
+        overlapping wedges on the same staff - ignored here (a single open
+        wedge is tracked), a deliberate v1 simplification since no file this
+        app has been tested against has an overlapping wedge.
+        """
+        wedge_el = direction_elem.find("direction-type/wedge")
+        if wedge_el is None:
+            return open_wedge
+
+        wedge_type = wedge_el.attrib.get("type")
+        beat_unit_quarter_len = 4.0 / walker.ts_den
+        full_bar_quarters = walker.ts_num * beat_unit_quarter_len
+        offset_q = walker.offset_divs / walker.divisions
+        if m_num == 0:
+            start_beat = self._start_beat(
+                full_bar_quarters, pickup_filled_quarters, beat_unit_quarter_len
+            )
+            beat_pos = start_beat + (offset_q / beat_unit_quarter_len)
+        else:
+            beat_pos = 1.0 + (offset_q / beat_unit_quarter_len)
+        quarters = scan.measure_start_quarters.get(m_num, 0.0) + offset_q
+
+        if wedge_type in ("crescendo", "diminuendo"):
+            return (wedge_type, m_num, round(beat_pos, 2), quarters)
+        if wedge_type == "stop" and open_wedge is not None:
+            kind, start_m, start_beat_pos, start_quarters = open_wedge
+            scan.hairpin_spans.append(
+                HairpinSpan(
+                    kind=kind,
+                    start_measure=start_m,
+                    start_beat_position=start_beat_pos,
+                    start_quarters_from_start=start_quarters,
+                    end_measure=m_num,
+                    end_beat_position=round(beat_pos, 2),
+                    end_quarters_from_start=quarters,
+                )
+            )
+            return None
+        return open_wedge
 
     @staticmethod
     def _tempo_change_from_direction(
@@ -571,154 +723,6 @@ class TimelineBuilder:
             display_number=str(int(per_minute)) if per_minute.is_integer() else str(per_minute),
         )
 
-    def _repeat_and_ending_spans(
-        self, root, needs_reindex: bool
-    ) -> Tuple[List[RepeatSpan], List[EndingSpan]]:
-        """Ref 29: <barline>/<repeat> and <barline>/<ending> markings, read
-        from the first <part> only (same "structural, not per-voice"
-        convention _measure_start_quarters uses) - repeat/ending barlines
-        are a score-wide property, not something that could vary by part.
-
-        Repeats and endings are paired by simple open/close tracking in
-        document order: a <repeat direction="forward"/> opens a RepeatSpan,
-        closed by the next <repeat direction="backward"/> (a second forward
-        before any close replaces the open one - nested repeat barlines
-        aren't a real notation concept, so "most recent forward wins" is a
-        deliberate v1 simplification, not an oversight). A backward repeat
-        with no open forward defaults its start to measure 1, the standard
-        notation reading of an unmarked opening repeat.
-
-        <ending number="N" type="start"> opens EndingSpan N, closed by the
-        next type="stop"/"discontinue" for that SAME number (start and its
-        close are very often the same measure - a 1st/2nd-ending pair
-        typically lives entirely on one bar's left/right barlines).
-        """
-        first_part = root.find("part")
-        if first_part is None:
-            return [], []
-
-        repeat_spans: List[RepeatSpan] = []
-        ending_spans: List[EndingSpan] = []
-        open_repeat_measure: Optional[int] = None
-        open_endings: Dict[int, int] = {}
-
-        for m in first_part.findall("measure"):
-            m_attr_num = m.attrib.get("number", "1")
-            try:
-                raw_m_num = int(m_attr_num)
-            except ValueError:
-                raw_m_num = 1
-            m_num = raw_m_num - 1 if needs_reindex else raw_m_num
-
-            for barline in m.findall("barline"):
-                repeat_el = barline.find("repeat")
-                if repeat_el is not None:
-                    direction = repeat_el.attrib.get("direction")
-                    if direction == "forward":
-                        open_repeat_measure = m_num
-                    elif direction == "backward":
-                        start = open_repeat_measure if open_repeat_measure is not None else 1
-                        repeat_spans.append(RepeatSpan(start_measure=start, end_measure=m_num))
-                        open_repeat_measure = None
-
-                ending_el = barline.find("ending")
-                if ending_el is not None:
-                    number_attr = ending_el.attrib.get("number", "").strip()
-                    first_token = number_attr.replace(",", " ").split()[0] if number_attr else ""
-                    try:
-                        number = int(first_token)
-                    except ValueError:
-                        continue
-                    ending_type = ending_el.attrib.get("type")
-                    if ending_type == "start":
-                        open_endings[number] = m_num
-                    elif ending_type in ("stop", "discontinue"):
-                        start = open_endings.pop(number, m_num)
-                        ending_spans.append(
-                            EndingSpan(number=number, start_measure=start, end_measure=m_num)
-                        )
-
-        return repeat_spans, ending_spans
-
-    def _hairpin_spans(
-        self,
-        root,
-        needs_reindex: bool,
-        measure_start_quarters: Dict[int, float],
-        pickup_filled_quarters: float,
-    ) -> List[HairpinSpan]:
-        """Ref 29: crescendo/diminuendo hairpins (<direction>/
-        <direction-type>/<wedge>), walked from the first <part> only (same
-        convention as _tempo_changes/_repeat_and_ending_spans - a hairpin is
-        a score-wide performance marking, not per-voice). Uses the same
-        per-measure _MeasureOffsetWalker _tempo_changes already uses for
-        offset tracking, but unlike pending_dynamics (reset every measure),
-        the "currently open wedge" state must persist ACROSS measures since
-        a hairpin routinely spans several bars. MusicXML's wedge `number`
-        attribute (default 1) disambiguates overlapping wedges on the same
-        staff - ignored here (a single open wedge is tracked), a deliberate
-        v1 simplification since no file this app has been tested against
-        has an overlapping wedge.
-        """
-        first_part = root.find("part")
-        if first_part is None:
-            return []
-
-        spans: List[HairpinSpan] = []
-        divisions, ts_num, ts_den, fifths = 1, 4, 4, 0
-        # (kind, start_measure, start_beat_position, start_quarters_from_start)
-        open_wedge: Optional[Tuple[str, int, float, float]] = None
-
-        for m in first_part.findall("measure"):
-            m_attr_num = m.attrib.get("number", "1")
-            try:
-                raw_m_num = int(m_attr_num)
-            except ValueError:
-                raw_m_num = 1
-            m_num = raw_m_num - 1 if needs_reindex else raw_m_num
-
-            walker = _MeasureOffsetWalker(divisions, ts_num, ts_den, fifths)
-
-            for elem in m:
-                walker.step(elem)
-
-                if elem.tag == "direction":
-                    wedge_el = elem.find("direction-type/wedge")
-                    if wedge_el is not None:
-                        wedge_type = wedge_el.attrib.get("type")
-                        beat_unit_quarter_len = 4.0 / walker.ts_den
-                        full_bar_quarters = walker.ts_num * beat_unit_quarter_len
-                        offset_q = walker.offset_divs / walker.divisions
-                        if m_num == 0:
-                            start_beat = self._start_beat(
-                                full_bar_quarters, pickup_filled_quarters, beat_unit_quarter_len
-                            )
-                            beat_pos = start_beat + (offset_q / beat_unit_quarter_len)
-                        else:
-                            beat_pos = 1.0 + (offset_q / beat_unit_quarter_len)
-                        quarters = measure_start_quarters.get(m_num, 0.0) + offset_q
-
-                        if wedge_type in ("crescendo", "diminuendo"):
-                            open_wedge = (wedge_type, m_num, round(beat_pos, 2), quarters)
-                        elif wedge_type == "stop" and open_wedge is not None:
-                            kind, start_m, start_beat_pos, start_quarters = open_wedge
-                            spans.append(
-                                HairpinSpan(
-                                    kind=kind,
-                                    start_measure=start_m,
-                                    start_beat_position=start_beat_pos,
-                                    start_quarters_from_start=start_quarters,
-                                    end_measure=m_num,
-                                    end_beat_position=round(beat_pos, 2),
-                                    end_quarters_from_start=quarters,
-                                )
-                            )
-                            open_wedge = None
-
-            divisions, ts_num, ts_den, fifths = walker.divisions, walker.ts_num, walker.ts_den, walker.fifths
-
-        return spans
-
     def _detect_pickup(self, root) -> Tuple[int, bool, float]:
         """Ref 17: is the first measure a pickup bar, and if so how full is
         it (in quarters)? Walks only the first <measure> across the whole
@@ -737,10 +741,9 @@ class TimelineBuilder:
         if first_measure is None:
             return first_measure_number, False, pickup_filled_quarters
 
-        try:
-            first_measure_number = int(first_measure.attrib.get("number", "1"))
-        except ValueError:
-            first_measure_number = 1
+        # Raw, not _measure_number: this pass is what DECIDES needs_reindex,
+        # so it has to read the number as the file spells it.
+        first_measure_number = _raw_measure_number(first_measure)
 
         if first_measure.attrib.get("implicit") == "yes":
             is_pickup = True

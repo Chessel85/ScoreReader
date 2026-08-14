@@ -6,7 +6,7 @@ If any test here opens a window or an audio device, the harness is broken.
 import pytest
 from PySide6.QtCore import QLocale, Qt
 from PySide6.QtGui import QKeySequence, QValidator
-from PySide6.QtWidgets import QApplication, QDialog, QLabel, QTableWidget
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QTableWidget, QWidget
 
 from audio.metronome import METRONOME_OFFBEAT_NOTE
 from main_window import MainWindow, detect_default_uk_terms
@@ -427,6 +427,38 @@ def test_every_region_routes_tab_through_the_region_cycle_not_qts_focus_chain(
         calls.clear()
         qtbot.keyClick(region, Qt.Key.Key_Backtab)
         assert calls == [("prev", region)], f"{type(region).__name__} did not handle Backtab"
+
+
+def test_closing_the_window_stops_it_tracking_application_focus(
+    window, qtbot, null_synth, minimal_score
+):
+    """R3: focusChanged is an application-level signal, so a closed window
+    that stays connected keeps reacting to focus moves in windows it has
+    nothing to do with - and, once its own widgets are destroyed, reaches
+    deleted C++ objects. Asserts via observable behaviour (the tracked
+    _last_focused_region stops updating) rather than by inspecting Qt's
+    connection list, which PySide6 doesn't expose."""
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+    _focus(window.region_3)
+    assert window._last_focused_region is window.region_3
+
+    window.close()
+
+    other = QWidget()
+    qtbot.addWidget(other)
+    other.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+    other.show()
+    _focus(other)
+
+    assert window._last_focused_region is window.region_3
+    assert window._focus_tracking_connected is False
+
+    # closeEvent legitimately runs twice (explicit close, then fixture
+    # teardown) - the second pass must be a silent no-op, not a stale
+    # disconnect warning.
+    window.close()
+    assert window._focus_tracking_connected is False
 
 
 def test_status_bar_updates_on_load_and_navigation(window, qtbot, null_synth, ts_change_score):

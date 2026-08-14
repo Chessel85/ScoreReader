@@ -72,9 +72,12 @@ class Region2ListWidget(RegionFocusCycleMixin, QListWidget):
                 target_row = row_idx
 
             status_text = "on" if node.enabled else "off"
-            item = QListWidgetItem(f"{node.display_name} - {status_text}")
-            item.setData(Qt.UserRole, node.node_id)
-            self.addItem(item)
+            # R11: no setData(UserRole, node_id) here - it was never read
+            # back. current_node() resolves a row through
+            # _current_visible_nodes, which is built from the same list in
+            # the same order, so the stashed copy was dead weight (and the
+            # codebase's only unscoped Qt.UserRole).
+            self.addItem(QListWidgetItem(f"{node.display_name} - {status_text}"))
 
         if self.count() > 0:
             self.setCurrentRow(target_row)

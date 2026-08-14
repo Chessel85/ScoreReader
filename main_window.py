@@ -155,7 +155,7 @@ class MainWindow(QMainWindow):
         grid_layout = QGridLayout(central_widget)
 
         # Region 1: Property List
-        self.region_1 = self.create_property_list([])
+        self.region_1 = self.create_property_list()
 
         # Region 2: Parts/Staves/Voices hierarchy, navigated Up/Down, O to toggle
         self.region_2 = Region2ListWidget()
@@ -174,7 +174,7 @@ class MainWindow(QMainWindow):
         # Region 4: Property List. Region4TableWidget (not the plain
         # RegionTableWidget Region 1 uses) adds the Ref 15 AC4 context menu
         # for appending/removing an attribute in Region 3's note display.
-        self.region_4 = self.create_property_list([], table_cls=Region4TableWidget)
+        self.region_4 = self.create_property_list(table_cls=Region4TableWidget)
 
         # Region 5 (Ref 29, the "Performance region"): duration-spanning
         # markers (repeat barlines, 1st/2nd endings, crescendo/diminuendo
@@ -227,6 +227,7 @@ class MainWindow(QMainWindow):
         # access stays on the OS's native Alt mechanism, not F6/Tab.
         self._last_focused_region = self.region_1
         QApplication.instance().focusChanged.connect(self._on_focus_changed)
+        self._focus_tracking_connected = True
 
         # WindowShortcut (Qt's default context) fires regardless of which
         # child widget within this window currently holds focus - exactly
@@ -627,14 +628,16 @@ class MainWindow(QMainWindow):
         if previous_focus is not None:
             previous_focus.setFocus()
 
-    def create_property_list(self, items: list, table_cls: type = RegionTableWidget) -> RegionTableWidget:
-        table = table_cls(len(items), 2)
+    def create_property_list(self, table_cls: type = RegionTableWidget) -> RegionTableWidget:
+        """An empty two-column property table for Region 1 or Region 4.
+
+        R8: this used to take an `items` list and populate it. Both call
+        sites always passed [], and every actual population goes through
+        _populate_table once a score is loaded - so the parameter, the row
+        count derived from it and the loop were all dead.
+        """
+        table = table_cls(0, 2)
         table.setHorizontalHeaderLabels(["Property", "Value"])
-
-        for row, (prop, val) in enumerate(items):
-            table.setItem(row, 0, QTableWidgetItem(prop))
-            table.setItem(row, 1, QTableWidgetItem(val))
-
         table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -1325,7 +1328,9 @@ class MainWindow(QMainWindow):
         untouched - used by phrase audition (E6) and pause/resume, which
         must not disturb the position fields the way a full
         _update_status_bar() would."""
-        self.status_bar.set_field(4, self._playback_status_text())
+        self.status_bar.set_field(
+            self.status_bar.PLAYBACK_FIELD, self._playback_status_text()
+        )
 
     def _on_sequencer_finished(self):
         """Reaching the end of a run (full playback, Ref 10 AC2, or a
@@ -1418,12 +1423,33 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._save_current_score_config()
+        self._disconnect_focus_tracking()
         if self._load_thread is not None:
             self._load_thread.wait()
         if self.sequencer is not None:
             self.sequencer.stop()
         self.synth.close()
         super().closeEvent(event)
+
+    def _disconnect_focus_tracking(self):
+        """R3: focusChanged is an APPLICATION-level signal, so without this a
+        closed window stays subscribed for the life of the process and
+        _on_focus_changed keeps firing into it - reaching self.region_1 and
+        friends after the underlying C++ objects are gone ("Internal C++
+        object already deleted"). Harmless in the shipped single-window app,
+        but tests build many MainWindows in one QApplication, which is how
+        the ambiguous-shortcut problem noted in setup_ui first surfaced.
+
+        Guarded by a flag rather than try/except: closeEvent legitimately
+        runs more than once (an explicit close() followed by fixture
+        teardown, as two tests here do), and PySide6 doesn't raise on a
+        stale disconnect - it emits a RuntimeWarning and carries on, so an
+        except clause would never catch it and the noise would just
+        accumulate."""
+        if not self._focus_tracking_connected:
+            return
+        QApplication.instance().focusChanged.disconnect(self._on_focus_changed)
+        self._focus_tracking_connected = False
 
     def _save_current_score_config(self):
         """Ref 27: writes the currently-loaded score's part/staff/voice

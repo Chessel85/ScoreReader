@@ -6,8 +6,18 @@ same reasoning as `tasks.txt`: the findings outlive the conversation that
 produced them. Remediation is tracked as **PHASE R** in `tasks.txt` - one line
 per finding, cross-referenced back to the R-numbers below.
 
-**Remediation status (2026-08-14): R1 and R2 are fixed** (see "Resolved"
-notes under each). R3-R18 are open.
+**Remediation status (2026-08-14): 15 of 18 fixed.** R1-R5, R7, R8, R10-R12,
+R14-R18 are done - see the per-finding "Resolved" notes and the `> DONE` notes
+in `tasks.txt`. Three remain open, each deliberately:
+
+| Open | Why it was left |
+|---|---|
+| R6 (MainWindow God object) | A real refactor with its own design decisions - deserves its own change, not a tail-end of a cleanup batch. |
+| R9 (prose-to-code ratio) | Judgement-heavy and touches nearly every file; wants an explicit call on how much history stays in the code. |
+| R13 (silent no-op while loading) | Needs a product decision: what a screen-reader user should hear when a load is already in flight. |
+
+Suite after remediation: **358 passing**, pyflakes clean across the project,
+and clean under `-W error::RuntimeWarning`.
 
 ## Method
 
@@ -140,6 +150,14 @@ destroyed the slot fires into a deleted C++ object. The adjacent comment
 (231-233) records that cross-test window survival has already caused
 ambiguous-shortcut conflicts.
 
+**Resolved 2026-08-14.** `_disconnect_focus_tracking()`, called from
+`closeEvent`. Guarded by a `_focus_tracking_connected` flag rather than
+try/except - `closeEvent` legitimately runs twice (an explicit `close()` then
+fixture teardown, which two tests do), and PySide6 does **not** raise on a stale
+disconnect: it emits a `RuntimeWarning` and continues, so an `except` clause
+would never have caught it and the noise would have accumulated silently. The
+suite now runs clean under `-W error::RuntimeWarning`.
+
 #### R4. `TimelineBuilder`: the same measure-number parse five times, and four separate walks of part 1
 
 `parsers/timeline_builder.py:191-197, 473-478, 520-525, 606-611, 673-678` -
@@ -152,6 +170,14 @@ Separately, `_measure_start_quarters`, `_tempo_changes`,
 cost is negligible (~1 ms), but it is 4x the maintenance surface and 4x the
 places a reindex or offset bug can diverge.
 
+**Resolved 2026-08-14.** `_measure_number()`/`_raw_measure_number()` module
+helpers replace all five copies. The four passes collapse into one
+`_scan_first_part()` returning a `_FirstPartScan`, with `_step_barline` and
+`_step_wedge` as per-element helpers (-148 lines). Verified behaviour-preserving
+by diffing slices, `tempo_changes`, repeat/ending/hairpin spans, `beat_markers`
+and `total_measures` between the pre- and post-refactor parsers across all 44
+scores in `files/`, `examples/` and `tests/fixtures/`: **zero differences**.
+
 #### R5. The `<part-name>` duplication CLAUDE.md flags as fragile is structurally avoidable
 
 `parsers/timeline_builder.py:156-162` vs `parsers/musicXML_reader.py` (part
@@ -161,6 +187,15 @@ already shipped and fixed once (the Korean `<part-name>` case). But
 `TimelineBuilder.__init__` already *receives* `parts_info` and uses it only for
 `parts_info[0].name` as a default. Deriving `part_names` from `parts_info` when
 it is non-empty removes the invariant instead of documenting it.
+
+**Resolved 2026-08-14.** `TimelineBuilder._part_names()` derives from
+`parts_info` when present, keeping the ElementTree read only for the no-reader
+path (`MusicData(file_path=...)` built directly, which has no `parts_info` at
+all). Agreement is now structural rather than a convention to remember. Two
+regression tests: one hands `TimelineBuilder` a `parts_info` the file itself
+contradicts, proving the XML is no longer consulted; one covers the fallback.
+Re-checked end to end on the Korean-`<part-name>` bourree - the report shows 492
+notes, not 0.
 
 #### R6. `MainWindow` is a 1,469-line God object
 
@@ -187,10 +222,19 @@ that `play_click`/`play_word` read each sample's natural duration from a sidecar
 `models/music_data.py:1150` says "16 channels minus the two reservations" -
 there are three (`RESERVED_CHANNELS`).
 
+**Resolved 2026-08-14.** Both docstrings now state the real mechanism (a
+one-shot sample retires itself; no note-off scheduling anywhere) and say
+explicitly that the description outlived the mechanism. The remaining
+`.sf2.json` mentions in `synth_engine.py` and `tools/wav_to_sf2.py` are correct
+- they document the removal.
+
 #### R8. `create_property_list` carries a dead loop
 
 `main_window.py:628-641`. Both call sites pass `[]`; the `items` parameter, the
 `len(items)` row count and the population loop are vestigial.
+
+**Resolved 2026-08-14.** Parameter and loop removed, both call sites updated.
+Population is `_populate_table`'s job and always was.
 
 #### R9. Prose-to-code ratio is 0.56 (2,165 prose lines vs 3,897 code lines)
 
@@ -203,17 +247,19 @@ is to keep the *invariant* ("samplerate must be a constructor kwarg - a later
 
 ### LOW
 
-| # | Location | Finding |
-|---|---|---|
-| R10 | `models/music_data.py:260` | `_slice_is_navigable` indexes `timeline_slices[index]` after `_slice_has_visible_notes` already returned False for out-of-range. No live caller reaches it; latent `IndexError`. |
-| R11 | `widgets/region2_list_widget.py:75` | `setData(Qt.UserRole, node.node_id)` is never read back. Also the only unscoped `Qt.UserRole` in the codebase. |
-| R12 | `parsers/musicXML_reader.py:22` | Unconditional `[DEBUG]` prints on the production load path. |
-| R13 | `main_window.py:660-670` | `load_score_from_file` silently no-ops if a load is in flight - a keystroke that does nothing and says nothing is the worst failure mode for this app's users. `ScoreLoadThread` instances are also parented and never `deleteLater`'d, so one accumulates per file opened. |
-| R14 | `models/music_data.py:125-148` | `__post_init__` sets `attribute_order`, `_beat_markers` and four caches as undeclared attributes on a `@dataclass`; `attribute_order` is public API absent from the field list/`repr`/`eq`. |
-| R15 | `main_window.py:1326` | `set_field(4, ...)` hardcodes the playback field index; `StatusBarWidget` should expose a named constant. |
-| R16 | `audio/synth_engine.py:394-401` | `_stop_group` uses `list.remove((ch, note))`, removing the *first* match - two groups sounding the same pitch on the same channel (a unison across voices in one part) let one group's expiry release the other's still-ringing note. |
-| R17 | `parsers/timeline_builder.py:482-484` | `_measure_start_quarters` reads only the first direct-child `<attributes>` per measure, while `build()`'s walker applies attributes wherever they appear - a mid-measure time-signature change makes the two disagree. |
-| R18 | `latency_harness.py:128` | Unused local `app` (the only pyflakes hit in app code). `workers/score_load_worker.py:10` cites `improvements.txt`, which is not in the repo. |
+All but R13 resolved 2026-08-14 (see `tasks.txt` for the per-item notes).
+
+| # | Location | Finding | Status |
+|---|---|---|---|
+| R10 | `models/music_data.py:260` | `_slice_is_navigable` indexes `timeline_slices[index]` after `_slice_has_visible_notes` already returned False for out-of-range. No live caller reaches it; latent `IndexError`. | fixed |
+| R11 | `widgets/region2_list_widget.py:75` | `setData(Qt.UserRole, node.node_id)` is never read back. Also the only unscoped `Qt.UserRole` in the codebase. | fixed |
+| R12 | `parsers/musicXML_reader.py:22` | Unconditional `[DEBUG]` prints on the production load path. | fixed |
+| R13 | `main_window.py:660-670` | `load_score_from_file` silently no-ops if a load is in flight - a keystroke that does nothing and says nothing is the worst failure mode for this app's users. `ScoreLoadThread` instances are also parented and never `deleteLater`'d, so one accumulates per file opened. | **open** - product decision |
+| R14 | `models/music_data.py:125-148` | `__post_init__` sets `attribute_order`, `_beat_markers` and four caches as undeclared attributes on a `@dataclass`; `attribute_order` is public API absent from the field list/`repr`/`eq`. | fixed |
+| R15 | `main_window.py:1326` | `set_field(4, ...)` hardcodes the playback field index; `StatusBarWidget` should expose a named constant. | fixed |
+| R16 | `audio/synth_engine.py:394-401` | `_stop_group` uses `list.remove((ch, note))`, removing the *first* match - two groups sounding the same pitch on the same channel (a unison across voices in one part) let one group's expiry release the other's still-ringing note. | fixed |
+| R17 | `parsers/timeline_builder.py:482-484` | `_measure_start_quarters` reads only the first direct-child `<attributes>` per measure, while `build()`'s walker applies attributes wherever they appear - a mid-measure time-signature change makes the two disagree. | fixed |
+| R18 | `latency_harness.py:128` | Unused local `app` (the only pyflakes hit in app code). `workers/score_load_worker.py:10` cites `improvements.txt`, which is not in the repo. | fixed |
 
 ---
 

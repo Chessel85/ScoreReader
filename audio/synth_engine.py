@@ -392,11 +392,31 @@ class SynthEngine:
         timer.start(int(duration_ms))
 
     def _stop_group(self, group_notes: List[Tuple[int, int]], timer: QTimer):
-        if self._fs is not None:
-            for ch, note in group_notes:
-                if (ch, note) in self._active_notes:
-                    self._fs.noteoff(ch, note)
-                    self._active_notes.remove((ch, note))
+        """R16: a (channel, note) pair can legitimately appear in
+        _active_notes more than once - two voices of the same part sounding
+        a unison land on that part's one channel with the same pitch, each
+        with its own duration and its own timer. Releasing the FIRST
+        matching entry meant the shorter voice's expiry silenced the longer
+        one's still-ringing note (and left a stale entry behind that
+        stop_all_notes then re-released). Count occurrences instead: only
+        send noteoff once no other live group is still holding that pair.
+
+        This is the same class of bug as the two play_chord already carries
+        scars from - one group's timing clobbering another's - just at the
+        note level rather than the group level.
+        """
+        if self._fs is None:
+            if timer in self._group_off_timers:
+                self._group_off_timers.remove(timer)
+            return
+
+        for ch, note in group_notes:
+            if (ch, note) not in self._active_notes:
+                continue
+            self._active_notes.remove((ch, note))
+            if (ch, note) not in self._active_notes:
+                self._fs.noteoff(ch, note)
+
         if timer in self._group_off_timers:
             self._group_off_timers.remove(timer)
 

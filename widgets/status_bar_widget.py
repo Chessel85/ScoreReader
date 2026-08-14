@@ -64,6 +64,16 @@ class StatusBarWidget(QStatusBar):
     accessibility role - no extra plumbing needed here for that.
     """
 
+    # R15: named indices so callers updating a single field don't hardcode
+    # its position (MainWindow._update_playback_status_field used a bare 4).
+    # Field order here is also the Tab order the user experiences.
+    POSITION_FIELD = 0
+    KEY_FIELD = 1
+    TIME_FIELD = 2
+    TEMPO_FIELD = 3
+    PLAYBACK_FIELD = 4
+    METRONOME_FIELD = 5
+    POSITION_ANNOUNCER_FIELD = 6
     FIELD_COUNT = 7
 
     def __init__(self, parent=None):

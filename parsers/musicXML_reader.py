@@ -19,8 +19,10 @@ class MusicXMLReader:
         self.file_path = file_path
 
     def load(self) -> MusicData:
-        print(f"[DEBUG] Loading file: {self.file_path}")
-
+        # R12: no [DEBUG] progress prints here. They ran on every load in
+        # release builds, where stdout is a log file under %LOCALAPPDATA%
+        # (main.py's _redirect_stdio_if_headless) - noise in the one place
+        # a real error report has to be legible.
         root = self._parse_xml_root()
 
         credits_dict = self._extract_credits_etree(root)
@@ -30,7 +32,6 @@ class MusicXMLReader:
         score = None
         try:
             score = music21.converter.parse(self.file_path)
-            print("[DEBUG] music21 parse completed.")
         except Exception as e:
             print(f"[ERROR] music21 parse failed: {e}")
 

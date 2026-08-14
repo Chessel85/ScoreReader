@@ -30,8 +30,8 @@ POSITION_ANNOUNCER_VELOCITY = 100
 
 # Matches tools/config.ini's [preset:talking_metronome_default] note layout
 # exactly (60=one .. 66=seven, 67=e, 68=and, 69=a) - hardcoded here rather
-# than read from the soundfont's sidecar .sf2.json, the same choice
-# audio/metronome.py already made for METRONOME_ACCENT_NOTE/OFFBEAT_NOTE.
+# than read out of the soundfont itself, the same choice audio/metronome.py
+# already made for METRONOME_ACCENT_NOTE/OFFBEAT_NOTE.
 WORD_NOTES = {
     "one": 60,
     "two": 61,
@@ -90,9 +90,10 @@ def spoken_word_for_beat_position(beat_position: float) -> Optional[str]:
 def announcement_event_for_beat(beat_position: float) -> Optional[Tuple[int, int, int, int, int]]:
     """(channel, bank, program, pitch, velocity) for the word to speak at
     this beat position, or None if spoken_word_for_beat_position found
-    nothing to say. Duration isn't decided here, same reasoning as
-    click_event_for_beat: SynthEngine.play_word looks each sample's own
-    natural duration up from the click soundfont's sidecar .sf2.json."""
+    nothing to say. Duration isn't decided here - or anywhere - for the same
+    reason as click_event_for_beat: a one-shot sample retires itself when
+    its data runs out. (R7: this used to cite a sidecar .sf2.json that no
+    longer exists; see SynthEngine.play_click.)"""
     word = spoken_word_for_beat_position(beat_position)
     if word is None:
         return None

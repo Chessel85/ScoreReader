@@ -7,7 +7,7 @@ from parsers.musicXML_reader import MusicXMLReader
 
 
 class ScoreLoadThread(QThread):
-    """Runs MusicXMLReader.load() off the UI thread (R1 in improvements.txt).
+    """Runs MusicXMLReader.load() off the UI thread.
 
     A synchronous load blocks on several ElementTree passes plus
     music21.converter.parse (~460ms) - for a screen-reader-first app that is

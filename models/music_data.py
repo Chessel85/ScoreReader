@@ -78,6 +78,16 @@ class MusicData:
     # plain note name.
     voice_display_attributes: Dict[Tuple[str, int, int], Set[str]] = field(default_factory=dict)
 
+    # F2/Ref 15 AC4: the live, per-instance, mutable rendering order Region
+    # 3/4 both read. R14: a declared field, not something __post_init__
+    # conjures onto the instance - it is public API (MainWindow and
+    # apply_config both assign to it), so leaving it undeclared kept it out
+    # of the dataclass's own repr/eq and out of reach of type checkers.
+    # Empty default rather than DISPLAY_ATTRIBUTE_ORDER: that constant is
+    # defined further down the class body and isn't bound yet at field-
+    # definition time. __post_init__ fills it in, so "empty" never escapes.
+    attribute_order: List[str] = field(default_factory=list)
+
     # E8/Ref 14: off by default per score load (MusicData is reconstructed
     # fresh on every _on_score_loaded, so no explicit reset code is needed
     # elsewhere, same as playback_tempo_offset above). Gates both whether a
@@ -116,13 +126,14 @@ class MusicData:
     total_measures: int = 0
 
     def __post_init__(self):
-        # F2/Ref 15 AC4: the live, per-instance, mutable rendering order -
         # DISPLAY_ATTRIBUTE_ORDER (defined below, alongside the rest of the
         # attribute system) stays the fixed default every fresh MusicData
-        # starts from. MainWindow reapplies its own session-level copy after
-        # every load (MusicData is wholly replaced then), the same pattern
-        # already used for uk_terms.
-        self.attribute_order: List[str] = list(self.DISPLAY_ATTRIBUTE_ORDER)
+        # starts from; attribute_order is the live copy F2's dialog mutates.
+        # MainWindow reapplies its own session-level copy after every load
+        # (MusicData is wholly replaced then), the same pattern already used
+        # for uk_terms. Honours a caller-supplied order if one was passed.
+        if not self.attribute_order:
+            self.attribute_order = list(self.DISPLAY_ATTRIBUTE_ORDER)
         if self.file_path:
             builder = TimelineBuilder(self.file_path, self.parts_info, root=self.xml_root)
             self.timeline_slices = builder.build()
@@ -255,7 +266,14 @@ class MusicData:
         resurrect trailing rest-only padding as navigable."""
         if self._slice_has_visible_notes(index):
             return True
-        if not self.metronome_enabled:
+        # R10: the bounds check is this method's own, not inherited from the
+        # call above - _slice_has_visible_notes returns False both for "out
+        # of range" and for "in range but nothing visible", so falling
+        # through to index timeline_slices directly would raise IndexError
+        # on the first case whenever the metronome happens to be on. Every
+        # current caller passes a bounded index, so this is a latent crash
+        # rather than a live one; guarding here keeps it that way.
+        if not self.metronome_enabled or not (0 <= index < len(self.timeline_slices)):
             return False
         return float(self.timeline_slices[index].beat_position).is_integer()
 

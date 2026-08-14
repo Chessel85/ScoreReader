@@ -6,7 +6,6 @@ _build_timeline_from_xml, and this file is what proves nothing regressed.
 Written against hand-crafted fixtures (see tests/fixtures/) so each test
 isolates one behaviour, per D-8.
 """
-import pytest
 
 
 def test_quarter_note_is_one_beat_unit_in_four_four(timeline, minimal_score):
@@ -468,3 +467,40 @@ def test_first_full_bar_after_zero_numbered_pickup_is_measure_one(timeline, scor
     )
     assert first_full_bar_note.measure == 1
     assert first_full_bar_note.beat_position == 1.0
+
+
+def test_note_part_names_come_from_parts_info_when_the_reader_supplied_it(score_duet):
+    """R5: TimelineBuilder used to re-read <part-list>/<score-part>/
+    <part-name> itself, independently of MusicXMLReader's own read of the
+    same elements, and the two were required to agree exactly. They diverged
+    once (one filtered non-ASCII names, the other didn't) and the Performance
+    Report - which joins note.part_name to PartStructureInfo.name - silently
+    reported 0 notes for a fully-noted part.
+
+    Names are now derived from parts_info, so agreement is structural rather
+    than a convention to remember. Proved here by handing TimelineBuilder a
+    parts_info the file itself contradicts: if it were still reading the XML,
+    the file's own names would win."""
+    from models.parts_structure import PartStructureInfo
+    from parsers.timeline_builder import TimelineBuilder
+
+    supplied = [
+        PartStructureInfo(part_id="P1", name="Renamed By Reader"),
+        PartStructureInfo(part_id="P2", name="Also Renamed"),
+    ]
+    slices = TimelineBuilder(score_duet, supplied).build()
+
+    names = {n.part_name for s in slices for n in s.notes}
+    assert names == {"Renamed By Reader", "Also Renamed"}
+
+
+def test_part_names_still_read_from_the_file_when_there_is_no_parts_info(score_duet):
+    """The no-reader path (MusicData(file_path=...) built directly, which is
+    how every timeline test and TimelineBuilder's own fast path work) has no
+    parts_info at all, so the etree fallback must stay."""
+    from parsers.timeline_builder import TimelineBuilder
+
+    slices = TimelineBuilder(score_duet, []).build()
+
+    names = {n.part_name for s in slices for n in s.notes}
+    assert names == {"Piano", "Classical Guitar"}
