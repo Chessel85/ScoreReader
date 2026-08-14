@@ -376,6 +376,25 @@ count subdivided beats aloud. It's independent of the metronome switch
 (§7.6) - you can have either, both, or neither running at once, and each
 is remembered separately.
 
+### 7.8 Adjusting Volume and Pan (the Mixer)
+
+**Edit > Mixer...**, or `Ctrl+Shift+X`, opens a dialog listing every
+instrument in the score, plus the metronome and the position announcer.
+Select an entry, then use the **Volume** (0-100%) and **Pan** (-100% left
+to +100% right) fields to adjust it - type an exact value, or use
+`Home`/`End` to jump straight to that field's highest/lowest value and
+`Insert` to reset it to a sensible starting point (centre for Pan, 50%
+for Volume). Volume is scaled to roughly match what you'd expect to hear:
+100% is the instrument's normal loudness, 50% sounds about half as loud,
+and 0% is silent.
+
+Changes take effect immediately as you make them, so you can compare
+before committing to them. **Preview Alt+W** plays a short phrase (the
+current bar and the next) using your changes so far, without moving your
+place in the score - press it again to stop early. **OK** keeps your
+changes and saves them with the score (see §11.1); **Cancel** puts
+everything back exactly as it was before you opened the dialog.
+
 ## 8. Performance Markings: Repeats, Endings and Dynamics
 
 ### 8.1 What Appears in the Performance Region
@@ -516,6 +535,8 @@ next time you open that same file:
 - Whether the position announcer is switched on.
 - Which note attributes are shown for each voice (§9.2).
 - The order those attributes are read in (§9.4).
+- Volume and pan set for each instrument, the metronome and the position
+  announcer, via the Mixer (§7.8).
 
 Files are matched by their own filename, so moving a file to a different
 folder doesn't lose its saved settings. If a saved setting no longer
@@ -554,6 +575,7 @@ directly (see also §14.3).
 | Open Local Folder | - | Opens the folder where saved per-score preferences are stored. |
 | Clear Preferences for `<filename>` | - | Deletes the currently loaded file's saved settings. Disabled when no file is loaded. |
 | Performance Report... | - | Opens a read-only summary of the whole piece (§8.4). |
+| Mixer... | Ctrl+Shift+X | Opens the volume/pan mixer for every instrument, the metronome and the position announcer (§7.8). |
 
 ### 12.3 Navigation Menu
 
@@ -613,6 +635,8 @@ directly (see also §14.3).
 | Open the Tempo Offset dialog | Ctrl+T |
 | Toggle the metronome on/off | Ctrl+M |
 | Toggle the position announcer on/off | Ctrl+P |
+| Open the Mixer dialog | Ctrl+Shift+X |
+| Play a short preview from the Mixer dialog *(Mixer dialog only)* | Alt+W |
 | Jump to the start / end of the focused Performance region entry *(Performance region only)* | Ctrl+Home / Ctrl+End |
 | Open the Performance Report | Edit menu > Performance Report... |
 | Open a note attribute's context menu *(Note Attributes region only)* | right-click, or Menu key / Shift+F10 |

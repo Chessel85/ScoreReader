@@ -294,6 +294,9 @@ Using the Metronome</a></li>
 <li><a href="#using-the-position-announcer"
 id="toc-using-the-position-announcer">7.7 Using the Position
 Announcer</a></li>
+<li><a href="#adjusting-volume-and-pan-the-mixer"
+id="toc-adjusting-volume-and-pan-the-mixer">7.8 Adjusting Volume and Pan
+(the Mixer)</a></li>
 </ul></li>
 <li><a href="#performance-markings-repeats-endings-and-dynamics"
 id="toc-performance-markings-repeats-endings-and-dynamics">8.
@@ -749,6 +752,25 @@ position it speaks a word for where you are in the bar - “one” through
 between, the standard way musicians count subdivided beats aloud. It’s
 independent of the metronome switch (§7.6) - you can have either, both,
 or neither running at once, and each is remembered separately.</p>
+<h3 id="adjusting-volume-and-pan-the-mixer">7.8 Adjusting Volume and Pan
+(the Mixer)</h3>
+<p><strong>Edit &gt; Mixer…</strong>, or <code>Ctrl+Shift+X</code>,
+opens a dialog listing every instrument in the score, plus the metronome
+and the position announcer. Select an entry, then use the
+<strong>Volume</strong> (0-100%) and <strong>Pan</strong> (-100% left to
++100% right) fields to adjust it - type an exact value, or use
+<code>Home</code>/<code>End</code> to jump straight to that field’s
+highest/lowest value and <code>Insert</code> to reset it to a sensible
+starting point (centre for Pan, 50% for Volume). Volume is scaled to
+roughly match what you’d expect to hear: 100% is the instrument’s normal
+loudness, 50% sounds about half as loud, and 0% is silent.</p>
+<p>Changes take effect immediately as you make them, so you can compare
+before committing to them. <strong>Preview Alt+W</strong> plays a short
+phrase (the current bar and the next) using your changes so far, without
+moving your place in the score - press it again to stop early.
+<strong>OK</strong> keeps your changes and saves them with the score
+(see §11.1); <strong>Cancel</strong> puts everything back exactly as it
+was before you opened the dialog.</p>
 <h2 id="performance-markings-repeats-endings-and-dynamics">8.
 Performance Markings: Repeats, Endings and Dynamics</h2>
 <h3 id="what-appears-in-the-performance-region">8.1 What Appears in the
@@ -873,6 +895,8 @@ the next time you open that same file:</p>
 <li>Whether the position announcer is switched on.</li>
 <li>Which note attributes are shown for each voice (§9.2).</li>
 <li>The order those attributes are read in (§9.4).</li>
+<li>Volume and pan set for each instrument, the metronome and the
+position announcer, via the Mixer (§7.8).</li>
 </ul>
 <p>Files are matched by their own filename, so moving a file to a
 different folder doesn’t lose its saved settings. If a saved setting no
@@ -949,6 +973,12 @@ settings. Disabled when no file is loaded.</td>
 <td style="text-align: left;">-</td>
 <td style="text-align: left;">Opens a read-only summary of the whole
 piece (§8.4).</td>
+</tr>
+<tr>
+<td style="text-align: left;">Mixer…</td>
+<td style="text-align: left;">Ctrl+Shift+X</td>
+<td style="text-align: left;">Opens the volume/pan mixer for every
+instrument, the metronome and the position announcer (§7.8).</td>
 </tr>
 </tbody>
 </table>
@@ -1220,6 +1250,15 @@ tempo</td>
 <tr>
 <td style="text-align: left;">Toggle the position announcer on/off</td>
 <td style="text-align: left;">Ctrl+P</td>
+</tr>
+<tr>
+<td style="text-align: left;">Open the Mixer dialog</td>
+<td style="text-align: left;">Ctrl+Shift+X</td>
+</tr>
+<tr>
+<td style="text-align: left;">Play a short preview from the Mixer dialog
+<em>(Mixer dialog only)</em></td>
+<td style="text-align: left;">Alt+W</td>
 </tr>
 <tr>
 <td style="text-align: left;">Jump to the start / end of the focused

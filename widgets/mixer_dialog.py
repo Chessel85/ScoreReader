@@ -115,8 +115,13 @@ class MixerDialog(QDialog):
         # An earlier version used "&Preview" (Alt+P), which collided with
         # the Pan field's own "&Pan:" mnemonic (also Alt+P) - reported bug,
         # live-tested: Alt+P didn't reliably reach the Preview button.
+        #
+        # Deliberately NO tooltip/setToolTip text here - reported bug,
+        # live-tested: a tooltip explaining what the button does ("Play the
+        # current bar and the next bar") got read out by NVDA right after
+        # the button's own name, on top of the label already spelling out
+        # what it is. The label alone is the whole accessible name.
         self.preview_button = QPushButton("Preview Alt+&W", self)
-        self.preview_button.setToolTip("Play the current bar and the next bar")
         self.preview_button.clicked.connect(self.preview_requested)
 
         button_row = QHBoxLayout()
