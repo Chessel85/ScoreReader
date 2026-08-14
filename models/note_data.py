@@ -22,3 +22,4 @@ class NoteData:
     articulation: Optional[str] = None
     fingering: Optional[str] = None
     pluck: Optional[str] = None
+    duration_name_us: Optional[str] = None

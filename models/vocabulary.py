@@ -9,6 +9,8 @@ clef names ("Treble stave", "Bass stave") stay as they are regardless of
 dialect, a simplification the user asked for.
 """
 
+import re
+
 UK_BASE_DURATION_NAMES = {
     # Checked longest-key-first by duration_name() so "double whole" isn't
     # matched as a dotted "whole".
@@ -31,16 +33,27 @@ def bar_word(uk_terms: bool) -> str:
 
 def duration_name(us_display_name: str, uk_terms: bool) -> str:
     """Translates an already-rendered US duration name (e.g. "dotted
-    quarter", from models/duration_units.py's beat_unit_display_name) to UK
-    terms. Operates on the final string, not the raw MusicXML type/dots, so
-    no parser code needs to change - the dotted-prefix words ("dotted ",
-    "double-dotted "...) are dialect-neutral, only the base word differs."""
+    quarter", "eighth triplet", from models/duration_units.py's
+    beat_unit_display_name/quarter_length_to_display_name plus
+    TimelineBuilder's tuplet-word suffix) to UK terms. Operates on the final
+    string, not the raw MusicXML type/dots, so no parser code needs to
+    change - the dotted-prefix words ("dotted ", "double-dotted "...) and
+    tuplet-suffix words ("triplet", "quintuplet"...) are dialect-neutral,
+    only the base word differs.
+
+    The base word is matched as a whole space-bounded token/phrase, not
+    just a suffix (a plain str.endswith used to be enough when the base
+    word was always last, but a tuplet suffix now often follows it, e.g.
+    "eighth" in "eighth triplet") - (?<!\\S)/(?!\\S) require the match to
+    start/end at a space or string boundary, so "eighth" doesn't
+    accidentally match inside some unrelated longer word."""
     if not uk_terms:
         return us_display_name
     for us_base in sorted(UK_BASE_DURATION_NAMES, key=len, reverse=True):
-        if us_display_name.endswith(us_base):
-            prefix = us_display_name[: -len(us_base)]
-            return f"{prefix}{UK_BASE_DURATION_NAMES[us_base]}"
+        match = re.search(r"(?<!\S)" + re.escape(us_base) + r"(?!\S)", us_display_name)
+        if match:
+            uk_base = UK_BASE_DURATION_NAMES[us_base]
+            return us_display_name[: match.start()] + uk_base + us_display_name[match.end():]
     return us_display_name
 
 

@@ -1,6 +1,4 @@
-* Loading the Chopin file, no midi is getting played.
 * when metronome is on, but moving up and down a chord, do not sound the metronome click.
-* Notes are always sorted highest pitch to lowest pitch for a voice. and in voice order.
 * Need a mixer to control volume and panning of each instrument (not voice) plus the click and talking metronomes.  Settings should be saved per score.
 * Duration attribute is quoted as note type e.g. quaver, eighth note.  Means duration added to note region does not need the preceding word 'duration'.
 * can we import musescore files directly?  And midi?

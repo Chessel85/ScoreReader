@@ -565,7 +565,12 @@ class MusicData:
         Only keys the note actually has a value for are included (a rest has
         no octave or midi). That absence is the mechanism that stops either
         region rendering a row for data that doesn't exist."""
-        dur_str = str(int(note.ts_duration)) if note.ts_duration.is_integer() else str(note.ts_duration)
+        if note.duration_name_us is not None:
+            dur_str = vocabulary.duration_name(note.duration_name_us, self.uk_terms)
+        else:
+            # No <type> in the source XML (rare) - fall back to the raw
+            # time-signature-relative number rather than guessing a name.
+            dur_str = str(int(note.ts_duration)) if note.ts_duration.is_integer() else str(note.ts_duration)
         pairs = {"step": note.step_name}
         if note.octave is not None:
             pairs["octave"] = str(note.octave)
@@ -610,6 +615,15 @@ class MusicData:
                 rows.append((f"{prefix}{label}", attribute_key, n, pairs[attribute_key]))
         return rows
 
+    # Attribute keys whose value alone is self-explanatory in Region 3's
+    # comma-joined note text, so the "<Label> " prefix _format_note_for_region_3
+    # adds for every other attribute is dropped: "step" ("F sharp") needs no
+    # "Step" prefix, and per user request "duration" doesn't either - a word
+    # like "quaver" already says what it is without "Duration quaver".
+    # Region 4's table still labels its "Duration" row normally; only this
+    # inline rendering omits the prefix.
+    REGION_3_UNPREFIXED_ATTRIBUTES = frozenset({"step", "duration"})
+
     def _format_note_for_region_3(self, note: NoteData) -> str:
         """Ref 15 AC4: the note name plus whichever extras its voice has
         switched on, comma-separated. An attribute renders only when it is
@@ -622,7 +636,7 @@ class MusicData:
         for key in self.attribute_order:
             if key not in wanted or key not in pairs:
                 continue
-            if key == "step":
+            if key in self.REGION_3_UNPREFIXED_ATTRIBUTES:
                 parts.append(pairs[key])
             else:
                 label = vocabulary.attribute_label(key, self.uk_terms)

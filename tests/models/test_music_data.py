@@ -846,11 +846,14 @@ def _note(part_id="P1", staff=1, voice=1) -> NoteData:
 
 def test_region_3_appends_configured_extra_attributes_comma_separated(timeline, minimal_score):
     md = timeline(minimal_score)
-    note = md.timeline_slices[0].notes[0]  # C, octave 4, ts_duration 1.0
+    note = md.timeline_slices[0].notes[0]  # C, octave 4, a quarter note
     voice_key = (note.part_id, note.staff, note.voice)
     md.voice_display_attributes[voice_key] = {"duration", "step", "octave"}  # order must not matter
 
-    assert md.get_region_3_data() == ["C, octave 4, duration 1"]
+    # "duration" renders as a bare US/UK duration word ("quarter"), with no
+    # "Duration" prefix - unlike every other extra attribute (e.g. "octave
+    # 4") - because the word alone already says what it is.
+    assert md.get_region_3_data() == ["C, octave 4, quarter"]
 
 
 def test_region_3_omits_missing_attributes_without_a_dangling_comma(timeline, rest_score):
@@ -860,10 +863,10 @@ def test_region_3_omits_missing_attributes_without_a_dangling_comma(timeline, re
     md.voice_display_attributes[("P1", 1, 1)] = {"step", "octave", "midi", "duration"}
 
     md.active_event_index = 0
-    assert md.get_region_3_data() == ["C, octave 4, midi 60, duration 1"]
+    assert md.get_region_3_data() == ["C, octave 4, midi 60, quarter"]
 
     md.active_event_index = 1  # the rest
-    assert md.get_region_3_data() == ["rest, duration 1"]
+    assert md.get_region_3_data() == ["rest, quarter"]
 
 
 def test_region_3_renders_blank_when_no_attributes_are_configured_on(timeline, minimal_score):
@@ -1100,12 +1103,12 @@ def test_attribute_keys_for_voices_orders_by_attribute_order(
 
 def test_region_3_extra_attributes_follow_a_mutated_attribute_order(timeline, minimal_score):
     md = timeline(minimal_score)
-    note = md.timeline_slices[0].notes[0]  # C, octave 4, ts_duration 1.0
+    note = md.timeline_slices[0].notes[0]  # C, octave 4, a quarter note
     voice_key = (note.part_id, note.staff, note.voice)
     md.voice_display_attributes[voice_key] = {"duration", "step", "octave"}
     md.move_attribute_order("duration", up=True, within=["step", "octave", "duration"])
 
-    assert md.get_region_3_data() == ["C, duration 1, octave 4"]
+    assert md.get_region_3_data() == ["C, quarter, octave 4"]
 
 
 def test_region_4_rows_follow_a_mutated_attribute_order(timeline, minimal_score):

@@ -3,7 +3,12 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from models.duration_units import beat_unit_display_name, beat_unit_quarter_length
+from models.duration_units import (
+    beat_unit_display_name,
+    beat_unit_quarter_length,
+    quarter_length_to_display_name,
+    tuplet_word,
+)
 from models.ending_span import EndingSpan
 from models.event_slice import EventSlice
 from models.hairpin_span import HairpinSpan
@@ -265,6 +270,26 @@ class TimelineBuilder:
                     is_rest = elem.find("rest") is not None
                     dur_divs = _duration_divs(elem)
 
+                    # The note's own notated shape (<type>/<dot>), not a
+                    # reverse-lookup from quarter_length - a tuplet member's
+                    # <type> still reads "eighth" even though its actual
+                    # sounding duration isn't a clean fraction, which is
+                    # exactly what a musician reading the note list wants
+                    # ("quaver", not some approximated tuplet fraction).
+                    # duration_name_us itself isn't finished until quarter_len
+                    # is known below (the <type>-less whole-measure-rest
+                    # fallback needs it), so only the raw ingredients are
+                    # collected here.
+                    type_el = elem.find("type")
+                    duration_type = type_el.text.strip() if (type_el is not None and type_el.text) else None
+                    duration_dots = len(elem.findall("dot"))
+                    time_mod_el = elem.find("time-modification")
+                    tuplet_actual_notes = None
+                    if time_mod_el is not None:
+                        actual_notes_el = time_mod_el.find("actual-notes")
+                        if actual_notes_el is not None and actual_notes_el.text:
+                            tuplet_actual_notes = int(actual_notes_el.text.strip())
+
                     staff = int(elem.find("staff").text.strip()) if elem.find("staff") is not None else 1
                     voice = int(elem.find("voice").text.strip()) if elem.find("voice") is not None else 1
 
@@ -346,6 +371,20 @@ class TimelineBuilder:
                     quarter_len = dur_divs / walker.divisions
                     ts_duration = round(quarter_len / beat_unit_quarter_len, 2)
 
+                    if duration_type is not None:
+                        duration_name_us = beat_unit_display_name(duration_type, duration_dots)
+                    else:
+                        # No <type> in the source XML - chiefly a
+                        # whole-measure rest, which MusicXML allows to omit
+                        # <type> entirely. Reverse-lookup from the real
+                        # quarter-length rather than leaving this note/rest
+                        # with no word at all.
+                        duration_name_us = quarter_length_to_display_name(quarter_len)
+                    if duration_name_us is not None and tuplet_actual_notes is not None:
+                        word = tuplet_word(tuplet_actual_notes)
+                        if word is not None:
+                            duration_name_us = f"{duration_name_us} {word}"
+
                     if m_num == 0:
                         start_beat = self._start_beat(
                             full_bar_quarters, pickup_filled_quarters, beat_unit_quarter_len
@@ -372,6 +411,7 @@ class TimelineBuilder:
                         articulation=articulation,
                         fingering=fingering,
                         pluck=pluck,
+                        duration_name_us=duration_name_us,
                     )
 
                     key = (m_num, round(offset_q, 4))
