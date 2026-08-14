@@ -5,9 +5,10 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QListWidget, QListWidgetItem
 
 from .region2_manager import Region2HierarchyModel, Region2Node
+from .region_focus_cycle import RegionFocusCycleMixin
 
 
-class Region2ListWidget(QListWidget):
+class Region2ListWidget(RegionFocusCycleMixin, QListWidget):
     """
     Region 2: parts/staves/voices hierarchy as a flat navigable list.
 
@@ -82,13 +83,10 @@ class Region2ListWidget(QListWidget):
         self.filter_changed.emit(active_tuples)
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_Tab:
-            self.window().focus_next_region(self)
-            return
-        elif event.key() == Qt.Key.Key_Backtab:
-            self.window().focus_previous_region(self)
-            return
-        elif event.key() == Qt.Key.Key_O:
+        # Tab/Shift+Tab are handled a level up, in RegionFocusCycleMixin.
+        # event() - QAbstractItemView never lets them reach keyPressEvent at
+        # all on a single-column view (R1, see that module's docstring).
+        if event.key() == Qt.Key.Key_O:
             curr_row = self.currentRow()
             if 0 <= curr_row < len(self._current_visible_nodes):
                 focused_node = self._current_visible_nodes[curr_row]

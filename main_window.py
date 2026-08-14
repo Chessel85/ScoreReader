@@ -216,9 +216,11 @@ class MainWindow(QMainWindow):
         # breaking the region_1->region_2 edge set earlier. This isn't
         # fixable by reordering the calls: with every widget used once as
         # a source and once as a target, the dependency between the calls is
-        # circular. So each region widget's keyPressEvent calls
-        # focus_next_region/focus_previous_region below directly instead,
-        # bypassing the global chain entirely.
+        # circular. So each region widget calls focus_next_region/
+        # focus_previous_region below directly instead, bypassing the global
+        # chain entirely - shared via widgets/region_focus_cycle.py's
+        # RegionFocusCycleMixin, which intercepts at event() level because
+        # QAbstractItemView never lets Tab reach keyPressEvent (R1).
 
         # C7: F6/Shift+F6 toggle focus between the regions area (restoring
         # whichever region was last focused) and the status bar. Menu bar

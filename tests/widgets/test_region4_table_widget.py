@@ -120,11 +120,17 @@ def test_menu_key_is_a_noop_with_no_current_row(qtbot):
 
 def test_tab_still_forwards_to_the_region_cycle(qtbot):
     """Overriding keyPressEvent for the Menu key must not break
-    RegionTableWidget's existing Tab/Backtab -> focus_next_region forwarding.
-    Calls keyPressEvent directly rather than via qtbot.keyClick - Qt's own
-    tab-focus handling intercepts a real Key_Tab before it reaches
-    keyPressEvent on a widget that isn't genuinely focused/shown, the same
-    QTest fragility already worked around for F6 pane-cycling (C7)."""
+    RegionTableWidget's Tab/Backtab -> focus_next_region forwarding.
+
+    R1: this used to call table.keyPressEvent(event) directly, on the
+    reasoning that Qt's tab-focus handling intercepts a real Key_Tab before
+    keyPressEvent on a widget that isn't genuinely focused/shown. That
+    interception is real - but it is the whole point, not an artefact to
+    route around: QAbstractItemView consumes Tab in event(), which is why
+    Region 2/3's keyPressEvent-based handlers were dead code for so long
+    without any test noticing. Dispatching through event() (what Qt itself
+    calls) exercises the real path, so a handler that can never fire in the
+    app can't pass here either."""
     calls = []
     fake_window = _FakeWindow()
     fake_window.focus_next_region = lambda current: calls.append(current)
@@ -132,6 +138,6 @@ def test_tab_still_forwards_to_the_region_cycle(qtbot):
     table = Region4TableWidget(1, 2, parent=fake_window)
 
     event = QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Tab, Qt.KeyboardModifier.NoModifier)
-    table.keyPressEvent(event)
+    assert table.event(event) is True
 
     assert calls == [table]

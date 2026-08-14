@@ -6,11 +6,13 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QListWidget
 
+from widgets.region_focus_cycle import RegionFocusCycleMixin
+
 if TYPE_CHECKING:
     from main_window import MainWindow
 
 
-class TimelineListWidget(QListWidget):
+class TimelineListWidget(RegionFocusCycleMixin, QListWidget):
     """
     Region 3 list widget handling custom timeline traversal (Left/Right)
     and single-note selection collapsing (Up/Down).
@@ -94,9 +96,8 @@ class TimelineListWidget(QListWidget):
                 self.clearSelection()
                 current.setSelected(True)
             main_win.on_region_3_vertical_move()
-        elif key == Qt.Key.Key_Tab:
-            main_win.focus_next_region(self)
-        elif key == Qt.Key.Key_Backtab:
-            main_win.focus_previous_region(self)
+        # Tab/Shift+Tab are handled a level up, in RegionFocusCycleMixin.
+        # event() - QAbstractItemView never lets them reach keyPressEvent at
+        # all on a single-column view (R1, see that module's docstring).
         else:
             super().keyPressEvent(event)

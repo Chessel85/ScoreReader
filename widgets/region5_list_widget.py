@@ -3,16 +3,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Optional
 
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QListWidget, QListWidgetItem
 
 from models.performance_region_row import PerformanceRegionRow
+from widgets.region_focus_cycle import RegionFocusCycleMixin
 
 if TYPE_CHECKING:
     from main_window import MainWindow
 
 
-class Region5ListWidget(QListWidget):
+class Region5ListWidget(RegionFocusCycleMixin, QListWidget):
     """
     Region 5 (Ref 29, the "Performance region"): a flat list of whichever
     repeat/ending/hairpin rows are active at the cursor's current position.
@@ -68,38 +69,6 @@ class Region5ListWidget(QListWidget):
         if item is None:
             return None
         return item.data(Qt.ItemDataRole.UserRole)
-
-    def event(self, event) -> bool:
-        """Tab/Backtab, live-tested finding: QAbstractItemView intercepts
-        these two keys at the event() level (its own internal cell/item
-        navigation logic) BEFORE keyPressEvent() is ever invoked, for a
-        single-column view like this one - overriding keyPressEvent alone
-        (the pattern every other region widget uses, e.g. Region2ListWidget/
-        TimelineListWidget) silently never fires for Tab here. Confirmed by
-        instrumenting keyPressEvent directly: it was never called for a real
-        Tab keypress, yet focus still moved (via Qt's plain native
-        focusNextPrevChild(), coincidentally matching the desired cycle
-        order for every transition except the wrap-around at the end of the
-        cycle - this widget being the new LAST region, Ref 29, is exactly
-        where that coincidence stops holding and the wrap silently landed on
-        the status bar instead of back on Region 1). Intercepting here, one
-        level up from keyPressEvent, runs before QAbstractItemView's own
-        event() handling gets a chance."""
-        if event.type() == QEvent.Type.KeyPress:
-            key = event.key()
-            # Live-tested finding: a synthetic Shift+Tab arrives here as
-            # plain Key_Tab with ShiftModifier set, not as Key_Backtab -
-            # Qt's own key-event dispatch doesn't normalize the two the way
-            # some native platform paths do, so both conventions are
-            # checked explicitly rather than trusting Key_Backtab alone.
-            shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
-            if key == Qt.Key.Key_Backtab or (key == Qt.Key.Key_Tab and shift):
-                self._main_window().focus_previous_region(self)
-                return True
-            elif key == Qt.Key.Key_Tab:
-                self._main_window().focus_next_region(self)
-                return True
-        return super().event(event)
 
     def keyPressEvent(self, event):
         key = event.key()

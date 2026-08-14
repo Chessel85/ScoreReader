@@ -387,6 +387,48 @@ def test_shift_tab_cycles_through_all_five_regions_in_reverse(
         assert window.focusWidget() is expected
 
 
+def test_every_region_routes_tab_through_the_region_cycle_not_qts_focus_chain(
+    window, qtbot, null_synth, minimal_score
+):
+    """R1 regression, live-tested: Region 2 and Region 3 forwarded Tab from
+    keyPressEvent, which QAbstractItemView never calls for Tab on a
+    single-column view - so their handlers were dead code and focus moved
+    only via Qt's implicit focus chain, which happened to match the intended
+    cycle because widget creation order in setup_ui happened to match it too.
+    Region 5 hitting the wrap-around is where that coincidence broke.
+
+    The two tests above assert only WHERE focus lands, so they passed
+    throughout - a coincidence is indistinguishable from correct wiring by
+    that measure alone. This one asserts the cycle methods actually run, so
+    the dead-handler state is detectable. Now shared via
+    widgets/region_focus_cycle.py's RegionFocusCycleMixin, which intercepts
+    at event() level."""
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+
+    regions = [window.region_1, window.region_2, window.region_3, window.region_4, window.region_5]
+    calls = []
+    window.focus_next_region = lambda current: calls.append(("next", current))
+    window.focus_previous_region = lambda current: calls.append(("prev", current))
+
+    for region in regions:
+        _focus(region)
+        calls.clear()
+
+        qtbot.keyClick(region, Qt.Key.Key_Tab)
+        assert calls == [("next", region)], f"{type(region).__name__} did not handle Tab"
+
+        calls.clear()
+        # A synthetic Shift+Tab arrives as Key_Tab + ShiftModifier, not as
+        # Key_Backtab - both spellings must reach focus_previous_region.
+        qtbot.keyClick(region, Qt.Key.Key_Tab, Qt.KeyboardModifier.ShiftModifier)
+        assert calls == [("prev", region)], f"{type(region).__name__} did not handle Shift+Tab"
+
+        calls.clear()
+        qtbot.keyClick(region, Qt.Key.Key_Backtab)
+        assert calls == [("prev", region)], f"{type(region).__name__} did not handle Backtab"
+
+
 def test_status_bar_updates_on_load_and_navigation(window, qtbot, null_synth, ts_change_score):
     """C6: status bar reflects the loaded score and then the new position
     after Ctrl+Right jumps into the 6/8 measure."""
