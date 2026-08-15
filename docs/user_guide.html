@@ -439,16 +439,24 @@ separately under your own Windows user profile and are covered in §14.3
 if you ever want to clear them by hand.</p>
 <h3 id="opening-a-score-file">2.2 Opening a Score File</h3>
 <p>Choose <strong>File &gt; Open…</strong> (or press
-<code>Ctrl+O</code>). A standard file-open dialog titled “Open MusicXML
-Score” appears. Choose your file and select Open. Once the file has
-finished loading, the five regions and status bar (§3) populate
-automatically - Region 1 with the score’s title, composer, key, time
-signature and tempo, Region 2 with its parts and staves, and so on.</p>
+<code>Ctrl+O</code>). A standard file-open dialog titled “Open Score”
+appears. Choose your file and select Open. Once the file has finished
+loading, the five regions and status bar (§3) populate automatically -
+Region 1 with the score’s title, composer, key, time signature and
+tempo, Region 2 with its parts and staves, and so on.</p>
 <h3 id="supported-file-types">2.3 Supported File Types</h3>
 <p>Recall Score opens <strong>MusicXML</strong> files -
 <code>.xml</code>, <code>.musicxml</code>, and the compressed
 <code>.mxl</code> format that many notation programs (including
-MuseScore) export by default.</p>
+MuseScore) export by default - and <strong>Standard MIDI Files</strong>
+- <code>.mid</code> and <code>.midi</code>.</p>
+<p>MIDI files carry far less information than a real MusicXML score: no
+part/instrument names beyond whatever the file itself declares (Region 2
+shows one row per track rather than the usual part/stave/voice detail,
+since a MIDI track has no real staff or voice concept), and often no -
+or wrong - key signature. Use <strong>Edit &gt; Instruments…</strong>
+and <strong>Edit &gt; Key Signature…</strong> (§12.2) to correct
+either.</p>
 <h3 id="a-five-minute-first-walkthrough">2.4 A Five-Minute First
 Walkthrough</h3>
 <p>A short first run-through, once you have a MusicXML file to open:</p>
@@ -519,6 +527,9 @@ Stave one or more Voices. Every row reads its name together with its
 current state, for example <code>Classical Guitar - on</code> or
 <code>Treble stave - on</code>. Use <code>O</code> to toggle the focused
 row - see §6 for how filtering works.</p>
+<p>For a MIDI file, this list shows one row per track only - MIDI has no
+real stave or voice concept, so there’s nothing further to navigate
+underneath a track.</p>
 <h3 id="region-3-note-timeline">3.4 Region 3: Note Timeline</h3>
 <p>The region you’ll spend the most time in. It lists the note or notes
 sounding at your current position in the score.
@@ -790,6 +801,17 @@ fall on beat 1 of its bar - repeats and endings never show one, since
 barlines only ever occur at the start of a bar. When your current
 position isn’t covered by any marking, Region 5 shows a single “None”
 row.</p>
+<p>Region 5 also shows a one-off row - with no start/end pair - the
+moment you land exactly where the time signature or tempo changes, for
+example:</p>
+<pre><code>Time signature change: 3/4
+Tempo change: 96 quarter notes per minute</code></pre>
+<p>Unlike the repeat/ending/hairpin rows above, this disappears again as
+soon as you move to the next note - it’s a “something changed here” flag
+for that one position, not a range you’re inside. The score’s
+<em>opening</em> time signature and tempo are never flagged this way,
+since Region 1 and the status bar already show those the moment a file
+loads.</p>
 <h3 id="the-something-changed-cue">8.2 The “Something Changed” Cue</h3>
 <p>A short, distinct sound plays whenever the set of entries showing in
 Region 5 changes as you navigate - for example the moment you step into
@@ -931,7 +953,7 @@ inspect or back them up directly (see also §14.3).</p>
 <tr>
 <td style="text-align: left;">Open…</td>
 <td style="text-align: left;">Ctrl+O</td>
-<td style="text-align: left;">Opens a MusicXML file.</td>
+<td style="text-align: left;">Opens a MusicXML or MIDI file.</td>
 </tr>
 <tr>
 <td style="text-align: left;">Exit</td>
@@ -979,6 +1001,21 @@ piece (§8.4).</td>
 <td style="text-align: left;">Ctrl+Shift+X</td>
 <td style="text-align: left;">Opens the volume/pan mixer for every
 instrument, the metronome and the position announcer (§7.8).</td>
+</tr>
+<tr>
+<td style="text-align: left;">Instruments…</td>
+<td style="text-align: left;">Ctrl+Shift+I</td>
+<td style="text-align: left;">Renames a part, or changes what instrument
+it plays back as, for the currently loaded score. Especially useful for
+MIDI files, where a track may have no name or an unhelpful one.</td>
+</tr>
+<tr>
+<td style="text-align: left;">Key Signature…</td>
+<td style="text-align: left;">Ctrl+Shift+K</td>
+<td style="text-align: left;">Overrides the whole piece’s key signature
+- a single choice from a list of all major and minor keys, or “use the
+file’s own key”. Mainly for MIDI files, which often carry no key
+signature at all.</td>
 </tr>
 </tbody>
 </table>
@@ -1259,6 +1296,14 @@ tempo</td>
 <td style="text-align: left;">Play a short preview from the Mixer dialog
 <em>(Mixer dialog only)</em></td>
 <td style="text-align: left;">Alt+W</td>
+</tr>
+<tr>
+<td style="text-align: left;">Open the Instruments dialog</td>
+<td style="text-align: left;">Ctrl+Shift+I</td>
+</tr>
+<tr>
+<td style="text-align: left;">Open the Key Signature dialog</td>
+<td style="text-align: left;">Ctrl+Shift+K</td>
 </tr>
 <tr>
 <td style="text-align: left;">Jump to the start / end of the focused

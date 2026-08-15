@@ -23,3 +23,9 @@ class NoteData:
     fingering: Optional[str] = None
     pluck: Optional[str] = None
     duration_name_us: Optional[str] = None
+    # S6: the fifths value MidiTimelineBuilder actually spelled this note
+    # against (None for MusicXML, whose spelling never depends on key at
+    # all). Lets MusicData.apply_key_signature_override re-derive a MIDI
+    # note's own original spelling when the override is cleared, with no
+    # re-parse and no separate cached "original text" field.
+    file_key_fifths: Optional[int] = None

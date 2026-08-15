@@ -54,6 +54,41 @@ def test_disabling_a_staff_hides_its_voices(model):
     assert "Bass Clef" in names, "the staff row itself stays visible"
 
 
+def test_collapse_to_parts_shows_only_part_rows():
+    """Ref 25/S2: a MIDI-loaded score's Region 2 shows track on/off only -
+    no staff/voice rows, which for MIDI are either fake (staff) or, in every
+    real file tested, always trivially 1 (voice)."""
+    model = Region2HierarchyModel()
+    model.build_from_score(PARTS_DATA, collapse_to_parts=True)
+
+    names = [n.display_name.strip() for n in model.get_visible_nodes()]
+    assert names == ["Piano", "Classical Guitar"]
+
+
+def test_collapse_to_parts_still_computes_full_active_voice_tuples():
+    """The tree underneath a collapsed part row must stay fully intact -
+    only the RENDERED rows change. Collapsing must not make every note in
+    a MIDI part invisible (get_active_voice_tuples only finds a voice by
+    walking down to a real 'voice' tree node)."""
+    model = Region2HierarchyModel()
+    model.build_from_score(PARTS_DATA, collapse_to_parts=True)
+
+    assert model.get_active_voice_tuples() == {
+        ("P1", 1, 1), ("P1", 2, 5), ("P1", 2, 6),
+        ("P2", 1, 1), ("P2", 1, 2),
+    }
+
+
+def test_collapse_to_parts_toggle_still_hides_the_whole_part(model):
+    collapsed = Region2HierarchyModel()
+    collapsed.build_from_score(PARTS_DATA, collapse_to_parts=True)
+
+    collapsed.toggle_node("part_P1")
+
+    assert ("P1", 1, 1) not in collapsed.get_active_voice_tuples()
+    assert ("P2", 1, 1) in collapsed.get_active_voice_tuples()
+
+
 def test_node_ids_stay_unique_across_parts(model):
     """Both parts have a staff 1 with a voice 1. They must not collide -
     the flat dict in MusicData.get_region_2_data() does exactly that."""

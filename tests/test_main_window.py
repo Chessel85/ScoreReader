@@ -10,9 +10,12 @@ from PySide6.QtWidgets import QApplication, QDialog, QLabel, QTableWidget, QWidg
 
 from audio.metronome import METRONOME_OFFBEAT_NOTE
 from main_window import MainWindow, detect_default_uk_terms
+from models import mixer_settings
 from widgets.about_dialog import AboutDialog
 from widgets.attribute_order_dialog import AttributeOrderDialog
 from widgets.goto_measure_dialog import GotoMeasureDialog
+from widgets.instrument_dialog import InstrumentDialog
+from widgets.key_signature_dialog import KeySignatureDialog
 from widgets.mixer_dialog import MixerDialog
 from widgets.tempo_offset_dialog import TempoOffsetDialog
 
@@ -816,6 +819,36 @@ def test_about_action_opens_without_crashing(window, qtbot, monkeypatch):
     assert opened == [True]
 
 
+def test_loading_a_midi_file_populates_regions_and_plays(window, qtbot, null_synth, midi_bach_bourree):
+    """End-to-end J1/Ref 25 smoke test: ScoreLoadThread dispatches a .mid
+    path to MidiReader instead of MusicXMLReader (workers/score_load_worker.py),
+    and the rest of MainWindow's load path (regions, audition) needs no
+    changes at all - it only ever reads through MusicData's accessors."""
+    load_and_wait(window, qtbot, midi_bach_bourree)
+
+    assert window.region_1.rowCount() > 0, "score metadata"
+    assert window.region_3.count() > 0, "note list"
+    assert window._music_data.timeline_slices
+    assert null_synth.last_played is not None
+
+
+def test_loading_a_midi_file_collapses_region_2_to_part_rows(window, qtbot, midi_bach_bourree):
+    """Ref 25/S2: a MIDI score's Region 2 shows track on/off only, no
+    staff/voice rows."""
+    load_and_wait(window, qtbot, midi_bach_bourree)
+
+    assert window.region_2.count() == len(window._music_data.parts_info)
+    assert window.region_2.item(0).text().startswith("클래식 기타")
+
+
+def test_loading_a_musicxml_file_still_shows_staff_and_voice_rows(window, qtbot, score_duet):
+    """Confirms S2's collapse is MIDI-only - a MusicXML score's real staff/
+    voice structure must still be fully navigable, unchanged."""
+    load_and_wait(window, qtbot, score_duet)
+
+    assert window.region_2.count() > len(window._music_data.parts_info)
+
+
 def test_loading_a_missing_file_does_not_crash_or_leave_the_thread_dangling(window, qtbot):
     """R1: MusicXMLReader.load() currently swallows parse errors into an
     empty MusicData rather than raising (tasks.txt I1 is the fix for that) -
@@ -1101,6 +1134,36 @@ def test_mixer_dialog_cancel_reverts_the_synth_and_leaves_the_mixer_untouched(
     assert (channel, 100) in revert_calls
 
 
+def test_switching_files_does_not_leak_a_mixer_override_onto_the_new_score(
+    window, qtbot, minimal_score, score_duet, monkeypatch
+):
+    """Reported bug, live-tested: the synth is a long-lived singleton across
+    file loads, so a channel's volume CC value from the PREVIOUS score used
+    to survive untouched into a new one with no override of its own -
+    apply_mixer only sent CC for parts with an explicit override. The
+    user's repro was a cello set to 0% in one score's Mixer staying silent
+    after switching to an unrelated score whose part happened to land on
+    the same channel. Both fixtures' first part lands on channel 0
+    (get_channel_for_part assigns sequentially from the low end)."""
+    load_and_wait(window, qtbot, minimal_score)
+    part_id = window._music_data.parts_info[0].part_id
+    channel = window._music_data.get_channel_for_part(part_id)
+
+    def edit(dialog):
+        dialog.row_list.setCurrentRow(0)
+        dialog.volume_spin.setValue(0)
+
+    dialog = _fake_mixer_dialog(monkeypatch, window, accept=True, on_exec=edit)
+    window._show_mixer_dialog()
+    assert (channel, 0) in window.synth.volume_changes
+
+    load_and_wait(window, qtbot, score_duet)
+    new_channel = window._music_data.get_channel_for_part(window._music_data.parts_info[0].part_id)
+    assert new_channel == channel
+    assert window._music_data.mixer.is_empty()
+    assert (channel, mixer_settings.DEFAULT_VOLUME) in window.synth.volume_changes
+
+
 def test_mixer_dialog_preview_plays_without_moving_the_main_cursor(
     window, qtbot, minimal_score, monkeypatch
 ):
@@ -1124,6 +1187,179 @@ def test_mixer_dialog_does_nothing_with_no_score_loaded(window, qtbot):
     """Guards the same way _show_performance_report_dialog does - opening
     the Mixer before any file is loaded must not crash."""
     window._show_mixer_dialog()
+
+
+# --- S5: Instrument dialog -------------------------------------------------
+
+def _fake_instrument_dialog(monkeypatch, window, *, accept: bool, on_exec=None):
+    """Same convention as _fake_mixer_dialog: build a real InstrumentDialog
+    from the window's own current parts, fake exec() to run on_exec(dialog)
+    and return Accepted/Rejected, and patch main_window.InstrumentDialog to
+    hand it back regardless of constructor args."""
+    rows = [(p.part_id, p.name, p.gmidi_program) for p in window._music_data.parts_info]
+    dialog = InstrumentDialog(window, rows=rows)
+
+    def fake_exec():
+        if on_exec is not None:
+            on_exec(dialog)
+        return QDialog.DialogCode.Accepted if accept else QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(dialog, "exec", fake_exec)
+    monkeypatch.setattr("main_window.InstrumentDialog", lambda parent, rows: dialog)
+    return dialog
+
+
+def test_instrument_dialog_ok_renames_the_part_and_reprograms_it(
+    window, qtbot, minimal_score, monkeypatch
+):
+    load_and_wait(window, qtbot, minimal_score)
+    part_id = window._music_data.parts_info[0].part_id
+
+    def edit(dialog):
+        dialog.row_list.setCurrentRow(0)
+        dialog.name_edit.setText("Renamed Part")
+        dialog.instrument_combo.setCurrentText("Clarinet")
+
+    _fake_instrument_dialog(monkeypatch, window, accept=True, on_exec=edit)
+    window._show_instrument_dialog()
+
+    assert window._music_data.parts_info[0].name == "Renamed Part"
+    assert window._music_data.parts_info[0].gmidi_program == 72
+
+    # NoteData.part_name kept in sync (R5's invariant) - Region 3/the
+    # Performance Report both key off it.
+    matching = [
+        n for s in window._music_data.timeline_slices for n in s.notes if n.part_id == part_id
+    ]
+    assert matching and all(n.part_name == "Renamed Part" for n in matching)
+
+    # Region 2's part row reflects the rename in place.
+    assert window.region_2.item(0).text().startswith("Renamed Part")
+
+    # Ref 27-style persistence: reload the same file and the override must
+    # still be there.
+    load_and_wait(window, qtbot, minimal_score)
+    assert window._music_data.parts_info[0].name == "Renamed Part"
+    assert window._music_data.parts_info[0].gmidi_program == 72
+
+
+def test_instrument_dialog_cancel_leaves_the_part_untouched(
+    window, qtbot, minimal_score, monkeypatch
+):
+    load_and_wait(window, qtbot, minimal_score)
+    original_name = window._music_data.parts_info[0].name
+    original_program = window._music_data.parts_info[0].gmidi_program
+
+    def edit(dialog):
+        dialog.row_list.setCurrentRow(0)
+        dialog.name_edit.setText("Should Not Stick")
+        dialog.instrument_combo.setCurrentText("Clarinet")
+
+    _fake_instrument_dialog(monkeypatch, window, accept=False, on_exec=edit)
+    window._show_instrument_dialog()
+
+    assert window._music_data.parts_info[0].name == original_name
+    assert window._music_data.parts_info[0].gmidi_program == original_program
+
+
+def test_instrument_dialog_rename_does_not_reset_region_2_toggle_state(
+    window, qtbot, score_duet, monkeypatch
+):
+    """The rename must go through Region2ListWidget.rename_part (an
+    in-place label edit), never a load_score_structure rebuild - that would
+    silently switch every part/staff/voice back on, discarding whatever the
+    user had already toggled off."""
+    load_and_wait(window, qtbot, score_duet)
+    window.region_2.setCurrentRow(0)
+    qtbot.keyClick(window.region_2, Qt.Key.Key_O)  # switch the first part off
+    assert window.region_2.model_manager.roots[0].enabled is False
+
+    def edit(dialog):
+        dialog.row_list.setCurrentRow(0)
+        dialog.name_edit.setText("Renamed")
+
+    _fake_instrument_dialog(monkeypatch, window, accept=True, on_exec=edit)
+    window._show_instrument_dialog()
+
+    assert window.region_2.model_manager.roots[0].enabled is False
+    assert window.region_2.model_manager.roots[0].display_name == "Renamed"
+
+
+def _fake_key_signature_dialog(monkeypatch, window, *, accept: bool, on_exec=None):
+    """Same convention as _fake_mixer_dialog/_fake_instrument_dialog."""
+    current_key = (
+        window._music_data.key_signature_override_fifths,
+        window._music_data.key_signature_override_mode,
+    )
+    dialog = KeySignatureDialog(window, current_key=current_key)
+
+    def fake_exec():
+        if on_exec is not None:
+            on_exec(dialog)
+        return QDialog.DialogCode.Accepted if accept else QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(dialog, "exec", fake_exec)
+    monkeypatch.setattr(
+        "main_window.KeySignatureDialog", lambda parent, current_key: dialog
+    )
+    return dialog
+
+
+def test_key_signature_override_updates_region_1_and_status_bar_and_persists(
+    window, qtbot, midi_test1, monkeypatch
+):
+    """midi_test1 has no key metadata at all (files/midi/readme.md.txt),
+    so it opens as fifths=0/"C major / A minor" - a real case the override
+    is meant for."""
+    load_and_wait(window, qtbot, midi_test1)
+
+    def edit(dialog):
+        g_major_index = next(
+            i for i in range(dialog.key_combo.count())
+            if dialog.key_combo.itemText(i) == "G major"
+        )
+        dialog.key_combo.setCurrentIndex(g_major_index)
+
+    _fake_key_signature_dialog(monkeypatch, window, accept=True, on_exec=edit)
+    window._show_key_signature_dialog()
+
+    assert window._music_data.key_signature_override_fifths == 1
+    assert window._music_data.key_signature_override_mode == "major"
+    assert window._music_data.get_region_1_data()["Key Signature"] == "G major"
+    assert window._music_data.get_status_bar_fields()[1] == "Key: G major"
+
+    # Ref 27-style persistence: reload the same file and the override must
+    # still be there.
+    load_and_wait(window, qtbot, midi_test1)
+    assert window._music_data.key_signature_override_fifths == 1
+    assert window._music_data.key_signature_override_mode == "major"
+
+
+def test_key_signature_dialog_cancel_leaves_the_override_untouched(
+    window, qtbot, midi_test1, monkeypatch
+):
+    load_and_wait(window, qtbot, midi_test1)
+
+    def edit(dialog):
+        g_major_index = next(
+            i for i in range(dialog.key_combo.count())
+            if dialog.key_combo.itemText(i) == "G major"
+        )
+        dialog.key_combo.setCurrentIndex(g_major_index)
+
+    _fake_key_signature_dialog(monkeypatch, window, accept=False, on_exec=edit)
+    window._show_key_signature_dialog()
+
+    assert window._music_data.key_signature_override_fifths is None
+    assert window._music_data.key_signature_override_mode is None
+
+
+def test_key_signature_dialog_does_nothing_with_no_score_loaded(window, qtbot):
+    window._show_key_signature_dialog()
+
+
+def test_instrument_dialog_does_nothing_with_no_score_loaded(window, qtbot):
+    window._show_instrument_dialog()
 
 
 def test_f_s_d_shortcuts_fire_from_any_region(window, qtbot, minimal_score):
@@ -2084,6 +2320,26 @@ def test_ctrl_end_on_region_5_jumps_to_the_last_note_of_the_end_bar(
     current = window._music_data.get_current_slice()
     assert current.measure == 3
     assert current.notes[0].step_name == "E"
+
+
+def test_navigating_into_a_time_signature_change_updates_region_5_and_plays_the_cue(
+    window, qtbot, null_synth, ts_change_score
+):
+    """S7: ts_change_score is 4/4 (bar 1, 4 slices) -> 6/8 (bar 2) -> 4/4
+    (bar 3) - four Right presses land on the first slice of bar 2."""
+    load_and_wait(window, qtbot, ts_change_score)
+    null_synth.performance_cues.clear()
+
+    for _ in range(4):
+        qtbot.keyClick(window.region_3, Qt.Key.Key_Right)
+
+    assert _region_5_labels(window) == ["Time signature change: 6/8"]
+    assert len(null_synth.performance_cues) == 1
+
+    # One-shot: moving on within the same new signature clears the row
+    # again (no further span to still be "inside").
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Right)
+    assert _region_5_labels(window) == ["None"]
 
 
 def test_performance_report_action_shows_the_dialog_and_restores_focus(

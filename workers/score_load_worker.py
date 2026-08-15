@@ -3,6 +3,7 @@ import traceback
 
 from PySide6.QtCore import QThread, Signal
 
+from parsers.midi_reader import MidiReader
 from parsers.musicXML_reader import MusicXMLReader
 
 
@@ -24,7 +25,10 @@ class ScoreLoadThread(QThread):
 
     def run(self):
         try:
-            data = MusicXMLReader(self.file_path).load()
+            if self.file_path.lower().endswith((".mid", ".midi")):
+                data = MidiReader(self.file_path).load()
+            else:
+                data = MusicXMLReader(self.file_path).load()
         except Exception:
             self.failed.emit(traceback.format_exc())
             return

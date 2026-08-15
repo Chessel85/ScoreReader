@@ -1195,7 +1195,25 @@ PHASE I - ROBUSTNESS AND ERROR HANDLING                   (2 tasks)
 ###
 PHASE J - FILE I/O                                        (6 tasks)
 ###
-[ ] J1  Import MIDI, types 1 and 2 - Ref 25
+[x] J1  Import MIDI, types 1 and 2 - Ref 25
+        > DONE 2026-08-15. parsers/midi_source.py (hand-rolled binary MTrk
+          parser, no mido - see CLAUDE.md), parsers/midi_reader.py
+          (MidiReader, mirrors MusicXMLReader) and
+          parsers/midi_timeline_builder.py (MidiTimelineBuilder, mirrors
+          TimelineBuilder). MusicData.__post_init__ and
+          workers/score_load_worker.py dispatch on .mid/.midi extension.
+          Ground-truth verified: bach-bourree-tab.mid (MuseScore's own MIDI
+          export of files/bach-bourree-tab/score.xml) diffed note-for-note
+          against the MusicXML parse over the un-repeated prefix - see
+          tests/parsers/test_midi_timeline_builder.py's
+          test_matches_musicxml_ground_truth_for_the_unrepeated_prefix.
+          Format 2 (asynchronous multi-track) is NOT handled - no real-world
+          fixture exists for it and it's vanishingly rare; scope reduced to
+          types 0/1 with the user's agreement. Percussion (channel 10)
+          tracks are skipped on import, matching Ref 25 AC2's "load all
+          tracks" only where a track carries real pitched note content.
+          See D-19 for the "no synthetic rests for MIDI gaps" decision, and
+          Phase S for follow-up fixes/features found reviewing real files.
 [ ] J2  Import Guitar Pro (needs PyGuitarPro) - Ref 25
 [ ] J3  Import Braille Music Editor - Ref 25
 [ ] J4  Export MusicXML, preserving bars, notes, string and fret data - Ref 26
@@ -1520,6 +1538,289 @@ D-18 Region 2 rebuild clobbered a restored Ref 27 voice filter on reload
        region_2.apply_active_voice_tuples has run - one correct audition,
        not one wrong one followed by a silent correction. Regression test:
        test_initial_audition_on_reload_respects_the_restored_voice_filter.
+
+D-19 MIDI note gaps and synthetic rests
+     DECIDED 2026-08-15: MIDI note gaps (e.g. a quaver note followed by a
+     quaver-length silence before the next note) are never backfilled with
+     a synthetic rest marker/EventSlice. This matches the existing
+     MusicXML behaviour exactly - "Rests are skipped, so navigation lands
+     only on attacks" (see Timeline model in CLAUDE.md) - so the two
+     formats already agree without any MIDI-specific handling required.
+     Considered and rejected: inserting a rest EventSlice so a voice reads
+     as "fully populated" bar-by-bar, matching what the notated score would
+     show. User's own call, found reviewing files/midi/test1.MID: this
+     would add a navigation stop on every silence, reducing usability, for
+     a benefit (an explicit "you are on a rest here" cue) the format
+     doesn't get any more than MusicXML already provides today. Revisit
+     only if real usage shows the gap is actually confusing rather than
+     just silent.
+
+D-20 Omit redundant accidentals implied by the key signature (deferred from S6)
+     OPEN, raised by the user alongside S6 (2026-08-15), deliberately not
+     implemented there. Idea: ordinary notation doesn't re-mark an
+     accidental already implied by the key signature - e.g. in G major, the
+     F on the staff is understood to be F# without a sharp sign attached to
+     every one. Applied to this app's spoken note names, that would mean
+     not saying "sharp" for a note whose accidental exactly matches what
+     the current key signature already implies, while still saying it in
+     full for any other accidental (including a real natural cancelling
+     the key - see the correctness point below).
+
+     Needs a real model change first: NoteData only stores the FINISHED
+     spoken text (step_name, e.g. "F sharp"), not the raw letter+alter it
+     was built from (MusicXML: parsers/timeline_builder.py's
+     acc_words-based composition; MIDI: parsers/midi_timeline_builder.py's
+     _spell_pitch table) - the omit-logic needs the raw pair to compare
+     against the key signature's own altered-degree set (the standard
+     circle-of-fifths order: sharp keys alter F,C,G,D,A,E,B in that order;
+     flat keys alter B,E,A,D,G,C,F), which a plain string can't reliably be
+     parsed back into.
+
+     Correctness wrinkle that makes this a coupled change, not just an
+     omission: if the expected F# in G major is spoken as bare "F" (word
+     omitted), an actual natural F (a real accidental CANCELLING the key
+     signature) would read identically unless it explicitly starts saying
+     "F natural" - today's plain alter=0 rendering ("F", no word) is
+     already correct and unambiguous specifically because no note's
+     spelling depends on key at all yet. Omitting the word for the
+     expected case reopens that ambiguity and must be fixed in the same
+     pass, not left as a known gap.
+
+     Also open: whether the toggle for this (if built) is session-wide like
+     uk_terms (F4 - a personal reading-style preference, independent of
+     which score is open) or per-score like metronome_enabled (ScoreConfig)
+     - not decided, needs asking when this is picked up. MIDI's existing
+     _spell_pitch simplification (sharp-only or flat-only per file, not
+     full scale-degree spelling - see its own module comment) composes
+     correctly with this idea without further changes: a MIDI note's
+     spelled letter+accidental is still checked against the key's real
+     altered-degree set the same way a MusicXML note's would be.
+
+
+###
+PHASE S - MIDI IMPORT REVIEW FIXES (2026-08-15)           (7 tasks)
+###
+  Findings from the user hand-testing J1 (MIDI import) against the fixtures
+  in files/midi/ - see the "MIDI Import Review Fixes" plan this phase was
+  written from for full detail on each. S1-S4 are direct Ref 25 follow-ups;
+  S5 is a general playback bug (not MIDI-specific) surfaced by the same
+  review; S6/S7 are new functional requirements not yet in the Product
+  Definition Document's numbered table; S8 touches Ref 29 (Performance
+  region). One at a time, per the user's own instruction - not a single
+  sweep. (Two related design decisions, no code needed for either, are
+  recorded as D-19/D-20 above rather than as their own tasks here.)
+
+[x] S1  MIDI title fallback: no title metadata -> use the filename with its
+        extension stripped - Ref 25
+        > DONE 2026-08-15. parsers/midi_reader.py: credits["Title"] =
+          Path(file_path).stem, same "Title" key MusicXML's own
+          <credit-type>title</credit-type> capitalizes to.
+[x] S2  Region 2 collapses to part-only for a MIDI-loaded score (no
+        staff/voice rows - MIDI staff is always fake, voice is untested
+        beyond 1 in every real file seen) - Ref 25
+        > DONE 2026-08-15. Region2HierarchyModel.build_from_score gained
+          collapse_to_parts (default False); get_visible_nodes stops
+          descending past a part node when set, but the full 3-level tree
+          underneath is untouched - get_active_voice_tuples still finds
+          every real voice, so this is purely a rendered-rows change, not a
+          filtering change (confirmed by a dedicated test: collapsed rows
+          show only 2 part names, but get_active_voice_tuples still returns
+          all 5 real (part,staff,voice) tuples). New MusicData.is_midi
+          property is what main_window.py's _update_ui_regions passes as
+          the flag, replacing what would have been a third copy of the
+          .mid/.midi extension check already in music_data.py/
+          score_load_worker.py.
+[x] S3  Tighten MidiTimelineBuilder's duration-word-match tolerance (0.03 ->
+        ~0.01) so a note a couple of percent off a clean fraction falls
+        through to the existing numeric fallback instead of being
+        mis-named - Ref 25
+        > DONE 2026-08-15. tolerance=0.01 in
+          parsers/midi_timeline_builder.py's quarter_length_to_display_name
+          call. Regression tests: a synthetic 0.98-quarter note now
+          resolves duration_name_us to None (falls through to the numeric
+          fallback), an exact 1.0-quarter note still resolves to "quarter".
+        > FOLLOW-UP 2026-08-15, reported/live-tested against a real
+          freehand (non-quantized) MIDI recording the user recorded in
+          Reaper (files/midi/test3.MID, added to
+          files/midi/readme.md.txt): tightening the tolerance wasn't
+          enough on its own - with positions and durations landing
+          anywhere, individual notes still frequently landed within 1% of
+          SOME type/dots combination purely by numeric coincidence (dense
+          coverage: 13 types x up to 4 dots), producing odd names like
+          "double-dotted thirty-second" mixed in among plain "sixteenth"s -
+          a mix the user called unsatisfactory even where each name was
+          individually defensible. Fixed with a per-track second pass
+          (MidiTimelineBuilder.build()): models/duration_units.py gained
+          is_simple_duration_match() (whole/half/quarter/eighth/16th/32nd
+          with 0-1 dots only), and any track where over 5% of its notes'
+          duration names are NOT simple has every one of its notes' - not
+          just the weird ones - duration_name_us reset to None, so the
+          whole track is consistently numeric rather than a mix. Verified
+          against test3.MID directly: 3 of 16 notes matched something (2
+          weird, 1 "sixteenth"), 18.75% > 5%, all 16 now numeric.
+          Also fixed in the same pass: Region 3's inline note text omits
+          the "duration" label only when duration_name_us is a real word
+          (per an earlier user request - "quaver" is self-explanatory) -
+          the numeric fallback now keeps the label ("duration 1.5"), since
+          a bare number alone in the comma list could be mistaken for
+          anything. models/music_data.py's _format_note_for_region_3.
+[x] S4  Fix mixer volume/pan leaking across file switches: apply_mixer only
+        sends CC for parts with an explicit override, so a channel's value
+        from the PREVIOUS score (the synth is a long-lived singleton)
+        survives into a new one with nothing to reset it. Reset every
+        part's channel to the GM default (volume 100, pan 64) before
+        applying this score's overrides.
+        > DONE 2026-08-15. controllers/playback_controller.py's apply_mixer
+          now resends every mixer-controllable channel unconditionally -
+          override if one exists, else mixer_settings.DEFAULT_VOLUME /
+          default_pan_for(key) - the same revert values cancel_mixer_edit
+          already used, just now also applied on every load, not only on
+          Mixer-dialog cancel. Regression test:
+          test_switching_files_does_not_leak_a_mixer_override_onto_the_new_score
+          in tests/test_main_window.py, reproducing the user's own repro
+          (two unrelated scores whose first part shares a channel).
+[x] S5  Per-part instrument (GM program) override + display-name override,
+        new dialog, for both MusicXML and MIDI parts, persisted per-file
+        (ScoreConfig). Needs a new 128-entry GM instrument name table
+        (doesn't exist anywhere yet) - land that plus the quick win of
+        suggesting a MIDI track's name from its own Program Change event
+        (instead of "Track N") first, independently.
+        > DONE 2026-08-15. models/gm_instruments.py: the 128-name GM Level 1
+          table (1-indexed, matching PartStructureInfo.gmidi_program's own
+          convention), plus gm_instrument_name()/gm_program_for_name().
+          parsers/midi_reader.py's _build_parts_info uses it for the quick
+          win - an untitled track with a Program Change now suggests the GM
+          name instead of "Track N" (doesn't fix BluePeter.mid itself,
+          whose tracks DO carry literal names like "Track1" per the user's
+          own description - a real name always wins over the suggestion;
+          the dialog below is the actual fix for that file).
+          widgets/instrument_dialog.py: one row per part (QListWidget, same
+          shape as MixerDialog), a plain QLineEdit for the display name and
+          an editable QComboBox + QCompleter (MatchContains, case
+          insensitive) for the instrument - per the user's explicit design
+          ask: name field + combo box, program numbers never surfaced, some
+          quick search facility, simple UI, OK/Cancel. No live audio
+          preview (unlike Mixer) - a name/program change has nothing to
+          preview live, and the user asked to keep this simple. Edits are
+          committed on row-switch and again in overrides() itself (covers
+          OK on whatever row was on screen without switching away first);
+          overrides() returns only parts that actually changed.
+          MusicData.apply_part_overrides(name_overrides, program_overrides)
+          mutates parts_info in place (get_gmidi_program_for_part already
+          reads it live, so the program override needed no other wiring)
+          and re-syncs NoteData.part_name for every affected note - R5's
+          "two copies of a part name must agree verbatim" invariant
+          (CLAUDE.md) applies here too: get_performance_report_lines joins
+          parts_info.name against note.part_name by exact text match, so a
+          rename that touched only one side would silently show 0 notes
+          again, the same bug class R5 fixed. Region 2's part-row label is
+          updated in place (Region2HierarchyModel.rename_part / Region2List
+          Widget.rename_part), never via load_score_structure - that
+          resets every node back to enabled=True, which would silently
+          re-enable whatever the user had switched off. ScoreConfig gained
+          part_name_overrides/part_program_overrides (Dict[part_id, ...]),
+          same "explicit overrides only" shape as mixer, wired through
+          export_config/apply_config (best-effort: an override for a
+          part_id no longer in the score is dropped) and persistence/
+          score_config.py's JSON codec. Edit menu > "Instruments..."
+          (Ctrl+Shift+I). 32 new tests across tests/models/
+          test_gm_instruments.py, tests/models/test_music_data.py, tests/
+          parsers/test_midi_reader.py, tests/widgets/
+          test_instrument_dialog.py and tests/test_main_window.py
+          (including that a rename survives a reload, and that it does not
+          reset Region 2's on/off state).
+[x] S6  Key signature override, user-settable, persisted per-file - own
+        dialog (see FOLLOW-UP below - not S5's, despite the original
+        sketch). v1 scope: one whole-piece override, not a per-position
+        list.
+        > DONE 2026-08-15. One combo box, not two separate fifths/mode
+          controls: models/key_signatures.py's key_override_options() lists
+          all 15 major + 15 minor key names (plus a "use the file's own
+          key" sentinel, 31 entries) - picking "G major" sets fifths and
+          major/minor display mode together, which is also what fixes the
+          weak "C major / A minor" label the user flagged (
+          key_signature_display_name(fifths, mode) splits FIFTHS_MAP's own
+          string rather than adding a second table). Non-editable combo,
+          deliberately unlike the instrument one - 31 entries is few enough
+          that native Qt keyboard-search (press a letter, jump/cycle) is
+          sufficient alone, and it avoids the free-text-resolution handling
+          the instrument field needs.
+          MusicData.apply_key_signature_override(fifths, mode): for a
+          MIDI-loaded score, re-spells every note via
+          parsers/midi_timeline_builder.py's _spell_pitch - MIDI has no
+          real notation to derive spelling from, so a wrong/missing file
+          key produces wrong enharmonic spelling until corrected here.
+          Symmetric by design: clearing the override (fifths=None)
+          re-derives each note's spelling from its own new NoteData.
+          file_key_fifths field (the fifths MidiTimelineBuilder actually
+          spelled it against at parse time) rather than a separate cached
+          "original text", so no re-parse and no distinct restore path are
+          needed. MusicXML notes are never re-spelled - their spelling
+          comes straight from the file's own <step>/<alter> and never
+          depended on key; the override only ever changes what key is
+          DISPLAYED for an XML score (get_region_1_data/
+          get_status_bar_fields, same live-rebuild pattern the Tempo field
+          already used for the UK/US toggle). ScoreConfig gained
+          key_signature_override_fifths/_mode, applied unconditionally in
+          apply_config (unlike the part overrides, not tied to score
+          content that could go missing on reload).
+        > FOLLOW-UP 2026-08-15 (user tested, two changes): (1) the key
+          combo initially lived as a second control inside S5's Instruments
+          dialog - the user found renaming/reprogramming a part and
+          overriding the score's key too different a pair of actions to
+          share one dialog. Split into its own widgets/key_signature_dialog.py
+          + Edit > "Key Signature..." (Ctrl+Shift+K); widgets/
+          instrument_dialog.py reverted to exactly its S5 shape.
+          (2) Reported, live-tested: NVDA read "Bb major" as just "b major"
+          and "F# minor" lost the "#" entirely - FIFTHS_MAP had never
+          picked up this app's own spoken-friendly convention for
+          accidentals (CLAUDE.md: "F sharp", never a symbol). Fixed at the
+          source - FIFTHS_MAP's strings themselves now spell "F sharp"/
+          "B flat" etc. in full, which key_signature_display_name/
+          key_override_options both build from, so every display site
+          (Region 1, status bar, the new dialog) picked up the fix with no
+          further changes needed. 21 tests total across tests/models/
+          test_key_signatures.py, tests/models/test_music_data.py, tests/
+          widgets/test_key_signature_dialog.py and tests/test_main_window.py.
+        > FOLLOW-UP: see D-20 below for the "omit the accidental word when
+          it's just what the key signature already implies" idea the user
+          raised alongside this, deliberately deferred out of S6's scope.
+[x] S7  Region 5 + audio cue: one-shot alerts for time-signature changes and
+        immediate/point tempo changes (both already parsed as
+        TempoChange/EventSlice.time_sig, for MusicXML and MIDI) - Ref 29.
+        Accelerando/ritardando (a span, like a hairpin) is explicitly out
+        of scope - nothing parses it yet and it needs investigation into
+        how the user's scores actually encode it before it can be designed.
+        > DONE 2026-08-15. No new data model needed for time signature -
+          EventSlice.time_sig was already tracked correctly per slice by
+          both builders (mid-piece changes, for the status bar's "Time:"
+          field); get_performance_region_rows (models/music_data.py) just
+          compares it against the immediately preceding slice in whichever
+          list the cursor's slice came from (self.timeline_slices, so this
+          works whether or not the metronome's synthetic beat markers are
+          currently spliced in). Tempo reuses the existing
+          _tempo_change_at(index) lookup the status bar/Sequencer already
+          have (comparing the raw (bpm, beat_unit_ql, beat_unit_name)
+          tuple, not the divided display float, to avoid any float
+          precision false-positive) - deliberately NOT
+          effective_tempo_bpm/effective_tempo_display_bpm, which fold in
+          the user's live F/S/D playback offset (Ref 12): the alert is
+          about what the SCORE says, so nudging the offset must never
+          itself look like a tempo change. Never fires at the very first
+          slice (index 0) - the opening time signature/tempo is already
+          shown in Region 1 and the status bar every load; alerting on it
+          in Region 5 too would just be noise. Reuses the existing hairpin
+          jump-target mechanism as-is: both rows set jump_target_quarters
+          to the row's own position, so Region 5's Ctrl+Home/Ctrl+End both
+          resolve to it (a harmless no-op jump, since the alert only ever
+          shows where the cursor already is) - no new navigation code
+          needed. The existing diff-based performance-cue trigger
+          (RegionPresenter.refresh_region_5) picks this up for free, same
+          as the three existing span kinds. Verified against real files:
+          midi_test2 (4/4->3/4 AND 120->80bpm together at bar 9) produces
+          both rows on the same slice, in that order. 6 new tests across
+          tests/models/test_timeline_characterisation.py and
+          tests/test_main_window.py.
 
 
 ###

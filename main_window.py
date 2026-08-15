@@ -30,6 +30,8 @@ from persistence.app_settings import AppSettings
 from widgets.about_dialog import AboutDialog
 from widgets.attribute_order_dialog import AttributeOrderDialog
 from widgets.goto_measure_dialog import GotoMeasureDialog
+from widgets.instrument_dialog import InstrumentDialog
+from widgets.key_signature_dialog import KeySignatureDialog
 from widgets.menu_builder import MenuBuilder, goto_measure_action_text
 from widgets.mixer_dialog import MixerDialog
 from widgets.performance_report_dialog import PerformanceReportDialog
@@ -242,6 +244,8 @@ class MainWindow(QMainWindow):
         self.clear_preferences_action = actions.clear_preferences
         self.performance_report_action = actions.performance_report
         self.mixer_action = actions.mixer
+        self.instruments_action = actions.instruments
+        self.key_signature_action = actions.key_signature
         self.first_measure_action = actions.first_measure
         self.last_measure_action = actions.last_measure
         self.goto_measure_action = actions.goto_measure
@@ -343,9 +347,12 @@ class MainWindow(QMainWindow):
     def _open_score_file_dialog(self, start_dir: str):
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Open MusicXML Score",
+            "Open Score",
             start_dir,
-            "MusicXML Files (*.xml *.musicxml *.mxl);;All Files (*)",
+            "Score Files (*.xml *.musicxml *.mxl *.mid *.midi);;"
+            "MusicXML Files (*.xml *.musicxml *.mxl);;"
+            "MIDI Files (*.mid *.midi);;"
+            "All Files (*)",
         )
         if file_path:
             self.load_score_from_file(file_path)
@@ -390,7 +397,9 @@ class MainWindow(QMainWindow):
         if not self._music_data:
             return
         self.presenter.refresh_region_1()
-        self.region_2.load_score_structure(self._music_data.get_score_structure())
+        self.region_2.load_score_structure(
+            self._music_data.get_score_structure(), collapse_to_parts=self._music_data.is_midi
+        )
         self.metronome_action.setChecked(self._music_data.metronome_enabled)
         self.position_announcer_action.setChecked(self._music_data.position_announcer_enabled)
         self.presenter.update_timeline_views(play_all=play_all)
@@ -675,6 +684,64 @@ class MainWindow(QMainWindow):
             self.playback.cancel_mixer_edit()
         if self.sequencer is not None and (self.sequencer.is_playing or self.sequencer.is_paused):
             self.playback.stop()
+        if previous_focus is not None:
+            previous_focus.setFocus()
+
+    def _show_instrument_dialog(self):
+        """S5: rename a part and/or change its playback instrument, for
+        both MusicXML and MIDI scores - "piano may not always be a suitable
+        default", and some MIDI files carry no track names at all
+        (BluePeter.mid).
+
+        Applying goes through MusicData.apply_part_overrides, which also
+        keeps NoteData.part_name in sync - Region 2's part row is updated
+        in place (rename_part, never a full load_score_structure rebuild,
+        which would reset every on/off toggle back to enabled) and Region
+        3/4/5 through the normal update_timeline_views refresh, same as any
+        other display-only change."""
+        if not self._music_data:
+            return
+        previous_focus = self.focusWidget()
+        rows = [
+            (p.part_id, p.name, p.gmidi_program) for p in self._music_data.parts_info
+        ]
+        dialog = InstrumentDialog(self, rows=rows)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            name_overrides, program_overrides = dialog.overrides()
+            if name_overrides or program_overrides:
+                self._music_data.apply_part_overrides(name_overrides, program_overrides)
+                for part_id, name in name_overrides.items():
+                    self.region_2.rename_part(part_id, name)
+                self.presenter.update_timeline_views(play_all=False)
+        if previous_focus is not None:
+            previous_focus.setFocus()
+
+    def _show_key_signature_dialog(self):
+        """S6: a single whole-piece key signature override, for MIDI files
+        that lack correct (or any) key metadata - its own dialog, not
+        folded into Instruments above (see widgets/key_signature_dialog.py's
+        own docstring for why).
+
+        Applying goes through MusicData.apply_key_signature_override, which
+        re-spells MIDI notes in place - update_timeline_views picks that up
+        for Region 3/4, and Region 1's credits / the status bar's key field
+        need their own direct refresh since neither is part of that
+        refresh's normal scope."""
+        if not self._music_data:
+            return
+        previous_focus = self.focusWidget()
+        current_key = (
+            self._music_data.key_signature_override_fifths,
+            self._music_data.key_signature_override_mode,
+        )
+        dialog = KeySignatureDialog(self, current_key=current_key)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            key_fifths, key_mode = dialog.key_override()
+            if (key_fifths, key_mode) != current_key:
+                self._music_data.apply_key_signature_override(key_fifths, key_mode)
+                self.presenter.update_timeline_views(play_all=False)
+                self.presenter.refresh_region_1()
+                self.presenter.update_status_bar()
         if previous_focus is not None:
             previous_focus.setFocus()
 

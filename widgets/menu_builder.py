@@ -25,6 +25,8 @@ class Actions:
     clear_preferences: Optional[QAction] = None
     performance_report: Optional[QAction] = None
     mixer: Optional[QAction] = None
+    instruments: Optional[QAction] = None
+    key_signature: Optional[QAction] = None
     first_measure: Optional[QAction] = None
     last_measure: Optional[QAction] = None
     goto_measure: Optional[QAction] = None
@@ -134,6 +136,24 @@ class MenuBuilder:
             status_tip="Set volume and pan for each instrument and sound",
         )
         edit_menu.addAction(a.mixer)
+
+        # S5: per-part display-name/instrument override, for both MusicXML
+        # and MIDI scores.
+        a.instruments = self._action(
+            "&Instruments...", self.slots._show_instrument_dialog, "Ctrl+Shift+I",
+            status_tip="Rename a part or change what instrument it plays back as",
+        )
+        edit_menu.addAction(a.instruments)
+
+        # S6: a single whole-piece key signature override, for both
+        # MusicXML and MIDI scores. Its own dialog, not folded into
+        # Instruments above - the user found the two too different a pair
+        # of actions to share one dialog.
+        a.key_signature = self._action(
+            "&Key Signature...", self.slots._show_key_signature_dialog, "Ctrl+Shift+K",
+            status_tip="Override the score's key signature",
+        )
+        edit_menu.addAction(a.key_signature)
 
     def _navigation_menu(self, menu_bar, a: Actions) -> None:
         # Navigation duplicates, as menu items, the keyboard-only ways of

@@ -6,7 +6,7 @@ from models import vocabulary
 from models.ending_span import EndingSpan
 from models.event_slice import EventSlice
 from models.hairpin_span import HairpinSpan
-from models.key_signatures import FIFTHS_MAP
+from models.key_signatures import key_signature_display_name
 from models.mixer_settings import MixerSettings
 from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
@@ -14,6 +14,7 @@ from models.performance_region_row import PerformanceRegionRow
 from models.repeat_span import RepeatSpan
 from models.score_config_data import ScoreConfig
 from models.tempo_change import TempoChange
+from parsers.midi_timeline_builder import MidiTimelineBuilder, _spell_pitch
 from parsers.timeline_builder import TimelineBuilder
 
 
@@ -50,6 +51,10 @@ class MusicData:
     # need not re-parse. None when MusicData(file_path=...) is built
     # directly, in which case TimelineBuilder parses the file itself.
     xml_root: Optional[Any] = None
+
+    # Pre-parsed MidiSource from MidiReader (parsers/midi_source.py), the
+    # MIDI counterpart of xml_root - same reasoning, same fallback when None.
+    midi_source: Optional[Any] = None
 
     timeline_slices: List[EventSlice] = field(default_factory=list)
     active_event_index: int = 0
@@ -93,6 +98,20 @@ class MusicData:
     # an empty one).
     mixer: MixerSettings = field(default_factory=MixerSettings)
 
+    # S5: per-part display-name/instrument overrides the user set via
+    # widgets/instrument_dialog.py, keyed by part_id. Bookkeeping only -
+    # apply_part_overrides() is what actually mutates parts_info/NoteData -
+    # kept so export_config() can persist exactly what was overridden
+    # rather than every part's current value, same "explicit overrides
+    # only" shape as mixer above.
+    part_name_overrides: Dict[str, str] = field(default_factory=dict)
+    part_program_overrides: Dict[str, int] = field(default_factory=dict)
+
+    # S6: a single whole-piece key signature override, set via the
+    # Instruments & Key dialog. None means "use the file's own key(s)".
+    key_signature_override_fifths: Optional[int] = None
+    key_signature_override_mode: Optional[str] = None
+
     # F4/D-6: UK vs US terminology. main_window.py owns the real startup
     # default (OS-locale-detected) and re-applies it after every load, since
     # MusicData is wholly replaced then and this is a session preference,
@@ -109,6 +128,14 @@ class MusicData:
     hairpin_spans: List[HairpinSpan] = field(default_factory=list)
     total_measures: int = 0
 
+    @property
+    def is_midi(self) -> bool:
+        """True for a score loaded from a Standard MIDI File, as opposed to
+        MusicXML - the same extension check __post_init__ uses to pick a
+        timeline builder, exposed once here so other call sites (Ref 25/S2's
+        Region 2 collapse) don't each repeat it."""
+        return self.file_path.lower().endswith((".mid", ".midi"))
+
     def __post_init__(self):
         # DISPLAY_ATTRIBUTE_ORDER is the fixed default; attribute_order is
         # the live copy the reorder dialog mutates. A caller-supplied order
@@ -116,7 +143,10 @@ class MusicData:
         if not self.attribute_order:
             self.attribute_order = list(self.DISPLAY_ATTRIBUTE_ORDER)
         if self.file_path:
-            builder = TimelineBuilder(self.file_path, self.parts_info, root=self.xml_root)
+            if self.is_midi:
+                builder = MidiTimelineBuilder(self.file_path, self.parts_info, source=self.midi_source)
+            else:
+                builder = TimelineBuilder(self.file_path, self.parts_info, root=self.xml_root)
             self.timeline_slices = builder.build()
             self.tempo_changes = builder.tempo_changes
             self._beat_markers = builder.beat_markers
@@ -492,6 +522,12 @@ class MusicData:
             number_str = str(int(number)) if float(number).is_integer() else str(round(number, 2))
             unit = vocabulary.duration_name(self.tempo_beat_unit_name, self.uk_terms)
             data["Tempo"] = f"{number_str} {unit} notes per minute"
+        # S6: same "rebuild live, don't touch the parsed original" pattern
+        # as Tempo above.
+        if self.key_signature_override_fifths is not None:
+            data["Key Signature"] = key_signature_display_name(
+                self.key_signature_override_fifths, self.key_signature_override_mode
+            )
         return data
 
     def get_score_structure(self) -> List[Dict[str, Any]]:
@@ -628,10 +664,14 @@ class MusicData:
     # Attribute keys whose value alone is self-explanatory in Region 3's
     # comma-joined note text, so the "<Label> " prefix _format_note_for_region_3
     # adds for every other attribute is dropped: "step" ("F sharp") needs no
-    # "Step" prefix, and per user request "duration" doesn't either - a word
-    # like "quaver" already says what it is without "Duration quaver".
-    # Region 4's table still labels its "Duration" row normally; only this
-    # inline rendering omits the prefix.
+    # "Step" prefix, and per user request "duration" doesn't either WHEN it
+    # is a real word - "quaver" already says what it is without "Duration
+    # quaver". A bare number has no such self-evidence (could be mistaken
+    # for a measure/beat/pitch value), so it keeps the "Duration" prefix -
+    # see _format_note_for_region_3, which checks note.duration_name_us
+    # itself rather than relying on this set for "duration".
+    # Region 4's table always labels its "Duration" row regardless; only
+    # this inline rendering ever omits the prefix.
     REGION_3_UNPREFIXED_ATTRIBUTES = frozenset({"step", "duration"})
 
     def _format_note_for_region_3(self, note: NoteData) -> str:
@@ -646,7 +686,13 @@ class MusicData:
         for key in self.attribute_order:
             if key not in wanted or key not in pairs:
                 continue
-            if key in self.REGION_3_UNPREFIXED_ATTRIBUTES:
+            unprefixed = key in self.REGION_3_UNPREFIXED_ATTRIBUTES
+            if key == "duration" and note.duration_name_us is None:
+                # No clean word match (MIDI's per-track "too many weird
+                # names" fallback, or MusicXML's rare no-<type> case) - the
+                # raw number needs the label, unlike a self-explanatory word.
+                unprefixed = False
+            if unprefixed:
                 parts.append(pairs[key])
             else:
                 label = vocabulary.attribute_label(key, self.uk_terms)
@@ -807,6 +853,10 @@ class MusicData:
             },
             attribute_order=list(self.attribute_order),
             mixer=self.mixer.copy(),
+            part_name_overrides=dict(self.part_name_overrides),
+            part_program_overrides=dict(self.part_program_overrides),
+            key_signature_override_fifths=self.key_signature_override_fifths,
+            key_signature_override_mode=self.key_signature_override_mode,
         )
 
     def apply_config(self, config: ScoreConfig) -> None:
@@ -833,6 +883,16 @@ class MusicData:
         self.set_position_announcer_enabled(config.position_announcer_enabled)
         self.mixer = config.mixer.copy()
 
+        known_part_ids = {p.part_id for p in self.parts_info}
+        self.apply_part_overrides(
+            {k: v for k, v in config.part_name_overrides.items() if k in known_part_ids},
+            {k: v for k, v in config.part_program_overrides.items() if k in known_part_ids},
+        )
+
+        self.apply_key_signature_override(
+            config.key_signature_override_fifths, config.key_signature_override_mode
+        )
+
     def get_midi_notes_for_indices(self, selected_indices: List[int]) -> List[int]:
         notes = self._visible_notes()
         if not notes or not selected_indices:
@@ -845,19 +905,22 @@ class MusicData:
 
     def get_performance_region_rows(self, index: Optional[int] = None) -> List[PerformanceRegionRow]:
         """Ref 29: Region 5's rows - a start and an end line per span active
-        at the given position (default: the cursor).
+        at the given position (default: the cursor), plus (S7) a one-shot
+        row for a time-signature or immediate/point tempo change landing
+        exactly here.
 
         Repeat/ending containment is a measure-number range check (barlines
         fall at measure boundaries); hairpins compare quarters_from_start,
         since a wedge can start or stop mid-measure. The order (repeats,
-        endings, hairpins, each in span-list order) must stay stable -
-        MainWindow diffs the resulting label list to detect a real change.
-        Wording goes through vocabulary.bar_word, never a hardcoded
-        "bar"/"measure"."""
+        endings, hairpins, then the one-shot rows, each in span-list order)
+        must stay stable - MainWindow diffs the resulting label list to
+        detect a real change. Wording goes through vocabulary.bar_word,
+        never a hardcoded "bar"/"measure"."""
+        resolved_index = self.active_event_index if index is None else index
         slice_ = (
-            self.get_current_slice()
-            if index is None
-            else (self.timeline_slices[index] if 0 <= index < len(self.timeline_slices) else None)
+            self.timeline_slices[resolved_index]
+            if 0 <= resolved_index < len(self.timeline_slices)
+            else None
         )
         if slice_ is None:
             return []
@@ -919,7 +982,46 @@ class MusicData:
                     )
                 )
 
+        # S7: a one-shot alert - unlike the three span kinds above, this has
+        # no start/end pair, it just fires once at the transition itself.
+        # "Previous" is the immediately preceding entry in whichever list
+        # slice_ came from (self.timeline_slices), so this works whether or
+        # not the metronome's synthetic beat markers are currently spliced
+        # in - a marker slice carries the same real time_sig/tempo as its
+        # own position, same as a real one. Never fires at index 0 (the
+        # score's OPENING time signature/tempo - already shown in Region 1
+        # and the status bar, alerting on it here on every load would just
+        # be noise).
+        previous = self.timeline_slices[resolved_index - 1] if resolved_index > 0 else None
+        if previous is not None:
+            if previous.time_sig != slice_.time_sig:
+                ts_num, ts_den = slice_.time_sig
+                rows.append(
+                    PerformanceRegionRow(
+                        label=f"Time signature change: {ts_num}/{ts_den}",
+                        jump_target_measure=slice_.measure,
+                        jump_target_quarters=slice_.quarters_from_start,
+                    )
+                )
+            if self._tempo_change_at(resolved_index - 1) != self._tempo_change_at(resolved_index):
+                number = self._format_tempo_number(self.score_tempo_display_bpm(resolved_index))
+                unit = self.tempo_beat_unit_name_at(resolved_index)
+                rows.append(
+                    PerformanceRegionRow(
+                        label=f"Tempo change: {number} {unit} notes per minute",
+                        jump_target_measure=slice_.measure,
+                        jump_target_quarters=slice_.quarters_from_start,
+                    )
+                )
+
         return rows
+
+    @staticmethod
+    def _format_tempo_number(value: float) -> str:
+        """Whole numbers print bare ("100"), not "100.0" - same rounding
+        _tempo_status_field already uses for the live playback-tempo field,
+        factored out here so this row's wording matches it exactly."""
+        return str(int(value)) if float(value).is_integer() else str(round(value, 2))
 
     @staticmethod
     def _bar_beat_label(bar_word: str, measure: int, beat_position: float) -> str:
@@ -1082,6 +1184,69 @@ class MusicData:
                 return p.gmidi_program
         return 25
 
+    def apply_part_overrides(
+        self, name_overrides: Dict[str, str], program_overrides: Dict[str, int]
+    ) -> None:
+        """S5: the instrument dialog's OK, and apply_config() restoring a
+        saved score. Mutates PartStructureInfo in place - every other
+        reader (get_score_structure, mixer_rows, get_gmidi_program_for_part,
+        get_playback_events_for_indices) already reads parts_info live, so
+        this is enough to make a renamed/reprogrammed part show and sound
+        correctly everywhere with no further wiring.
+
+        NoteData.part_name is kept in sync explicitly: TimelineBuilder/
+        MidiTimelineBuilder bake it in at parse time from parts_info's name
+        at THAT moment, and get_performance_report_lines joins the two by
+        matching text - the exact "two independent copies of a name have to
+        agree verbatim" bug class R5 fixed for the reader's own two XML
+        passes (see CLAUDE.md). Renaming only parts_info and not the
+        already-built notes would silently reopen it.
+        """
+        self.part_name_overrides.update(name_overrides)
+        self.part_program_overrides.update(program_overrides)
+        for p in self.parts_info:
+            if p.part_id in name_overrides:
+                p.name = name_overrides[p.part_id]
+            if p.part_id in program_overrides:
+                p.gmidi_program = program_overrides[p.part_id]
+        if name_overrides:
+            for s in self._real_timeline_slices:
+                for n in s.notes:
+                    if n.part_id in name_overrides:
+                        n.part_name = name_overrides[n.part_id]
+
+    def apply_key_signature_override(
+        self, fifths: Optional[int], mode: Optional[str]
+    ) -> None:
+        """S6: the Instruments & Key dialog's OK, and apply_config()
+        restoring a saved score. fifths=None clears the override, back to
+        the file's own key(s).
+
+        For a MIDI-loaded score, also re-spells every note against the new
+        fifths - MIDI has no real notation to derive spelling from
+        (parsers/midi_timeline_builder.py's _spell_pitch is a bare
+        pitch-class table), so a wrong or missing file key produces wrong
+        enharmonic spelling until corrected here. Symmetric by design:
+        clearing the override re-derives each note's spelling from its own
+        file_key_fifths (the fifths MidiTimelineBuilder actually spelled it
+        against at parse time) rather than a separate cached "original text"
+        - so this needs no distinct restore path.
+
+        MusicXML notes are never touched - their spelling comes straight
+        from the file's own <step>/<alter> and never depended on key in the
+        first place. This only ever changes what key is DISPLAYED for an
+        XML score (get_region_1_data/get_status_bar_fields below)."""
+        self.key_signature_override_fifths = fifths
+        self.key_signature_override_mode = mode if fifths is not None else None
+        if not self.is_midi:
+            return
+        for s in self._real_timeline_slices:
+            for n in s.notes:
+                if n.midi_pitch is None or n.file_key_fifths is None:
+                    continue
+                effective = fifths if fifths is not None else n.file_key_fifths
+                n.step_name, _ = _spell_pitch(n.midi_pitch, effective)
+
     def get_stave_name_for_part(self, part_id: str, staff: int) -> str:
         """Spoken-friendly stave name for Region 4 ("Treble stave"), worded
         exactly as Region 2 does so a note matches the stave it was toggled
@@ -1196,7 +1361,15 @@ class MusicData:
         beat = current.beat_position
         beat_str = str(int(beat)) if float(beat).is_integer() else str(beat)
         ts_num, ts_den = current.time_sig
-        key_name = FIFTHS_MAP.get(current.key_fifths, f"{current.key_fifths} sharps/flats")
+        # S6: the override, when set, wins everywhere - not just where the
+        # file's own key is missing/wrong (matches how apply_part_overrides
+        # already behaves for name/program).
+        if self.key_signature_override_fifths is not None:
+            key_name = key_signature_display_name(
+                self.key_signature_override_fifths, self.key_signature_override_mode
+            )
+        else:
+            key_name = key_signature_display_name(current.key_fifths, None)
 
         return [
             f"{bar_word} {current.measure} beat {beat_str}",
@@ -1209,8 +1382,7 @@ class MusicData:
         """Reads effective_tempo_display_bpm(), i.e. the score's own units
         (96 for eighth=96), never effective_tempo_bpm()'s internal
         quarter-note equivalent (48) - see the tempo_bpm field comment."""
-        effective = self.effective_tempo_display_bpm()
-        effective_str = str(int(effective)) if float(effective).is_integer() else str(round(effective, 2))
+        effective_str = self._format_tempo_number(self.effective_tempo_display_bpm())
         unit = f"{self.tempo_beat_unit_name_at()} notes per minute"
         if self.playback_tempo_offset == 0.0:
             return f"Playback tempo: {effective_str} {unit} (score default)"

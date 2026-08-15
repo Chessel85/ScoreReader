@@ -6,6 +6,7 @@ ElementTree-only path works and is wired up correctly.
 """
 import pytest
 
+from models.event_slice import EventSlice
 from models.music_data import MusicData
 from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
@@ -856,6 +857,25 @@ def test_region_3_appends_configured_extra_attributes_comma_separated(timeline, 
     assert md.get_region_3_data() == ["C, octave 4, quarter"]
 
 
+def test_region_3_prefixes_duration_when_it_has_no_word():
+    """Ref 25/S3: duration_name_us=None (no clean word match - MIDI's
+    per-track weird-durations fallback, or MusicXML's rare no-<type> case)
+    must keep the "Duration" label, unlike the word case above - a bare
+    number alone in the comma list could be mistaken for anything."""
+    md = MusicData()
+    note = _note()
+    note.duration_name_us = None
+    note.ts_duration = 1.5
+    md.timeline_slices = [EventSlice(measure=1, beat_position=1.0, quarter_length=1.5, notes=[note])]
+    md.active_event_index = 0
+    md.voice_display_attributes[("P1", 1, 1)] = {"step", "duration"}
+
+    # Lowercase "duration", matching every other Region 3 label ("octave 4",
+    # "midi 60") - attribute_label never capitalizes attribute_key (only
+    # "measure" is special-cased for UK/US wording).
+    assert md.get_region_3_data() == ["C, duration 1.5"]
+
+
 def test_region_3_omits_missing_attributes_without_a_dangling_comma(timeline, rest_score):
     """A rest has no octave/midi - those must vanish from the display
     entirely, not leave an empty "octave , midi" gap or a double comma."""
@@ -1236,3 +1256,175 @@ def test_toggle_position_announcer_flips_state_without_touching_timeline(timelin
     md.toggle_position_announcer()
     assert md.position_announcer_enabled is False
     assert md.timeline_slices is original_slices
+
+
+# --- S5: per-part instrument/name overrides ---------------------------------
+
+def test_apply_part_overrides_renames_part_and_reprograms_it():
+    """The dialog's OK path: parts_info is mutated in place, and
+    NoteData.part_name (baked in at parse time - see CLAUDE.md's R5 note on
+    TimelineBuilder._part_names) is kept in sync, or a part_name-keyed
+    lookup like get_performance_report_lines would silently show the old
+    name."""
+    md = MusicData(parts_info=[PartStructureInfo(part_id="P1", name="Track 1", gmidi_program=1)])
+    note = _note(part_id="P1")
+    md.timeline_slices = [EventSlice(measure=1, beat_position=1.0, quarter_length=1.0, notes=[note])]
+    md._real_timeline_slices = md.timeline_slices
+
+    md.apply_part_overrides({"P1": "Cool Violin"}, {"P1": 41})
+
+    assert md.parts_info[0].name == "Cool Violin"
+    assert md.parts_info[0].gmidi_program == 41
+    assert note.part_name == "Cool Violin"
+    assert md.get_gmidi_program_for_part("P1") == 41
+
+
+def test_apply_part_overrides_leaves_other_parts_untouched():
+    md = MusicData(parts_info=[
+        PartStructureInfo(part_id="P1", name="Flute", gmidi_program=74),
+        PartStructureInfo(part_id="P2", name="Viola", gmidi_program=42),
+    ])
+    flute_note = _note(part_id="P1")
+    viola_note = _note(part_id="P2")
+    md.timeline_slices = [
+        EventSlice(measure=1, beat_position=1.0, quarter_length=1.0, notes=[flute_note]),
+        EventSlice(measure=1, beat_position=2.0, quarter_length=1.0, notes=[viola_note]),
+    ]
+    md._real_timeline_slices = md.timeline_slices
+
+    md.apply_part_overrides({"P1": "Cool Flute"}, {})
+
+    assert flute_note.part_name == "Cool Flute"
+    assert viola_note.part_name == "Test"  # _note()'s default, untouched
+    assert md.parts_info[1].name == "Viola"
+
+
+def test_export_config_then_apply_config_round_trips_part_overrides():
+    md = MusicData(parts_info=[PartStructureInfo(part_id="P1", name="Track 1", gmidi_program=1)])
+    md.apply_part_overrides({"P1": "Cool Violin"}, {"P1": 41})
+
+    config = md.export_config()
+
+    fresh = MusicData(parts_info=[PartStructureInfo(part_id="P1", name="Track 1", gmidi_program=1)])
+    fresh.apply_config(config)
+
+    assert fresh.parts_info[0].name == "Cool Violin"
+    assert fresh.parts_info[0].gmidi_program == 41
+
+
+def test_apply_config_drops_a_part_override_for_a_part_no_longer_in_the_score():
+    """Best-effort, same as every other ScoreConfig field: a saved override
+    for a part_id the freshly-loaded score no longer has must be silently
+    dropped, not applied to nothing or raise."""
+    config = ScoreConfig(
+        part_name_overrides={"P99": "Ghost"}, part_program_overrides={"P99": 10}
+    )
+    md = MusicData(parts_info=[PartStructureInfo(part_id="P1", name="Track 1", gmidi_program=1)])
+
+    md.apply_config(config)
+
+    assert md.parts_info[0].name == "Track 1"
+    assert md.parts_info[0].gmidi_program == 1
+
+
+# --- S6: key signature override ---------------------------------------------
+
+def _midi_note(file_key_fifths, midi_pitch=66, step_name="") -> NoteData:
+    """MIDI pitch 66 = F#4 (pc 6) - spells "F sharp" under the sharp
+    convention (fifths >= 0) or "G flat" under the flat one (fifths < 0),
+    so it's a clear witness for which convention was actually applied."""
+    return NoteData(
+        step_name=step_name, measure=1, beat_position=1.0, ts_duration=1.0,
+        quarter_length=1.0, part_id="P1", part_name="Test", staff=1, voice=1,
+        midi_pitch=midi_pitch, file_key_fifths=file_key_fifths,
+    )
+
+
+def _midi_music_data(note) -> MusicData:
+    """is_midi requires a .mid file_path; that path doesn't exist on disk,
+    but MidiTimelineBuilder.build() catches the resulting parse failure and
+    returns an empty timeline (see parsers/midi_timeline_builder.py), which
+    is then overwritten below - same manual-stub pattern S5's tests use."""
+    md = MusicData(file_path="x.mid", parts_info=[PartStructureInfo(part_id="P1", name="Test")])
+    md.timeline_slices = [EventSlice(measure=1, beat_position=1.0, quarter_length=1.0, notes=[note])]
+    md._real_timeline_slices = md.timeline_slices
+    return md
+
+
+def test_apply_key_signature_override_respells_midi_notes():
+    note = _midi_note(file_key_fifths=0, step_name="F sharp")  # file's own key: C major
+    md = _midi_music_data(note)
+
+    md.apply_key_signature_override(-2, "major")  # B flat major - flat convention
+
+    assert note.step_name == "G flat"
+    assert md.key_signature_override_fifths == -2
+    assert md.key_signature_override_mode == "major"
+
+
+def test_clearing_the_key_override_restores_each_notes_own_file_key():
+    """file_key_fifths=-2 means the FILE's own key uses the flat convention -
+    the note starts artificially set to "F sharp" (as if an override were
+    already active) specifically so clearing can be observed actually
+    recomputing, not merely leaving it alone."""
+    note = _midi_note(file_key_fifths=-2, step_name="F sharp")
+    md = _midi_music_data(note)
+
+    md.apply_key_signature_override(None, None)
+
+    assert note.step_name == "G flat"
+    assert md.key_signature_override_fifths is None
+    assert md.key_signature_override_mode is None
+
+
+def test_key_override_never_touches_musicxml_note_spelling():
+    note = NoteData(
+        step_name="F sharp", measure=1, beat_position=1.0, ts_duration=1.0,
+        quarter_length=1.0, part_id="P1", part_name="Test", staff=1, voice=1,
+        midi_pitch=66,
+    )
+    md = MusicData(parts_info=[PartStructureInfo(part_id="P1", name="Test")])  # no file_path -> not MIDI
+    md.timeline_slices = [EventSlice(measure=1, beat_position=1.0, quarter_length=1.0, notes=[note])]
+    md._real_timeline_slices = md.timeline_slices
+
+    md.apply_key_signature_override(-2, "major")
+
+    assert note.step_name == "F sharp"
+    assert md.key_signature_override_fifths == -2
+
+
+def test_region_1_key_signature_reflects_the_override():
+    md = MusicData(credits={"Key Signature": "C major / A minor"})
+
+    md.apply_key_signature_override(1, "major")
+
+    assert md.get_region_1_data()["Key Signature"] == "G major"
+
+
+def test_status_bar_key_field_reflects_the_override(timeline, minimal_score):
+    md = timeline(minimal_score)
+
+    md.apply_key_signature_override(-2, "minor")
+
+    assert md.get_status_bar_fields()[1] == "Key: G minor"
+
+
+def test_status_bar_key_field_falls_back_to_the_files_own_key_with_no_override(
+    timeline, minimal_score
+):
+    md = timeline(minimal_score)  # fixture's own <key><fifths>0</fifths></key>
+
+    assert md.get_status_bar_fields()[1] == "Key: C major / A minor"
+
+
+def test_export_config_then_apply_config_round_trips_key_signature_override():
+    md = MusicData(parts_info=[PartStructureInfo(part_id="P1", name="Test")])
+    md.apply_key_signature_override(-2, "minor")
+
+    config = md.export_config()
+
+    fresh = MusicData(parts_info=[PartStructureInfo(part_id="P1", name="Test")])
+    fresh.apply_config(config)
+
+    assert fresh.key_signature_override_fifths == -2
+    assert fresh.key_signature_override_mode == "minor"

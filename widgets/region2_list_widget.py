@@ -35,9 +35,19 @@ class Region2ListWidget(RegionFocusCycleMixin, QListWidget):
             return self._current_visible_nodes[row]
         return None
 
-    def load_score_structure(self, parts_data: list):
-        """Populates the list from parsed MusicXML metadata."""
-        self.model_manager.build_from_score(parts_data)
+    def load_score_structure(self, parts_data: list, collapse_to_parts: bool = False):
+        """Populates the list from parsed score metadata. collapse_to_parts
+        (Ref 25/S2) is set for a MIDI-loaded score, where staff/voice rows
+        would only ever show fake/trivial detail - see
+        Region2HierarchyModel.get_visible_nodes."""
+        self.model_manager.build_from_score(parts_data, collapse_to_parts=collapse_to_parts)
+        self.refresh_list()
+
+    def rename_part(self, part_id: str, new_name: str) -> None:
+        """S5: updates one part row's label in place after the instrument
+        dialog's OK - see Region2HierarchyModel.rename_part for why this
+        isn't a load_score_structure rebuild."""
+        self.model_manager.rename_part(part_id, new_name)
         self.refresh_list()
 
     def apply_off_node_keys(self, parts_off: set, staves_off: set, voices_off: set):

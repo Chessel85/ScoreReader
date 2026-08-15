@@ -60,7 +60,7 @@ them by hand.
 ### 2.2 Opening a Score File
 
 Choose **File > Open...** (or press `Ctrl+O`). A standard file-open
-dialog titled "Open MusicXML Score" appears. Choose your file and select
+dialog titled "Open Score" appears. Choose your file and select
 Open. Once the file has finished loading, the five regions and status
 bar (§3) populate automatically - Region 1 with the score's title,
 composer, key, time signature and tempo, Region 2 with its parts and
@@ -70,7 +70,15 @@ staves, and so on.
 
 Recall Score opens **MusicXML** files - `.xml`, `.musicxml`, and the
 compressed `.mxl` format that many notation programs (including
-MuseScore) export by default.
+MuseScore) export by default - and **Standard MIDI Files** - `.mid` and
+`.midi`.
+
+MIDI files carry far less information than a real MusicXML score: no
+part/instrument names beyond whatever the file itself declares (Region 2
+shows one row per track rather than the usual part/stave/voice detail,
+since a MIDI track has no real staff or voice concept), and often no - or
+wrong - key signature. Use **Edit > Instruments...** and
+**Edit > Key Signature...** (§12.2) to correct either.
 
 ### 2.4 A Five-Minute First Walkthrough
 
@@ -138,6 +146,10 @@ A flat, navigable list representing the score's structure: each Part
 Stave one or more Voices. Every row reads its name together with its
 current state, for example `Classical Guitar - on` or `Treble stave -
 on`. Use `O` to toggle the focused row - see §6 for how filtering works.
+
+For a MIDI file, this list shows one row per track only - MIDI has no
+real stave or voice concept, so there's nothing further to navigate
+underneath a track.
 
 ### 3.4 Region 3: Note Timeline
 
@@ -423,6 +435,20 @@ barlines only ever occur at the start of a bar. When your current
 position isn't covered by any marking, Region 5 shows a single "None"
 row.
 
+Region 5 also shows a one-off row - with no start/end pair - the moment
+you land exactly where the time signature or tempo changes, for example:
+
+```
+Time signature change: 3/4
+Tempo change: 96 quarter notes per minute
+```
+
+Unlike the repeat/ending/hairpin rows above, this disappears again as
+soon as you move to the next note - it's a "something changed here" flag
+for that one position, not a range you're inside. The score's *opening*
+time signature and tempo are never flagged this way, since Region 1 and
+the status bar already show those the moment a file loads.
+
 ### 8.2 The "Something Changed" Cue
 
 A short, distinct sound plays whenever the set of entries showing in
@@ -565,7 +591,7 @@ directly (see also §14.3).
 
 | Item | Shortcut | What it does |
 | :--- | :--- | :--- |
-| Open... | Ctrl+O | Opens a MusicXML file. |
+| Open... | Ctrl+O | Opens a MusicXML or MIDI file. |
 | Exit | - | Closes Recall Score. |
 
 ### 12.2 Edit Menu
@@ -576,6 +602,8 @@ directly (see also §14.3).
 | Clear Preferences for `<filename>` | - | Deletes the currently loaded file's saved settings. Disabled when no file is loaded. |
 | Performance Report... | - | Opens a read-only summary of the whole piece (§8.4). |
 | Mixer... | Ctrl+Shift+X | Opens the volume/pan mixer for every instrument, the metronome and the position announcer (§7.8). |
+| Instruments... | Ctrl+Shift+I | Renames a part, or changes what instrument it plays back as, for the currently loaded score. Especially useful for MIDI files, where a track may have no name or an unhelpful one. |
+| Key Signature... | Ctrl+Shift+K | Overrides the whole piece's key signature - a single choice from a list of all major and minor keys, or "use the file's own key". Mainly for MIDI files, which often carry no key signature at all. |
 
 ### 12.3 Navigation Menu
 
@@ -637,6 +665,8 @@ directly (see also §14.3).
 | Toggle the position announcer on/off | Ctrl+P |
 | Open the Mixer dialog | Ctrl+Shift+X |
 | Play a short preview from the Mixer dialog *(Mixer dialog only)* | Alt+W |
+| Open the Instruments dialog | Ctrl+Shift+I |
+| Open the Key Signature dialog | Ctrl+Shift+K |
 | Jump to the start / end of the focused Performance region entry *(Performance region only)* | Ctrl+Home / Ctrl+End |
 | Open the Performance Report | Edit menu > Performance Report... |
 | Open a note attribute's context menu *(Note Attributes region only)* | right-click, or Menu key / Shift+F10 |

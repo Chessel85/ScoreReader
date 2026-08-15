@@ -23,6 +23,7 @@ from tests.support.null_synth import NullSynth
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCORES_DIR = PROJECT_ROOT / "files"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
+MIDI_DIR = PROJECT_ROOT / "files" / "midi"
 
 
 def _require(path: Path) -> str:
@@ -166,6 +167,17 @@ def score_bourree() -> str:
 
 
 @pytest.fixture
+def score_bourree_full() -> str:
+    """The full (not "short") bach-bourree-tab score - two real repeat +
+    1st/2nd-ending passages (measures 1-8 and 10-25, Ref 29). The MIDI import
+    ground-truth cross-check (test_midi_timeline_builder.py) uses this
+    specific file because files/midi/bach-bourree-tab.mid is MuseScore's own
+    MIDI export of exactly this MusicXML, unchanged.
+    """
+    return _require(SCORES_DIR / "bach-bourree-tab" / "score.xml")
+
+
+@pytest.fixture
 def score_duet() -> str:
     """6/8 two-part score: Piano (GM 1, 2 staves) + Classical Guitar (GM 25).
 
@@ -228,6 +240,65 @@ def score_way_to_go() -> str:
     (A6), so this is the fixture that exercises the bug.
     """
     return _require(SCORES_DIR / "Way To Go" / "score.xml")
+
+
+@pytest.fixture
+def midi_test1() -> str:
+    """Format 0, single track, no track name/program change/other meta data
+    at all - the bare-minimum baseline (files/midi/readme.md.txt)."""
+    return _require(MIDI_DIR / "test1.MID")
+
+
+@pytest.fixture
+def midi_test2() -> str:
+    """Format 1, 4 tracks (1 empty conductor track + Piano/Bass/Cool Violin),
+    starts 120bpm/4/4 and changes at bar 9 to 80bpm/3/4 - exercises a
+    mid-piece time signature AND tempo change together, no pickup."""
+    return _require(MIDI_DIR / "test2.mid")
+
+
+@pytest.fixture
+def midi_test3() -> str:
+    """Format 0, single track, hand-recorded freehand (NOT quantized) - real
+    positions land anywhere, real durations are any length. The fixture for
+    S3's per-track "too many weird duration names" fallback
+    (files/midi/readme.md.txt)."""
+    return _require(MIDI_DIR / "test3.MID")
+
+
+@pytest.fixture
+def midi_bach_bourree() -> str:
+    """MuseScore's own MIDI export of files/bach-bourree-tab/score.xml,
+    unchanged - lets a test diff the MIDI-derived timeline against the
+    already-correct MusicXML one. The pickup is encoded as a real, short
+    (1/4) time-signature span for bar 1 only, not an implicit="yes" flag -
+    MidiTimelineBuilder._detect_pickup's MIDI-native signal. Repeats are
+    realised (played out in full) in the MIDI export, unlike the MusicXML's
+    repeat barlines, so only the measures before the first repeat (0-8) are
+    expected to match the MusicXML note-for-note; diverges from there on by
+    design, not by bug.
+    """
+    return _require(MIDI_DIR / "bach-bourree-tab.mid")
+
+
+@pytest.fixture
+def midi_pachelbel() -> str:
+    """MuseScore's MIDI export of Pachelbel's Canon (string quartet + piano),
+    unrelated to any MusicXML fixture in this repo. 6 tracks, no pickup, a
+    real mid-piece tempo dip (70 -> 35 -> 70 bpm) and D major key signature -
+    exercises multi-part GM program assignment at scale (990 notes on the
+    busiest track) without an implicit="yes"-flagged pickup to trip the
+    detector."""
+    return _require(MIDI_DIR / "pachelbels-canon-in-d-string-quartet.mid")
+
+
+@pytest.fixture
+def midi_blue_peter() -> str:
+    """A 9-usable-track (10 raw tracks: one empty conductor track) real-world
+    MIDI file with a genuine channel-10 percussion track (track index 2) -
+    the fixture for "percussion is skipped cleanly, not misread as
+    pitches"."""
+    return _require(MIDI_DIR / "BluePeter.mid")
 
 
 @pytest.fixture

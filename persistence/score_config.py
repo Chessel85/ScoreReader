@@ -75,6 +75,14 @@ def load_for(file_path: str) -> Optional[ScoreConfig]:
             },
             attribute_order=list(data.get("attribute_order", [])),
             mixer=MixerSettings.from_dict(data.get("mixer")),
+            part_name_overrides={
+                str(k): str(v) for k, v in (data.get("part_name_overrides") or {}).items()
+            },
+            part_program_overrides={
+                str(k): int(v) for k, v in (data.get("part_program_overrides") or {}).items()
+            },
+            key_signature_override_fifths=data.get("key_signature_override_fifths"),
+            key_signature_override_mode=data.get("key_signature_override_mode"),
         )
     except FileNotFoundError:
         return None
@@ -98,6 +106,10 @@ def save(file_path: str, config: ScoreConfig) -> None:
         },
         "attribute_order": list(config.attribute_order),
         "mixer": config.mixer.to_dict(),
+        "part_name_overrides": dict(config.part_name_overrides),
+        "part_program_overrides": dict(config.part_program_overrides),
+        "key_signature_override_fifths": config.key_signature_override_fifths,
+        "key_signature_override_mode": config.key_signature_override_mode,
     }
     try:
         os.makedirs(path.parent, exist_ok=True)

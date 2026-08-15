@@ -24,12 +24,23 @@ class Region2HierarchyModel:
     def __init__(self):
         self.roots: List[Region2Node] = []
         self._node_lookup: Dict[str, Region2Node] = {}
+        # Ref 25/S2: MIDI has no real staff concept (always faked as 1) and,
+        # in every real file tested, exactly one voice per track too - the
+        # tree still needs the full part/staff/voice structure underneath
+        # (get_active_voice_tuples only finds a voice by walking down to a
+        # real "voice" node - collapsing the TREE itself would silently make
+        # every MIDI part invisible), but there is nothing for the user to
+        # usefully navigate/toggle below the part level, so get_visible_nodes
+        # stops there when this is set. Deliberately part of the model, not
+        # just the list widget, so any other future view over this model
+        # inherits the same behaviour for free.
+        self.collapse_to_parts: bool = False
 
     def clear(self):
         self.roots.clear()
         self._node_lookup.clear()
 
-    def build_from_score(self, parts_data: list):
+    def build_from_score(self, parts_data: list, collapse_to_parts: bool = False):
         """
         Builds the tree structure from parsed score metadata.
         Expected parts_data structure:
@@ -53,6 +64,7 @@ class Region2HierarchyModel:
         ]
         """
         self.clear()
+        self.collapse_to_parts = collapse_to_parts
 
         for p_data in parts_data:
             p_id = str(p_data.get('id', 'P1'))
@@ -94,6 +106,16 @@ class Region2HierarchyModel:
                     staff_node.children.append(voice_node)
                     self._node_lookup[voice_node.node_id] = voice_node
 
+    def rename_part(self, part_id: str, new_name: str) -> None:
+        """S5: reflects an instrument-dialog rename onto the already-built
+        tree. Deliberately not a call into build_from_score, which resets
+        every node's enabled state - this only ever touches display_name,
+        so on/off toggles the user already set survive untouched."""
+        for part in self.roots:
+            if part.part_id == part_id:
+                part.display_name = new_name
+                return
+
     def toggle_node(self, node_id: str) -> bool:
         """Toggles enabled status ('on'/'off') of a node. Returns new state."""
         node = self._node_lookup.get(node_id)
@@ -107,11 +129,18 @@ class Region2HierarchyModel:
         """
         Returns a flat list of nodes that should currently be displayed.
         If a parent node is 'off', its child rows are omitted/hidden from the list.
+
+        With collapse_to_parts set (Ref 25/S2), a part row's own staff/voice
+        children are never appended here regardless of enabled state - they
+        still exist in the tree underneath (get_active_voice_tuples still
+        walks down to them), just never rendered as their own rows.
         """
         visible: List[Region2Node] = []
 
         def traverse(node: Region2Node):
             visible.append(node)
+            if self.collapse_to_parts and node.node_type == "part":
+                return
             # Only traverse children if parent is enabled ('on')
             if node.enabled:
                 for child in node.children:

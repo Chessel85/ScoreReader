@@ -6,6 +6,7 @@ _build_timeline_from_xml, and this file is what proves nothing regressed.
 Written against hand-crafted fixtures (see tests/fixtures/) so each test
 isolates one behaviour, per D-8.
 """
+from models.music_data import MusicData
 
 
 def test_quarter_note_is_one_beat_unit_in_four_four(timeline, minimal_score):
@@ -373,6 +374,73 @@ def test_performance_region_rows_hairpin_wording_omits_beat_on_the_downbeat(
         "Diminuendo start: measure 3",
         "Diminuendo end: measure 3 beat 3",
     ]
+
+
+# --- S7: one-shot time-signature/tempo change alerts ------------------------
+
+def test_time_signature_change_fires_a_one_shot_row_at_the_transition(
+    timeline, ts_change_score
+):
+    """ts_change_score: 4/4 (bar 1) -> 6/8 (bar 2) -> 4/4 (bar 3)."""
+    md = timeline(ts_change_score)
+
+    assert md.get_performance_region_rows(0) == []  # bar 1: the opening signature, no alert
+    assert [r.label for r in md.get_performance_region_rows(3)] == []  # still 4/4, last slice of bar 1
+
+    bar_2_index = md.first_event_index_of_measure(2)
+    assert [r.label for r in md.get_performance_region_rows(bar_2_index)] == [
+        "Time signature change: 6/8"
+    ]
+    # One-shot: the row is gone again one slice later, still inside bar 2.
+    assert md.get_performance_region_rows(bar_2_index + 1) == []
+
+    bar_3_index = md.first_event_index_of_measure(3)
+    assert [r.label for r in md.get_performance_region_rows(bar_3_index)] == [
+        "Time signature change: 4/4"
+    ]
+
+
+def test_tempo_change_fires_a_one_shot_row_at_the_transition(timeline, tempo_change_score):
+    """tempo_change_score: quarter=100 (bar 1) -> quarter=200 (bar 2)."""
+    md = timeline(tempo_change_score)
+
+    assert md.get_performance_region_rows(0) == []  # bar 1: the opening tempo, no alert
+
+    bar_2_index = md.first_event_index_of_measure(2)
+    assert [r.label for r in md.get_performance_region_rows(bar_2_index)] == [
+        "Tempo change: 200 quarter notes per minute"
+    ]
+    assert md.get_performance_region_rows(bar_2_index + 1) == []
+
+
+def test_time_signature_and_tempo_change_rows_both_fire_when_they_land_on_the_same_slice(
+    midi_test2,
+):
+    """midi_test2 changes both together at bar 9 (4/4->3/4, 120->80bpm)."""
+    md = MusicData(file_path=midi_test2)
+
+    bar_9_index = md.first_event_index_of_measure(9)
+    assert [r.label for r in md.get_performance_region_rows(bar_9_index)] == [
+        "Time signature change: 3/4",
+        "Tempo change: 80 quarter notes per minute",
+    ]
+
+
+def test_tempo_change_row_reports_the_scores_own_number_not_the_playback_offset(
+    timeline, tempo_change_score
+):
+    """The alert is about the SCORE's own tempo markings, not the user's
+    live F/S/D playback offset (Ref 12) - the row must still read "200",
+    not "220", and the offset alone (unchanged across bars 1 and 2) must
+    not itself register as a "change"."""
+    md = timeline(tempo_change_score)
+    md.set_playback_tempo_offset(20)
+
+    bar_2_index = md.first_event_index_of_measure(2)
+    assert [r.label for r in md.get_performance_region_rows(bar_2_index)] == [
+        "Tempo change: 200 quarter notes per minute"
+    ]
+
 
 
 def test_slice_index_at_or_after_quarters_resolves_a_hairpin_jump_target(

@@ -10,7 +10,7 @@ unaffected. Dependency direction: persistence imports models, never the
 reverse. Guarded by test_models_package_does_not_import_qt.
 """
 from dataclasses import dataclass, field
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from models.mixer_settings import MixerSettings
 
@@ -51,3 +51,14 @@ class ScoreConfig:
     # Wishlist #4/#7: per-instrument volume/pan and the global mute. Empty
     # by default, which means "nothing overridden" - see MixerSettings.
     mixer: MixerSettings = field(default_factory=MixerSettings)
+    # S5: per-part display-name/instrument overrides, keyed by part_id.
+    # Same "explicit overrides only" shape as mixer above - empty means
+    # every part keeps showing exactly what the file itself declared.
+    part_name_overrides: Dict[str, str] = field(default_factory=dict)
+    part_program_overrides: Dict[str, int] = field(default_factory=dict)
+    # S6: a single whole-piece key signature override. None/None means "use
+    # the file's own key(s)" - not tied to score content the way the part
+    # overrides above are, so apply_config() applies it unconditionally
+    # rather than filtering against known part_ids.
+    key_signature_override_fifths: Optional[int] = None
+    key_signature_override_mode: Optional[str] = None

@@ -90,11 +90,24 @@ class PlaybackController(QObject):
         """Wishlist #4: push a score's saved volume/pan overrides onto their
         channels.
 
-        Sends CC ONLY for parts the user has actually set a level for. A
-        score with no mixer settings - every score today - sends nothing at
-        all and leaves the engine exactly as it would be without this
-        feature, rather than re-asserting values that merely happen to match
-        the defaults.
+        Every mixer-controllable channel is resent UNCONDITIONALLY - an
+        override where one exists, else the real default (DEFAULT_VOLUME /
+        default_pan_for(key), same values cancel_mixer_edit already reverts
+        to) - not just the channels this score happens to override.
+
+        Reported bug, live-tested: the synth is a long-lived singleton
+        across file loads (one in-process FluidSynth session for the whole
+        run - audio/synth_engine.py), so a channel's CC7/CC10 value from
+        whatever score was open PREVIOUSLY survives untouched into a new
+        load. A part on the same channel number in both scores (channel
+        assignment is deterministic per get_channel_for_part) silently
+        inherited the old score's override - the user's own repro: a cello
+        set to 0% volume in a MusicXML score's Mixer stayed silent after
+        switching to the MIDI version of the same piece, which had no
+        override of its own. Sending nothing for a channel with no override,
+        as this method used to, only leaves the engine "as it would be
+        without this feature" on a script's very first load - not on every
+        later one, since by then the engine already has a past.
         """
         if mixer is None or not self.music_data:
             return
@@ -102,22 +115,26 @@ class PlaybackController(QObject):
         for part in self.music_data.parts_info:
             channel = self.music_data.get_channel_for_part(part.part_id)
             volume = mixer.volume_for(part.part_id)
-            if volume is not None:
-                self.synth.set_channel_volume(channel, volume)
+            self.synth.set_channel_volume(
+                channel, volume if volume is not None else mixer_settings.DEFAULT_VOLUME
+            )
             pan = mixer.pan_for(part.part_id)
-            if pan is not None:
-                self.synth.set_channel_pan(channel, pan)
+            self.synth.set_channel_pan(
+                channel, pan if pan is not None else mixer_settings.default_pan_for(part.part_id)
+            )
         for key, channel in (
             (mixer_settings.CLICK, METRONOME_CHANNEL),
             (mixer_settings.ANNOUNCER, POSITION_ANNOUNCER_CHANNEL),
             (mixer_settings.CUE, PERFORMANCE_CUE_CHANNEL),
         ):
             volume = mixer.volume_for(key)
-            if volume is not None:
-                self.synth.set_channel_volume(channel, volume)
+            self.synth.set_channel_volume(
+                channel, volume if volume is not None else mixer_settings.DEFAULT_VOLUME
+            )
             pan = mixer.pan_for(key)
-            if pan is not None:
-                self.synth.set_channel_pan(channel, pan)
+            self.synth.set_channel_pan(
+                channel, pan if pan is not None else mixer_settings.default_pan_for(key)
+            )
 
     # --- mixer dialog (wishlist #4) -----------------------------------
 
