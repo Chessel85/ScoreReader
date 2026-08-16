@@ -109,6 +109,25 @@ def test_reader_adds_chords_and_lyrics_parts_for_a_score_with_harmony_and_lyric_
 
 
 @pytest.mark.slow
+def test_reader_defaults_the_chords_part_to_show_beat_position_and_strum(chords_and_lyrics_score):
+    """Reported: strum/pick-direction data (see parsers/timeline_builder.py's
+    chord-stroke entries) wasn't showing up anywhere the user actually
+    looked, because an ordinary voice's Region 3 display defaults to just
+    the note name. The Chords part is synthetic, not an ordinary voice, so -
+    the same "audible immediately, no F1/context-menu first" default
+    GpReader already established for GP's synthetic Chords voice - it shows
+    its chord name, beat position (so repeated same-bar strokes aren't
+    ambiguous) and any strum direction with no toggle needed. The Piano
+    part's own voice is untouched, still today's plain step-name default."""
+    from parsers.timeline_builder import CHORDS_PART_ID
+
+    data = MusicXMLReader(chords_and_lyrics_score).load()
+
+    assert data.voice_display_attributes[(CHORDS_PART_ID, 1, 1)] == {"step", "beat position", "strum"}
+    assert ("P1", 1, 1) not in data.voice_display_attributes, "the real Piano voice's default is untouched"
+
+
+@pytest.mark.slow
 def test_guitar_notes_play_the_guitar_program_not_the_piano_program(score_duet):
     """A8, Ref 8: reported bug - Chessel Duet's guitar (P2) used to play as
     piano because playback always read parts_info[0]'s program."""

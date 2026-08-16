@@ -1555,3 +1555,34 @@ def test_export_config_then_apply_config_round_trips_key_signature_override():
 
     assert fresh.key_signature_override_fifths == -2
     assert fresh.key_signature_override_mode == "minor"
+
+
+def test_collapsed_part_ids_flattens_only_synthetic_chords_and_lyrics_parts():
+    """Reported: a MusicXML score mixing a real notated Piano part with the
+    synthetic Chords/Lyrics parts (parsers/timeline_builder.py) showed
+    "Chord chart"/"Voice 1" as a fake 3-level Region 2 tree, read as
+    redundant made-up navigation. Only the synthetic parts should collapse -
+    Piano's own real staff/voice structure must stay untouched."""
+    md = MusicData(
+        parts_info=[
+            PartStructureInfo(part_id="P1", name="Piano"),
+            PartStructureInfo(part_id="chords", name="Chords"),
+            PartStructureInfo(part_id="lyrics", name="Lyrics"),
+        ]
+    )
+
+    assert md.collapsed_part_ids == {"chords", "lyrics"}
+
+
+def test_collapsed_part_ids_empty_for_an_ordinary_score():
+    md = MusicData(parts_info=[PartStructureInfo(part_id="P1", name="Piano")])
+
+    assert md.collapsed_part_ids == set()
+
+
+def test_collapsed_part_ids_is_true_for_midi():
+    """MIDI has no real staff concept anywhere in the score, so every part
+    collapses - the whole-tree True this property replaces (Ref 25/S2)."""
+    md = MusicData(file_path="nonexistent.mid", parts_info=[PartStructureInfo(part_id="P1", name="Track 1")])
+
+    assert md.collapsed_part_ids is True

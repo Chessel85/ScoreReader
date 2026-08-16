@@ -89,6 +89,29 @@ def test_collapse_to_parts_toggle_still_hides_the_whole_part(model):
     assert ("P2", 1, 1) in collapsed.get_active_voice_tuples()
 
 
+def test_collapse_to_parts_accepts_a_set_to_collapse_only_specific_parts():
+    """A MusicXML score mixing a real notated part with synthetic
+    Chords/Lyrics parts (parsers/timeline_builder.py) must keep the real
+    part's own staff/voice tree while flattening only the synthetic ones -
+    reported: showing "Chord chart"/"Voice 1" as a fake 3-level tree read as
+    redundant, made-up navigation."""
+    model = Region2HierarchyModel()
+    model.build_from_score(PARTS_DATA, collapse_to_parts={"P2"})
+
+    names = [n.display_name.strip() for n in model.get_visible_nodes()]
+    assert names == ["Piano", "Treble Clef", "Voice 1", "Bass Clef", "Voice 5", "Voice 6", "Classical Guitar"]
+
+
+def test_collapse_to_parts_set_still_computes_full_active_voice_tuples():
+    model = Region2HierarchyModel()
+    model.build_from_score(PARTS_DATA, collapse_to_parts={"P2"})
+
+    assert model.get_active_voice_tuples() == {
+        ("P1", 1, 1), ("P1", 2, 5), ("P1", 2, 6),
+        ("P2", 1, 1), ("P2", 1, 2),
+    }
+
+
 def test_node_ids_stay_unique_across_parts(model):
     """Both parts have a staff 1 with a voice 1. They must not collide -
     the flat dict in MusicData.get_region_2_data() does exactly that."""

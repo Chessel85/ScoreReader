@@ -63,6 +63,21 @@ class AttributeController:
                 ("score", "Add to notes in the whole score"),
             ]
 
+        # Reported: a part with no real stave/voice concept underneath it
+        # (a MIDI track, a pure Ultimate Guitar import, or one of the
+        # synthetic Chords/Lyrics parts a MusicXML file's own <harmony>/
+        # <lyric> markup can add - see MusicData.collapsed_part_ids, the
+        # same check Region 2 uses to decide whether to show a fake
+        # staff/voice tree underneath that part) offered "current voice"/
+        # "current stave" scopes that acted on exactly the same notes as
+        # "current part" - not wrong, just redundant menu clutter with
+        # nothing real behind it. Those two scopes are dropped for such a
+        # part; "part" and "score" still apply normally.
+        collapsed = self.music_data.collapsed_part_ids
+        part_has_no_real_stave_or_voice = collapsed is True or anchor_note.part_id in collapsed
+        if part_has_no_real_stave_or_voice:
+            scopes = [(scope, label) for scope, label in scopes if scope not in ("voice", "stave")]
+
         return [
             (
                 label,

@@ -170,6 +170,15 @@ def chords_and_lyrics_score() -> str:
 
 
 @pytest.fixture
+def chord_and_stroke_same_note_score() -> str:
+    """One part, one complete 4/4 bar: a <harmony> lands at the same beat as
+    the bar's only note, which itself carries an arpeggiate mark - the
+    coincidence files/Three Blind Mice.mxl's bar 4 has (see CLAUDE.md's
+    "Reported, redesigned" note on the synthetic Chords/Lyrics feature)."""
+    return _require(FIXTURES_DIR / "chord_and_stroke_same_note.musicxml")
+
+
+@pytest.fixture
 def score_three_blind_mice() -> str:
     """A real MuseScore 4.7.4 export: one Piano part (2 staves), a chord
     symbol on every bar with content, a lyric on every melody note, and

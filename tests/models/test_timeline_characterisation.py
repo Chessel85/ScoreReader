@@ -600,12 +600,14 @@ def test_harmony_becomes_a_chords_part_note_in_the_same_slice(timeline, chords_a
     assert chord_note.part_name == CHORDS_PART_NAME
     assert chord_note.chord_pitches == [45, 48, 52]  # A2, C3, E3 (music21's default triad octave)
     assert chord_note.midi_pitch == max(chord_note.chord_pitches)
+    assert chord_note.strum is None, "the harmony's own entry carries no stroke direction"
 
-    # Only the bar's one harmony - no Chords note anywhere else in the piece.
-    later_chord_notes = [
-        n for s in md.timeline_slices[1:] for n in _notes_by_part(s, CHORDS_PART_ID)
-    ]
-    assert later_chord_notes == []
+    # The harmony's own entry only shows up once, at note 1's position - the
+    # other two Chords entries in the piece (notes 2 and 3) come from their
+    # arpeggiate marks, not from another <harmony>. See
+    # test_arpeggiate_direction_becomes_a_chords_part_stroke below.
+    all_chord_notes = [n for s in md.timeline_slices for n in _notes_by_part(s, CHORDS_PART_ID)]
+    assert len(all_chord_notes) == 3
 
 
 def test_lyric_attaches_to_the_same_slice_as_its_melody_note(timeline, chords_and_lyrics_score):
@@ -621,7 +623,8 @@ def test_lyric_attaches_to_the_same_slice_as_its_melody_note(timeline, chords_an
         ("C", ["Hel"]),
         ("D", ["lo"]),
         ("E", ["there"]),
-        ("rest", []),  # the trailing rest has no <lyric> - no Lyrics entry at all
+        ("F", []),  # no <lyric> on this note - no Lyrics entry at all
+        ("rest", []),  # the trailing rest has no <lyric> either
     ]
 
     lyric_note = _notes_by_part(md.timeline_slices[0], LYRICS_PART_ID)[0]
@@ -629,21 +632,63 @@ def test_lyric_attaches_to_the_same_slice_as_its_melody_note(timeline, chords_an
     assert lyric_note.midi_pitch is None, "the Lyrics part is silent, like a rest"
 
 
-def test_arpeggiate_direction_becomes_strum_on_the_real_note(timeline, chords_and_lyrics_score):
-    """A <notations/arpeggiate direction=.../> on a single (non-chord) note
-    is read as a pick/strum-direction indicator, using the same "down
-    stroke"/"up stroke" vocabulary Guitar Pro's synthetic Chords voice
-    already established for NoteData.strum - never inferred when absent."""
+def test_arpeggiate_direction_never_lands_on_the_melody_note(timeline, chords_and_lyrics_score):
+    """Reported: strumming isn't something a piano/melody note does - it's a
+    guitar-accompaniment idea, so a <notations/arpeggiate> mark must never
+    set NoteData.strum on the real Piano note it's attached to."""
     from parsers.timeline_builder import CHORDS_PART_ID
 
     md = timeline(chords_and_lyrics_score)
 
-    piano_notes = [
-        n for s in md.timeline_slices for n in s.notes
-        if n.part_id != CHORDS_PART_ID and n.step_name not in ("Hel", "lo", "there")
+    piano_notes = [n for s in md.timeline_slices for n in s.notes if n.part_id != CHORDS_PART_ID]
+    assert all(n.strum is None for n in piano_notes)
+
+
+def test_arpeggiate_direction_becomes_a_chords_part_stroke(timeline, chords_and_lyrics_score):
+    """A <notations/arpeggiate direction=.../> on a single (non-chord) note
+    has no conventional notation meaning - real arpeggios apply to chords -
+    so it's read as a pick/strum-direction indicator instead, using the same
+    "down stroke"/"up stroke" vocabulary Guitar Pro's synthetic Chords voice
+    already established for NoteData.strum. Reported: this belongs to the
+    (guitar) Chords part, not the melody note that happens to carry the
+    mark in the XML - so it produces an extra Chords-part "stroke" entry at
+    that same beat, carrying the sticky current chord (the bar's own A
+    minor here), rather than an attribute on the melody note itself."""
+    from parsers.timeline_builder import CHORDS_PART_ID
+
+    md = timeline(chords_and_lyrics_score)
+
+    strokes = [
+        n for s in md.timeline_slices for n in _notes_by_part(s, CHORDS_PART_ID)
+        if n.strum is not None
     ]
-    strums = {n.step_name: n.strum for n in piano_notes if n.midi_pitch is not None}
-    assert strums == {"C": "down stroke", "D": "up stroke", "E": None}
+    assert [(n.step_name, n.strum, n.chord_pitches) for n in strokes] == [
+        ("A minor", "down stroke", [45, 48, 52]),
+        ("A minor", "up stroke", [45, 48, 52]),
+    ]
+    # Notes 1 (no arpeggiate) and 4 (no arpeggiate, no lyric) contribute no
+    # stroke entry at all.
+    assert len(strokes) == 2
+
+
+def test_stroke_on_the_harmonys_own_note_merges_into_one_chords_entry(
+    timeline, chord_and_stroke_same_note_score
+):
+    """Reported: when the bar's own <harmony> lands at the same beat as the
+    one note carrying the arpeggiate mark (files/Three Blind Mice.mxl's bar
+    4 - the harmony IS the stroke's note), this used to produce two
+    near-identical Chords rows at the same slice ("C, beat position 1.0"
+    right next to "C, beat position 1.0, strum down stroke") - real
+    information, but confusing enough to read as noise. The stroke now sets
+    .strum on the harmony's own NoteData instead of adding a second one."""
+    from parsers.timeline_builder import CHORDS_PART_ID
+
+    md = timeline(chord_and_stroke_same_note_score)
+
+    chord_notes = _notes_by_part(md.timeline_slices[0], CHORDS_PART_ID)
+    assert len(chord_notes) == 1
+    assert chord_notes[0].step_name == "C"
+    assert chord_notes[0].strum == "down stroke"
 
 
 def test_no_harmony_or_lyric_means_no_synthetic_parts(timeline, minimal_score):

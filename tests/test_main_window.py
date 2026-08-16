@@ -2015,6 +2015,26 @@ def test_region_4_attribute_menu_callback_survives_qactions_checked_argument(
     assert _region_3_labels(window) == ["C, octave 4"]
 
 
+def test_region_4_attribute_menu_omits_voice_and_stave_scopes_for_a_collapsed_part(
+    window, qtbot, null_synth, midi_test1
+):
+    """Reported: a part with no real stave/voice concept underneath it (a
+    MIDI track here; also a pure Ultimate Guitar import or a MusicXML
+    score's synthetic Chords/Lyrics parts - MusicData.collapsed_part_ids,
+    the same check Region 2 uses) offered "current voice"/"current stave"
+    scopes that acted on exactly the same notes as "current part" - real
+    but redundant menu clutter with nothing behind it. Those two scopes are
+    dropped for such a part."""
+    load_and_wait(window, qtbot, midi_test1)
+
+    actions = window._region_4_attribute_menu_actions(1)  # row 1 = octave
+
+    assert [label for label, _ in actions] == [
+        "Add to notes in the same part",
+        "Add to notes in the whole score",
+    ]
+
+
 def test_region_4_attribute_menu_switches_to_remove_once_present(
     window, qtbot, null_synth, minimal_score
 ):

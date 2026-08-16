@@ -1,6 +1,6 @@
 # widgets/region2_manager.py
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Set, Tuple
+from typing import List, Dict, Optional, Set, Tuple, Union
 
 
 @dataclass
@@ -34,13 +34,30 @@ class Region2HierarchyModel:
         # stops there when this is set. Deliberately part of the model, not
         # just the list widget, so any other future view over this model
         # inherits the same behaviour for free.
-        self.collapse_to_parts: bool = False
+        #
+        # True collapses every part (MIDI, a pure Ultimate Guitar import); a
+        # Set[str] of part_ids collapses only those - a MusicXML/GP score
+        # with real notated parts alongside synthetic Chords/Lyrics parts
+        # (see parsers/timeline_builder.py) needs the real parts' own
+        # staff/voice structure kept, with only the synthetic ones flattened
+        # ("chord chart"/"Voice 1" are made-up labels with nothing real
+        # underneath, the same reasoning that already collapsed a pure UG
+        # import's Chords/Lyrics parts, per-part rather than whole-tree here
+        # since a mixed score keeps its real parts' real structure).
+        self.collapse_to_parts: Union[bool, Set[str]] = False
 
     def clear(self):
         self.roots.clear()
         self._node_lookup.clear()
 
-    def build_from_score(self, parts_data: list, collapse_to_parts: bool = False):
+    def _part_is_collapsed(self, part_id: str) -> bool:
+        if self.collapse_to_parts is True:
+            return True
+        if self.collapse_to_parts is False:
+            return False
+        return part_id in self.collapse_to_parts
+
+    def build_from_score(self, parts_data: list, collapse_to_parts: Union[bool, Set[str]] = False):
         """
         Builds the tree structure from parsed score metadata.
         Expected parts_data structure:
@@ -156,7 +173,7 @@ class Region2HierarchyModel:
 
         def traverse(node: Region2Node):
             visible.append(node)
-            if self.collapse_to_parts and node.node_type == "part":
+            if node.node_type == "part" and self._part_is_collapsed(node.part_id):
                 return
             # Only traverse children if parent is enabled ('on')
             if node.enabled:

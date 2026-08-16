@@ -325,6 +325,35 @@ class TimelineBuilder:
             beat_unit_quarter_len = 4.0 / time_sig_den
             full_bar_quarters = time_sig_num * beat_unit_quarter_len
 
+            # Reported: a strum/pick-direction mark reads as belonging to
+            # the melody instrument that carries it in the XML (a Piano part
+            # here), but conceptually it's a guitar-accompaniment idea, not
+            # something a piano does - the user's own steer. So a strum mark
+            # produces an extra Chords-part NoteData at that same beat
+            # (the sticky current chord, same "last named chord carries
+            # forward" convention GP/UG already use for their own Chords
+            # voice/part) rather than an attribute on the melody note
+            # itself. Sticky state is scoped per part - the real files this
+            # was built against carry <harmony> and <notations/arpeggiate>
+            # on the same single part, and interleaving it correctly across
+            # multiple parts would need the measures walked in time order
+            # across parts rather than one part fully at a time.
+            current_chord_pitches: Optional[List[int]] = None
+            current_chord_label: str = "Strum"
+            # Reported: when a bar's own <harmony> lands at the same beat as
+            # an arpeggiate-marked note (a bar with no other stroke, so the
+            # harmony IS the first note - files/Three Blind Mice.mxl's bar
+            # 4), the once-per-bar harmony entry and the stroke entry ended
+            # up as two near-identical Chords rows at the same slice ("G,
+            # beat position 1.0" right next to "G, beat position 1.0, strum
+            # down stroke") - real information, but redundant enough to read
+            # as noise ("obfuscated by the presence of the chord", the
+            # user's own description). Tracks the harmony NoteData already
+            # emitted at each (measure, offset) this part has seen, so a
+            # stroke landing on that same slice sets .strum on that SAME
+            # NoteData in place instead of adding a second one.
+            harmony_notes_by_key: Dict[Tuple[int, float], NoteData] = {}
+
             for m in part.findall("measure"):
                 m_num = _measure_number(m, needs_reindex)
 
@@ -369,6 +398,8 @@ class TimelineBuilder:
                                 pass
                         chord_pitches, chord_label = _resolve_harmony(elem)
                         if chord_pitches:
+                            current_chord_pitches = chord_pitches
+                            current_chord_label = chord_label
                             h_offset_q = harmony_offset_divs / walker.divisions
                             if m_num == 0:
                                 h_start_beat = self._start_beat(
@@ -394,6 +425,7 @@ class TimelineBuilder:
                             h_key = (m_num, round(h_offset_q, 4))
                             buckets.setdefault(h_key, []).append(chord_note)
                             slice_state.setdefault(h_key, ((walker.ts_num, walker.ts_den), walker.fifths))
+                            harmony_notes_by_key[h_key] = chord_note
 
                     if result is None:
                         continue
@@ -508,8 +540,13 @@ class TimelineBuilder:
                         # indicator instead, the same "down stroke"/
                         # "up stroke" vocabulary Guitar Pro's synthetic
                         # Chords voice already established for NoteData.strum
-                        # (see CLAUDE.md). Left None (not inferred) when
-                        # absent, same "leave unstated" convention.
+                        # (see CLAUDE.md). Reported: strumming isn't
+                        # something a piano/melody note does - it belongs to
+                        # the (guitar) chord accompaniment, so this never
+                        # ends up on the melody note's own NoteData; it only
+                        # ever triggers an extra Chords-part "stroke" entry
+                        # below. Left None (not inferred) when absent, same
+                        # "leave unstated" convention.
                         strum = None
                         arpeggiate_el = elem.find("notations/arpeggiate")
                         if arpeggiate_el is not None:
@@ -574,7 +611,6 @@ class TimelineBuilder:
                         fingering=fingering,
                         pluck=pluck,
                         duration_name_us=duration_name_us,
-                        strum=strum,
                     )
 
                     key = (m_num, round(offset_q, 4))
@@ -604,6 +640,38 @@ class TimelineBuilder:
                             voice=1,
                         )
                         buckets[key].append(lyric_note)
+
+                    if strum is not None and current_chord_pitches is not None:
+                        # A stroke mark with no chord known yet (arpeggiate
+                        # before the piece's first <harmony>) is skipped
+                        # rather than fabricating a chord - an untested
+                        # edge case in every real file seen so far.
+                        #
+                        # A stroke landing on the exact same slice as the
+                        # bar's own harmony entry (no other note between
+                        # them - the harmony IS the stroke's note) sets
+                        # .strum on that existing entry rather than adding a
+                        # second, near-identical Chords row.
+                        existing_harmony_note = harmony_notes_by_key.get(key)
+                        if existing_harmony_note is not None:
+                            existing_harmony_note.strum = strum
+                            continue
+                        stroke_note = NoteData(
+                            step_name=current_chord_label,
+                            octave=None,
+                            midi_pitch=max(current_chord_pitches),
+                            measure=m_num,
+                            beat_position=round(beat_pos, 2),
+                            ts_duration=ts_duration,
+                            quarter_length=quarter_len,
+                            part_id=CHORDS_PART_ID,
+                            part_name=CHORDS_PART_NAME,
+                            staff=1,
+                            voice=1,
+                            chord_pitches=current_chord_pitches,
+                            strum=strum,
+                        )
+                        buckets[key].append(stroke_note)
 
                 divisions, time_sig_num, time_sig_den, fifths = (
                     walker.divisions, walker.ts_num, walker.ts_den, walker.fifths

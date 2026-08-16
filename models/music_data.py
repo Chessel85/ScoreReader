@@ -1,6 +1,6 @@
 # models/music_data.py
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from models import vocabulary
 from models.ending_span import EndingSpan
@@ -16,7 +16,7 @@ from models.score_config_data import ScoreConfig
 from models.tempo_change import TempoChange
 from parsers.gp_timeline_builder import GpTimelineBuilder
 from parsers.midi_timeline_builder import MidiTimelineBuilder, _spell_pitch
-from parsers.timeline_builder import TimelineBuilder
+from parsers.timeline_builder import CHORDS_PART_ID, LYRICS_PART_ID, TimelineBuilder
 from parsers.ug_source import strum_directions
 from parsers.ug_timeline_builder import UgTimelineBuilder
 
@@ -166,6 +166,24 @@ class MusicData:
         of UG's synthetic parts (Chords/Lyrics) are flat, nothing useful to
         toggle below the part level."""
         return self.file_path.lower().endswith(".ug")
+
+    @property
+    def collapsed_part_ids(self) -> Union[bool, Set[str]]:
+        """Region 2's collapse_to_parts argument (widgets/region2_manager.py):
+        True to flatten every part (MIDI, a pure Ultimate Guitar import,
+        where a real staff/voice concept doesn't exist anywhere in the
+        score), or the specific set of part_ids to flatten for a score that
+        mixes real notated parts with synthetic ones - a MusicXML file
+        carrying its own <harmony>/<lyric> markup keeps its real
+        instrument's staff/voice tree intact and flattens only the
+        synthetic Chords/Lyrics parts, whose "Chord chart"/"Voice 1" labels
+        have nothing real underneath them (reported: showing them as a
+        3-level tree read as redundant, made-up navigation - the same
+        "chords don't have layers below them" call already made for GP's
+        synthetic Chords voice and a pure UG import's Chords/Lyrics parts)."""
+        if self.is_midi or self.is_ug:
+            return True
+        return {p.part_id for p in self.parts_info if p.part_id in (CHORDS_PART_ID, LYRICS_PART_ID)}
 
     @property
     def ug_strum_pattern(self) -> List[str]:

@@ -49,7 +49,7 @@ class MusicXMLReader:
         credits_dict["Time Signature"] = time_sig
         credits_dict["Tempo"] = tempo_display
 
-        return MusicData(
+        music_data = MusicData(
             credits=credits_dict,
             parts_info=etree_parts_info,
             file_path=self.file_path,
@@ -59,6 +59,19 @@ class MusicXMLReader:
             tempo_beat_unit_name=tempo_beat_unit_name,
             xml_root=root,
         )
+
+        # Ref 15 AC4-style default, same as GpReader's synthetic Chords
+        # voice: the chord name (step), the beat it falls on (so repeated
+        # "A minor" strokes within a bar aren't ambiguous - see
+        # parsers/timeline_builder.py's chord-stroke entries) and any real
+        # strum direction should be audible immediately, without the user
+        # having to reach for the attribute context menu first.
+        if any(p.part_id == CHORDS_PART_ID for p in etree_parts_info):
+            music_data.voice_display_attributes[(CHORDS_PART_ID, 1, 1)] = {
+                "step", "beat position", "strum",
+            }
+
+        return music_data
 
     def _parse_xml_root(self) -> Optional[ET.Element]:
         """Parses the file once; every etree-based extractor below reads

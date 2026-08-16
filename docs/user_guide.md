@@ -819,7 +819,11 @@ lead-sheet-style piece exported from a program like MuseScore, with chord
 names printed above the staff and words printed underneath it. Opening
 such a file with **File > Open...** shows this content automatically, with
 no separate import step: Region 2 gains a **Chords** part, a **Lyrics**
-part, or both, alongside the score's own instrument parts.
+part, or both, alongside the score's own instrument parts - each shown as
+a single flat row with nothing further to expand underneath (§16.3), the
+same as an Ultimate Guitar import's Chords/Lyrics parts, since neither has
+any real staves or voices of its own. The score's own real instrument
+keeps its normal part/stave/voice detail untouched.
 
 Unlike an Ultimate Guitar import (§16.3), these two parts line up with the
 score's own real notated timing rather than one fabricated bar per chord
@@ -833,3 +837,12 @@ no lyric under it, simply has no Chords or Lyrics entry there - there's no
 "No lyrics" placeholder the way an Ultimate Guitar import uses for a
 wordless bar, since with real notated timing there's no ambiguity about
 whether something is missing.
+
+If the score also marks individual notes with an up- or down-stroke
+indicator (some notation programs let you add this to guide a strummed
+accompaniment), the Chords row shows it too - for example "A minor, beat
+position 2.0, strum down stroke" - since a stroke direction is something
+the chord accompaniment does, not something the notated melody note does.
+A bar can show more than one Chords row when it has more than one marked
+stroke in it, one per stroke, each still following the score's own real
+timing.

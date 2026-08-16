@@ -472,7 +472,7 @@ class MainWindow(QMainWindow):
         self.presenter.refresh_region_1()
         self.region_2.load_score_structure(
             self._music_data.get_score_structure(),
-            collapse_to_parts=self._music_data.is_midi or self._music_data.is_ug,
+            collapse_to_parts=self._music_data.collapsed_part_ids,
         )
         self.metronome_action.setChecked(self._music_data.metronome_enabled)
         self.position_announcer_action.setChecked(self._music_data.position_announcer_enabled)

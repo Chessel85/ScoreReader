@@ -1,5 +1,5 @@
 # widgets/region2_list_widget.py
-from typing import Optional
+from typing import Optional, Set, Union
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QListWidget, QListWidgetItem
@@ -35,10 +35,12 @@ class Region2ListWidget(RegionFocusCycleMixin, QListWidget):
             return self._current_visible_nodes[row]
         return None
 
-    def load_score_structure(self, parts_data: list, collapse_to_parts: bool = False):
+    def load_score_structure(self, parts_data: list, collapse_to_parts: Union[bool, Set[str]] = False):
         """Populates the list from parsed score metadata. collapse_to_parts
-        (Ref 25/S2) is set for a MIDI-loaded score, where staff/voice rows
-        would only ever show fake/trivial detail - see
+        (Ref 25/S2) is True for a MIDI-loaded score or pure Ultimate Guitar
+        import, where every part's staff/voice rows would only ever show
+        fake/trivial detail, or a set of specific part_ids for a mixed score
+        (real notated parts alongside synthetic Chords/Lyrics parts) - see
         Region2HierarchyModel.get_visible_nodes."""
         self.model_manager.build_from_score(parts_data, collapse_to_parts=collapse_to_parts)
         self.refresh_list()

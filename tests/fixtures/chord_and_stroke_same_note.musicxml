@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- One part, one complete 4/4 bar: a <harmony> (C major) lands at the same
+     beat as the bar's only note, which itself carries a
+     <notations/arpeggiate> mark - the coincidence files/Three Blind
+     Mice.mxl's bar 4 has (its only note is both the bar's harmony position
+     and its one stroke). Reported: this used to produce two near-identical
+     Chords rows at the same slice ("C, beat position 1.0" right next to
+     "C, beat position 1.0, strum down stroke") - TimelineBuilder now merges
+     the stroke onto the harmony's own NoteData instead. -->
+<score-partwise version="4.0">
+  <part-list>
+    <score-part id="P1">
+      <part-name>Piano</part-name>
+      <midi-instrument id="P1-I1">
+        <midi-channel>1</midi-channel>
+        <midi-program>1</midi-program>
+      </midi-instrument>
+    </score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <key>
+          <fifths>0</fifths>
+        </key>
+        <time>
+          <beats>4</beats>
+          <beat-type>4</beat-type>
+        </time>
+        <clef number="1">
+          <sign>G</sign>
+          <line>2</line>
+        </clef>
+      </attributes>
+      <harmony>
+        <root>
+          <root-step>C</root-step>
+        </root>
+        <kind>major</kind>
+      </harmony>
+      <note>
+        <pitch>
+          <step>G</step>
+          <octave>4</octave>
+        </pitch>
+        <duration>4</duration>
+        <voice>1</voice>
+        <type>whole</type>
+        <staff>1</staff>
+        <notations>
+          <arpeggiate direction="down"/>
+        </notations>
+      </note>
+    </measure>
+  </part>
+</score-partwise>
