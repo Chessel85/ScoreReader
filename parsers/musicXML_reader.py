@@ -8,6 +8,14 @@ from models.duration_units import beat_unit_display_name
 from models.key_signatures import FIFTHS_MAP
 from models.music_data import MusicData
 from models.parts_structure import PartStructureInfo
+from parsers.timeline_builder import (
+    CHORDS_PART_ID,
+    CHORDS_PART_NAME,
+    LYRICS_PART_ID,
+    LYRICS_PART_NAME,
+    has_harmony_elements,
+    has_lyric_elements,
+)
 from parsers.xml_source import read_musicxml_root
 
 class MusicXMLReader:
@@ -248,6 +256,39 @@ class MusicXMLReader:
                 p_info.staves_clefs = staves_clefs
                 p_info.staves_voices = staves_voices
                 parts_list.append(p_info)
+
+            # A real notated score (piano/guitar lead sheet, e.g.) can carry
+            # <harmony>/<lyric> markup alongside its real notes - added here
+            # as two more parts, the same "an instrument called Chords" /
+            # "the lyrics are also an instrument/part" UX
+            # parsers/ug_timeline_builder.py already established for a pure
+            # Ultimate Guitar import. One staff, one voice each - not zero,
+            # which would make Region2HierarchyModel.get_active_voice_tuples()
+            # treat the part as having nothing to show regardless of its
+            # on/off state (the same gotcha CLAUDE.md documents for MIDI's
+            # collapse_to_parts and UgReader). Added only when the file
+            # actually has the markup, so an ordinary score gets no empty
+            # "Chords"/"Lyrics" rows.
+            if has_harmony_elements(root):
+                parts_list.append(
+                    PartStructureInfo(
+                        part_id=CHORDS_PART_ID,
+                        name=CHORDS_PART_NAME,
+                        gmidi_program=25,  # Acoustic Guitar (nylon), same as UG's Chords part
+                        staves_clefs={1: "Chord chart"},
+                        staves_voices={1: [1]},
+                    )
+                )
+            if has_lyric_elements(root):
+                parts_list.append(
+                    PartStructureInfo(
+                        part_id=LYRICS_PART_ID,
+                        name=LYRICS_PART_NAME,
+                        gmidi_program=25,  # unused - the Lyrics part never carries a real midi_pitch
+                        staves_clefs={1: "Lyrics"},
+                        staves_voices={1: [1]},
+                    )
+                )
 
         except Exception as e:
             print(f"[ERROR] Parsing part structure XML: {e}")

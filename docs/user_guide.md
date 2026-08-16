@@ -81,7 +81,10 @@ wrong - key signature. Use **Edit > Instruments...** and
 **Edit > Key Signature...** (§12.2) to correct either.
 
 Recall Score can also import chords and lyrics directly from an Ultimate
-Guitar tab page - see §16.
+Guitar tab page - see §16. If a MusicXML file already carries its own
+chord symbols and/or lyrics (for example a lead-sheet-style score exported
+from MuseScore), those are picked up automatically as extra **Chords** and
+**Lyrics** parts too - see §16.6.
 
 ### 2.4 A Five-Minute First Walkthrough
 
@@ -721,7 +724,7 @@ raise an issue on the project's GitHub page:
 Include what you were doing, the version number, and - if the app was
 involved - the contents of `recall_score.log` (§14.2).
 
-## 16. Importing Chords and Lyrics from Ultimate Guitar
+## 16. Chords and Lyrics
 
 ### 16.1 What This Feature Is For
 
@@ -732,6 +735,11 @@ positioned above the lyric words they go with, rather than full sheet
 music. This is a different, simpler kind of material than a MusicXML or
 MIDI score: there's no notated rhythm or real bar structure, just chord
 changes and the words that go with them.
+
+A MusicXML file can carry the same kind of information too - chord
+symbols and/or lyric text written directly into the score alongside its
+real notated notes. Recall Score picks these up automatically, with no
+importing step needed - see §16.6.
 
 ### 16.2 Importing a Song
 
@@ -765,6 +773,14 @@ every note firing at once, otherwise as a plain chord. The Lyrics row
 shows the words sung during that chord, or "No lyrics" for instrumental
 passages such as an intro with nothing sung yet.
 
+Most chord names are shown exactly as written ("Fmaj7", "C7", "Dsus4", a
+bare "G" for G major) since a screen reader already reads those clearly.
+A minor chord is the one exception: rather than show it as a bare "Am" or
+"Am7" - which a screen reader reads as the letter "m", not the word
+"minor" - Recall Score spells it out as "A minor" or "A minor 7". This
+applies everywhere a chord name is shown, including the embedded-MusicXML
+chords in §16.6.
+
 Because Region 3's currently-selected row is always the first one shown,
 whichever part is listed first in Region 2 is the one your screen reader
 announces by default on every move. If you'd rather hear the lyric first
@@ -794,3 +810,26 @@ Occasionally a lyric line's timing in the source page is imprecise (the
 original contributor's own spacing), which can very occasionally show a
 lyric fragment split slightly oddly - this reflects the source page, not
 a fault in the import.
+
+### 16.6 Chords and Lyrics Embedded in an Ordinary MusicXML Score
+
+Some MusicXML files carry chord symbols and/or lyric text written directly
+into the score alongside its real notated notes - typically a
+lead-sheet-style piece exported from a program like MuseScore, with chord
+names printed above the staff and words printed underneath it. Opening
+such a file with **File > Open...** shows this content automatically, with
+no separate import step: Region 2 gains a **Chords** part, a **Lyrics**
+part, or both, alongside the score's own instrument parts.
+
+Unlike an Ultimate Guitar import (§16.3), these two parts line up with the
+score's own real notated timing rather than one fabricated bar per chord
+change - a chord symbol or lyric shows up at exactly the beat it was
+written against, right alongside the notated note sounding at that same
+moment. Switch either part off with `O` exactly as you would any other
+part, and use **Options > Reorder Parts...** (§16.3) if you'd rather your
+screen reader announce the lyric before the chord name, or the other way
+round. A bar with a chord symbol but no note underneath it, or a note with
+no lyric under it, simply has no Chords or Lyrics entry there - there's no
+"No lyrics" placeholder the way an Ultimate Guitar import uses for a
+wordless bar, since with real notated timing there's no ambiguity about
+whether something is missing.

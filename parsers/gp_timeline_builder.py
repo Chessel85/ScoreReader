@@ -24,7 +24,7 @@ from models.duration_units import beat_unit_display_name, tuplet_word
 from models.event_slice import EventSlice
 from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
-from models.vocabulary import dynamic_name
+from models.vocabulary import dynamic_name, spell_out_minor_chord
 from parsers.gp_source import GpNote, GpSource, GpTrack, iter_track_positions, read_gp_source
 
 # Clearly out of range of GP's real 1-4 <Voices> slots (1-indexed once
@@ -166,7 +166,14 @@ class GpTimelineBuilder:
             offsets[key] = offset_q + beat.quarter_length
 
             if beat.chord_index is not None:
-                current_chord_name = track.chord_names.get(beat.chord_index, current_chord_name)
+                # track.chord_names holds GP's own raw chord diagram name
+                # ("Am") - the same bare-"m" expansion MusicXML/UG chords
+                # need (see models/vocabulary.py). Idempotent: re-applying it
+                # to an already-expanded sticky value (the fallback default
+                # here) is a no-op, since "A minor" itself doesn't match.
+                raw_chord_name = track.chord_names.get(beat.chord_index)
+                if raw_chord_name is not None:
+                    current_chord_name = spell_out_minor_chord(raw_chord_name)
 
             if not beat.note_ids:
                 continue  # a rest - still advances offset above, produces no event

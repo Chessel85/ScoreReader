@@ -133,6 +133,40 @@ def articulation_name(tag: str) -> str:
     return ARTICULATION_NAMES.get(tag, tag.replace("-", " "))
 
 
+# A minor chord's usual written abbreviation is a bare trailing "m" ("Am",
+# "Am7") - reported: NVDA reads that as the letter "m", not the word
+# "minor", while every other abbreviation seen in practice (Cmaj7, Dsus4,
+# C7, a bare G for G major) already reads correctly as-is and must be left
+# untouched. Matches root + accidental, "m" NOT followed by "aj" (so
+# "Amaj7" is never touched), optional trailing extension digits (the
+# "7"/"9"/"11" of an extended minor chord), and an optional /bass suffix.
+# Deliberately narrow - "AmM7" (minor-major-seventh) doesn't match and is
+# left as-is, an untested rarity nobody asked about.
+#
+# Shared by every chord-symbol source in the app - parsers/timeline_builder.py
+# (MusicXML <harmony>, via music21's ChordSymbol.figure), parsers/
+# ug_timeline_builder.py (an Ultimate Guitar page's own raw [ch] markup
+# text) and parsers/gp_timeline_builder.py (a Guitar Pro chord diagram's own
+# name) - so a fix here fixes the "Am" chord in Half the World Away's UG
+# import and any GP chord track the same way it fixes a MusicXML <harmony>
+# chord, rather than needing three separate regexes to stay in sync.
+_MINOR_CHORD_RE = re.compile(r"^([A-G][#b-]*)m(?!aj)(\d*)((?:/.*)?)$")
+
+
+def spell_out_minor_chord(label: str) -> str:
+    """"Am" -> "A minor", "Am7" -> "A minor 7". Any label the regex above
+    doesn't match (already-spoken-friendly abbreviations, or GP's "Strum"
+    placeholder for a chordless strum event) passes through unchanged."""
+    match = _MINOR_CHORD_RE.match(label)
+    if not match:
+        return label
+    root, extension, bass = match.groups()
+    words = [root, "minor"]
+    if extension:
+        words.append(extension)
+    return " ".join(words) + bass
+
+
 def attribute_label(attribute_key: str, uk_terms: bool) -> str:
     """Region 3/4's optional-attribute display label for `attribute_key`
     (Ref 15 AC4) - only "measure" differs by dialect (D-15 excludes

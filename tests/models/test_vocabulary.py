@@ -6,6 +6,7 @@ from models.vocabulary import (
     bar_word,
     dynamic_name,
     duration_name,
+    spell_out_minor_chord,
 )
 
 
@@ -99,3 +100,27 @@ def test_articulation_name_translates_common_tags():
 
 def test_articulation_name_unmapped_tag_replaces_hyphens_with_spaces():
     assert articulation_name("some-unmapped-tag") == "some unmapped tag"
+
+
+def test_spell_out_minor_chord_expands_the_bare_m():
+    """Reported: NVDA reads "Cmaj7"/"Dsus4"/"C7"/"G" fine as-is, but a bare
+    trailing "m" for a minor chord ("Am", "Am7") is read as the letter "m",
+    not the word "minor" - the only abbreviation that needed expanding.
+    Shared by every chord-symbol source: MusicXML <harmony>
+    (parsers/timeline_builder.py, via music21's ChordSymbol.figure), an
+    Ultimate Guitar import's own raw chord text
+    (parsers/ug_timeline_builder.py) and a Guitar Pro chord diagram's own
+    name (parsers/gp_timeline_builder.py) - so a fix here covers all three
+    sources at once rather than needing three separate regexes in sync."""
+    assert spell_out_minor_chord("Am") == "A minor"
+    assert spell_out_minor_chord("Am7") == "A minor 7"
+    assert spell_out_minor_chord("Am9") == "A minor 9"
+    assert spell_out_minor_chord("C#m") == "C# minor"
+    assert spell_out_minor_chord("B-m7") == "B- minor 7"
+    assert spell_out_minor_chord("Am/C") == "A minor/C"
+
+
+def test_spell_out_minor_chord_leaves_other_labels_untouched():
+    # Already fine on a screen reader, or the "m" isn't a bare minor marker.
+    for label in ("Cmaj7", "Dsus4", "C7", "G", "Adim", "A+", "Strum"):
+        assert spell_out_minor_chord(label) == label

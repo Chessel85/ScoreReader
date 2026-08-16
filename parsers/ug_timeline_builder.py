@@ -33,6 +33,7 @@ from music21 import harmony
 from models.event_slice import EventSlice
 from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
+from models.vocabulary import spell_out_minor_chord
 from parsers.ug_source import UgSource
 
 CHORDS_PART_ID = "chords"
@@ -221,7 +222,11 @@ class UgTimelineBuilder:
             pitches = _chord_symbol_to_pitches(event.symbol)
 
             chord_note = NoteData(
-                step_name=event.symbol,
+                # event.symbol is UG's own raw [ch] markup text ("Am"),
+                # unlike TimelineBuilder's MusicXML path which gets a label
+                # from music21's ChordSymbol.figure - both need the same
+                # bare-"m" expansion (see models/vocabulary.py).
+                step_name=spell_out_minor_chord(event.symbol),
                 octave=None,
                 midi_pitch=max(pitches),
                 measure=measure,

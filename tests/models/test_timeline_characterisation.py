@@ -575,3 +575,84 @@ def test_part_names_still_read_from_the_file_when_there_is_no_parts_info(score_d
 
     names = {n.part_name for s in slices for n in s.notes}
     assert names == {"Piano", "Classical Guitar"}
+
+
+# Synthetic Chords/Lyrics parts from <harmony>/<lyric> markup on a real
+# MusicXML file, modelled on files/Three Blind Mice.mxl - the UG-import-
+# style "an instrument called Chords" / "lyrics are also an instrument/part"
+# UX, but bucketed into the SAME slices as the real notated part instead of
+# fabricated one-bar-per-chord positions (see parsers/timeline_builder.py).
+
+def _notes_by_part(slice_, part_id):
+    return [n for n in slice_.notes if n.part_id == part_id]
+
+
+def test_harmony_becomes_a_chords_part_note_in_the_same_slice(timeline, chords_and_lyrics_score):
+    from parsers.timeline_builder import CHORDS_PART_ID, CHORDS_PART_NAME
+
+    md = timeline(chords_and_lyrics_score)
+
+    first_slice = md.timeline_slices[0]
+    chord_notes = _notes_by_part(first_slice, CHORDS_PART_ID)
+    assert len(chord_notes) == 1
+    chord_note = chord_notes[0]
+    assert chord_note.step_name == "A minor", "a bare 'm' reads as the letter to a screen reader, not 'minor'"
+    assert chord_note.part_name == CHORDS_PART_NAME
+    assert chord_note.chord_pitches == [45, 48, 52]  # A2, C3, E3 (music21's default triad octave)
+    assert chord_note.midi_pitch == max(chord_note.chord_pitches)
+
+    # Only the bar's one harmony - no Chords note anywhere else in the piece.
+    later_chord_notes = [
+        n for s in md.timeline_slices[1:] for n in _notes_by_part(s, CHORDS_PART_ID)
+    ]
+    assert later_chord_notes == []
+
+
+def test_lyric_attaches_to_the_same_slice_as_its_melody_note(timeline, chords_and_lyrics_score):
+    from parsers.timeline_builder import LYRICS_PART_ID, LYRICS_PART_NAME
+
+    md = timeline(chords_and_lyrics_score)
+
+    lyrics_by_slice = [
+        (s.notes[0].step_name, [n.step_name for n in _notes_by_part(s, LYRICS_PART_ID)])
+        for s in md.timeline_slices
+    ]
+    assert lyrics_by_slice == [
+        ("C", ["Hel"]),
+        ("D", ["lo"]),
+        ("E", ["there"]),
+        ("rest", []),  # the trailing rest has no <lyric> - no Lyrics entry at all
+    ]
+
+    lyric_note = _notes_by_part(md.timeline_slices[0], LYRICS_PART_ID)[0]
+    assert lyric_note.part_name == LYRICS_PART_NAME
+    assert lyric_note.midi_pitch is None, "the Lyrics part is silent, like a rest"
+
+
+def test_arpeggiate_direction_becomes_strum_on_the_real_note(timeline, chords_and_lyrics_score):
+    """A <notations/arpeggiate direction=.../> on a single (non-chord) note
+    is read as a pick/strum-direction indicator, using the same "down
+    stroke"/"up stroke" vocabulary Guitar Pro's synthetic Chords voice
+    already established for NoteData.strum - never inferred when absent."""
+    from parsers.timeline_builder import CHORDS_PART_ID
+
+    md = timeline(chords_and_lyrics_score)
+
+    piano_notes = [
+        n for s in md.timeline_slices for n in s.notes
+        if n.part_id != CHORDS_PART_ID and n.step_name not in ("Hel", "lo", "there")
+    ]
+    strums = {n.step_name: n.strum for n in piano_notes if n.midi_pitch is not None}
+    assert strums == {"C": "down stroke", "D": "up stroke", "E": None}
+
+
+def test_no_harmony_or_lyric_means_no_synthetic_parts(timeline, minimal_score):
+    """An ordinary MusicXML file with no <harmony>/<lyric> markup gets no
+    empty Chords/Lyrics rows."""
+    from parsers.timeline_builder import CHORDS_PART_ID, LYRICS_PART_ID
+
+    md = timeline(minimal_score)
+
+    part_ids = {n.part_id for s in md.timeline_slices for n in s.notes}
+    assert CHORDS_PART_ID not in part_ids
+    assert LYRICS_PART_ID not in part_ids

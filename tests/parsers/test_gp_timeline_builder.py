@@ -63,8 +63,12 @@ def test_chords_voice_visits_every_named_chord_in_order(gp_ripple):
     data = GpReader(gp_ripple).load()
     names = [n.step_name for n in _chord_notes(data, "P1")]
     # Every named chord that appears must actually show up somewhere in the
-    # sticky sequence - the exact library from test_gp_source.py.
-    assert set(names) == {"C", "F", "G", "Dm", "G7"}
+    # sticky sequence - the exact library from test_gp_source.py, except
+    # "Dm" reads as "D minor": a bare trailing "m" is read as the letter "m"
+    # by a screen reader, not the word "minor" (models/vocabulary.py's
+    # spell_out_minor_chord, applied to GP's own raw chord diagram name the
+    # same way it's applied to a MusicXML <harmony> or a UG import's chord).
+    assert set(names) == {"C", "F", "G", "D minor", "G7"}
 
 
 def test_track_0_unnamed_chord_shaped_beats_fall_back_to_strum(gp_ripple):

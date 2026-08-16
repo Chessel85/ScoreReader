@@ -93,6 +93,22 @@ def test_status_bar_tempo_matches_region_1_not_the_internal_quarter_bpm(score_du
 
 
 @pytest.mark.slow
+def test_reader_adds_chords_and_lyrics_parts_for_a_score_with_harmony_and_lyric_markup(score_three_blind_mice):
+    """Real MuseScore export: chord symbols and lyrics alongside a real
+    notated Piano part get the same "instrument called Chords"/"lyrics are
+    also a part" UX Ultimate Guitar import already established, with a
+    channel and GM program of their own so they mix in alongside the real
+    instrument during playback (Ref 8)."""
+    data = MusicXMLReader(score_three_blind_mice).load()
+
+    names = [p.name for p in data.parts_info]
+    assert names == ["Piano", "Chords", "Lyrics"]
+
+    channels = {p.part_id: data.get_channel_for_part(p.part_id) for p in data.parts_info}
+    assert len(set(channels.values())) == 3, "each part must get its own MIDI channel"
+
+
+@pytest.mark.slow
 def test_guitar_notes_play_the_guitar_program_not_the_piano_program(score_duet):
     """A8, Ref 8: reported bug - Chessel Duet's guitar (P2) used to play as
     piano because playback always read parts_info[0]'s program."""

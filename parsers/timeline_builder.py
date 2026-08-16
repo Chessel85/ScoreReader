@@ -3,6 +3,8 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+from music21 import harmony as harmony21
+
 from models.duration_units import (
     beat_unit_display_name,
     beat_unit_quarter_length,
@@ -16,8 +18,95 @@ from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
 from models.repeat_span import RepeatSpan
 from models.tempo_change import TempoChange
-from models.vocabulary import articulation_name, dynamic_name
+from models.vocabulary import articulation_name, dynamic_name, spell_out_minor_chord
 from parsers.xml_source import read_musicxml_root
+
+# Synthetic parts a real MusicXML file can carry alongside its notated
+# instruments, mirroring parsers/ug_timeline_builder.py's Chords/Lyrics
+# concept but sourced from the file's own <harmony>/<lyric> elements rather
+# than fabricated bar boundaries - the notated part already gives real
+# measure/beat positions, so these are just extra NoteData entries bucketed
+# into the SAME slices as the real notes, not a separate timeline. Shared by
+# MusicXMLReader (parts_info entries, so Region 2/mixer/channel assignment
+# see them) and TimelineBuilder (the notes themselves) via one constant each,
+# so the two can't disagree on a name the way R5's two independent reads did.
+CHORDS_PART_ID = "chords"
+CHORDS_PART_NAME = "Chords"
+LYRICS_PART_ID = "lyrics"
+LYRICS_PART_NAME = "Lyrics"
+
+
+def has_harmony_elements(root: Optional[ET.Element]) -> bool:
+    """Whether this MusicXML document carries any <harmony> (chord symbol)
+    markup at all - the single check both MusicXMLReader (whether to add a
+    Chords entry to parts_info) and TimelineBuilder (whether to build any
+    Chords notes) must agree on."""
+    return root is not None and root.find(".//harmony") is not None
+
+
+def has_lyric_elements(root: Optional[ET.Element]) -> bool:
+    """Whether this MusicXML document carries any <lyric> markup at all -
+    the Lyrics-part counterpart of has_harmony_elements above."""
+    return root is not None and root.find(".//note/lyric") is not None
+
+
+def _pitch_name(step: str, alter_elem: Optional[ET.Element]) -> str:
+    """MusicXML <root-step>/<root-alter> (or <bass-step>/<bass-alter>) as a
+    music21 pitch name string ("F#", "B--") - music21's harmony.ChordSymbol
+    accepts both `root=`/`bass=` and `kind=` using MusicXML's own vocabulary
+    directly, so no separate kind->suffix mapping is needed here."""
+    alter = int(float(alter_elem.text.strip())) if (alter_elem is not None and alter_elem.text) else 0
+    accidental = {1: "#", -1: "-", 2: "##", -2: "--"}.get(alter, "")
+    return f"{step}{accidental}"
+
+
+def _resolve_harmony(harmony_elem) -> Tuple[List[int], str]:
+    """A <harmony> element's MIDI pitches and display label ("Am", "G7",
+    "F/C"), via music21.harmony.ChordSymbol - already a project dependency,
+    first used this way by parsers/ug_timeline_builder.py's UG chord-symbol
+    parsing. Falls back to a bare root triad, then to the root name alone
+    with no real pitches, mirroring ug_timeline_builder's
+    _chord_symbol_to_pitches "absence isn't an error, degrade gracefully"
+    pattern - a malformed <kind> shouldn't make the whole bar's chord vanish.
+    """
+    root_elem = harmony_elem.find("root")
+    if root_elem is None:
+        return [], ""
+    step_elem = root_elem.find("root-step")
+    if step_elem is None or not step_elem.text:
+        return [], ""
+    root_name = _pitch_name(step_elem.text.strip(), root_elem.find("root-alter"))
+
+    kind_elem = harmony_elem.find("kind")
+    kind = kind_elem.text.strip() if (kind_elem is not None and kind_elem.text) else "major"
+
+    bass_name = None
+    bass_elem = harmony_elem.find("bass")
+    if bass_elem is not None:
+        bass_step_elem = bass_elem.find("bass-step")
+        if bass_step_elem is not None and bass_step_elem.text:
+            bass_name = _pitch_name(bass_step_elem.text.strip(), bass_elem.find("bass-alter"))
+
+    try:
+        kwargs = {"root": root_name, "kind": kind}
+        if bass_name:
+            kwargs["bass"] = bass_name
+        cs = harmony21.ChordSymbol(**kwargs)
+        pitches = [p.midi for p in cs.pitches]
+        if pitches:
+            return pitches, spell_out_minor_chord(cs.figure)
+    except Exception:
+        pass
+
+    try:
+        cs = harmony21.ChordSymbol(root=root_name)
+        pitches = [p.midi for p in cs.pitches]
+        if pitches:
+            return pitches, spell_out_minor_chord(cs.figure)
+    except Exception:
+        pass
+
+    return [], root_name
 
 
 def _duration_divs(elem) -> int:
@@ -263,6 +352,49 @@ class TimelineBuilder:
                             dir_staff = int(dir_staff_el.text.strip()) if (dir_staff_el is not None and dir_staff_el.text) else None
                             pending_dynamics[(dir_staff, walker.offset_divs)] = dynamic_name(mark)
 
+                    if elem.tag == "harmony":
+                        # <harmony> is a <measure> child like <direction>,
+                        # not a <note> child - walker.step() already
+                        # returned None for it, so it never advances
+                        # offset_divs itself. An <offset> child (rare;
+                        # absent in every file seen so far) displaces it
+                        # from the current cursor position, same convention
+                        # MusicXML uses for <direction>.
+                        offset_el = elem.find("offset")
+                        harmony_offset_divs = walker.offset_divs
+                        if offset_el is not None and offset_el.text:
+                            try:
+                                harmony_offset_divs += int(offset_el.text.strip())
+                            except ValueError:
+                                pass
+                        chord_pitches, chord_label = _resolve_harmony(elem)
+                        if chord_pitches:
+                            h_offset_q = harmony_offset_divs / walker.divisions
+                            if m_num == 0:
+                                h_start_beat = self._start_beat(
+                                    full_bar_quarters, pickup_filled_quarters, beat_unit_quarter_len
+                                )
+                                h_beat_pos = h_start_beat + (h_offset_q / beat_unit_quarter_len)
+                            else:
+                                h_beat_pos = 1.0 + (h_offset_q / beat_unit_quarter_len)
+                            chord_note = NoteData(
+                                step_name=chord_label,
+                                octave=None,
+                                midi_pitch=max(chord_pitches),
+                                measure=m_num,
+                                beat_position=round(h_beat_pos, 2),
+                                ts_duration=float(walker.ts_num),
+                                quarter_length=full_bar_quarters,
+                                part_id=CHORDS_PART_ID,
+                                part_name=CHORDS_PART_NAME,
+                                staff=1,
+                                voice=1,
+                                chord_pitches=chord_pitches,
+                            )
+                            h_key = (m_num, round(h_offset_q, 4))
+                            buckets.setdefault(h_key, []).append(chord_note)
+                            slice_state.setdefault(h_key, ((walker.ts_num, walker.ts_den), walker.fifths))
+
                     if result is None:
                         continue
                     note_offset_divs, is_chord = result
@@ -303,6 +435,8 @@ class TimelineBuilder:
                         articulation = None
                         fingering = None
                         pluck = None
+                        strum = None
+                        lyric_text = None
                     else:
                         pitch_el = elem.find("pitch")
                         if pitch_el is None:
@@ -367,6 +501,34 @@ class TimelineBuilder:
                             if dynamic is None:
                                 dynamic = pending_dynamics.get((None, note_offset_divs))
 
+                        # <notations/arpeggiate direction="up"/"down"> on a
+                        # single (non-chord) note has no conventional
+                        # notation meaning - real arpeggios apply to chords -
+                        # so this is read as a per-note pick/strum-direction
+                        # indicator instead, the same "down stroke"/
+                        # "up stroke" vocabulary Guitar Pro's synthetic
+                        # Chords voice already established for NoteData.strum
+                        # (see CLAUDE.md). Left None (not inferred) when
+                        # absent, same "leave unstated" convention.
+                        strum = None
+                        arpeggiate_el = elem.find("notations/arpeggiate")
+                        if arpeggiate_el is not None:
+                            arp_direction = arpeggiate_el.attrib.get("direction")
+                            if arp_direction == "up":
+                                strum = "up stroke"
+                            elif arp_direction == "down":
+                                strum = "down stroke"
+
+                        # Only the first verse - real files with more than
+                        # one <lyric> per note are untested by any fixture
+                        # seen so far.
+                        lyric_text = None
+                        lyric_el = elem.find("lyric")
+                        if lyric_el is not None:
+                            lyric_text_el = lyric_el.find("text")
+                            if lyric_text_el is not None and lyric_text_el.text:
+                                lyric_text = lyric_text_el.text.strip()
+
                     offset_q = note_offset_divs / walker.divisions
                     quarter_len = dur_divs / walker.divisions
                     ts_duration = round(quarter_len / beat_unit_quarter_len, 2)
@@ -412,6 +574,7 @@ class TimelineBuilder:
                         fingering=fingering,
                         pluck=pluck,
                         duration_name_us=duration_name_us,
+                        strum=strum,
                     )
 
                     key = (m_num, round(offset_q, 4))
@@ -419,6 +582,28 @@ class TimelineBuilder:
                         buckets[key] = []
                     buckets[key].append(note_obj)
                     slice_state[key] = ((walker.ts_num, walker.ts_den), walker.fifths)
+
+                    if lyric_text is not None:
+                        # Bucketed into the SAME slice as the melody note it
+                        # came from, unlike parsers/ug_timeline_builder.py's
+                        # Lyrics part - MusicXML already gives real per-note
+                        # timing, so there is no need to fabricate one bar
+                        # per lyric the way UG (plain chord-tab text, no real
+                        # positions) has to.
+                        lyric_note = NoteData(
+                            step_name=lyric_text,
+                            octave=None,
+                            midi_pitch=None,
+                            measure=m_num,
+                            beat_position=round(beat_pos, 2),
+                            ts_duration=ts_duration,
+                            quarter_length=quarter_len,
+                            part_id=LYRICS_PART_ID,
+                            part_name=LYRICS_PART_NAME,
+                            staff=1,
+                            voice=1,
+                        )
+                        buckets[key].append(lyric_note)
 
                 divisions, time_sig_num, time_sig_den, fifths = (
                     walker.divisions, walker.ts_num, walker.ts_den, walker.fifths
@@ -441,8 +626,15 @@ class TimelineBuilder:
         # notation stave and a tab stave) keep their original relative
         # order via Python's stable sort. Rests (midi_pitch None) sort
         # last within their part - they don't sound, so their position
-        # among sounding notes doesn't matter.
+        # among sounding notes doesn't matter. The synthetic Chords/Lyrics
+        # parts are appended after every real part's index (not left to the
+        # dict.get() fallback of 0 below, which would collide with whichever
+        # real part happens to be first) so they always sort after the
+        # notated instruments, Chords before Lyrics - the same order
+        # MusicXMLReader appends them to parts_info in.
         part_order = {p.attrib.get("id", ""): i for i, p in enumerate(root.findall("part"))}
+        part_order[CHORDS_PART_ID] = len(part_order)
+        part_order[LYRICS_PART_ID] = len(part_order)
 
         def _pitch_sort_key(note: NoteData) -> Tuple[int, float]:
             pitch_component = -note.midi_pitch if note.midi_pitch is not None else float("inf")

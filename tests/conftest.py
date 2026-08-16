@@ -159,6 +159,28 @@ def slice_ordering_score() -> str:
 
 
 @pytest.fixture
+def chords_and_lyrics_score() -> str:
+    """One part, one complete 4/4 bar: an A-minor <harmony> at the start of
+    the bar, "Hel"/"lo"/"there" lyrics on the first three notes, arpeggiate
+    direction down/up on notes 1/2 (none on note 3), and a trailing rest
+    with no lyric - the synthetic Chords/Lyrics parts fixture (Ref 30-ish,
+    see CLAUDE.md's MusicXML harmony/lyric entry), modelled on the real-world
+    shape of files/Three Blind Mice.mxl."""
+    return _require(FIXTURES_DIR / "chords_and_lyrics.musicxml")
+
+
+@pytest.fixture
+def score_three_blind_mice() -> str:
+    """A real MuseScore 4.7.4 export: one Piano part (2 staves), a chord
+    symbol on every bar with content, a lyric on every melody note, and
+    per-note arpeggiate up/down marks on most (not all) notes - the file the
+    Chords/Lyrics import feature was built against. 28 of its 32 measures
+    are trailing rest-only padding (a MuseScore "more bars than the tune
+    needs" export artifact, not a bug in this app)."""
+    return _require(SCORES_DIR / "Three Blind Mice.mxl")
+
+
+@pytest.fixture
 def score_bourree() -> str:
     """4/4 guitar score: notation staff plus a TAB staff duplicating it.
 
