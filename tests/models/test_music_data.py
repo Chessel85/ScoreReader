@@ -1058,7 +1058,7 @@ def test_move_attribute_order_boundary_and_unknown_key_are_no_ops():
     original = list(md.attribute_order)
 
     assert md.move_attribute_order("step", up=True) is False, "step is already first"
-    assert md.move_attribute_order("pluck", up=False) is False, "pluck is already last"
+    assert md.move_attribute_order("strum", up=False) is False, "strum is already last"
     assert md.move_attribute_order("not-a-real-attribute", up=True) is False
     assert md.attribute_order == original
 

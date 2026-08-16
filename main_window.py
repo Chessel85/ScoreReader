@@ -349,9 +349,10 @@ class MainWindow(QMainWindow):
             self,
             "Open Score",
             start_dir,
-            "Score Files (*.xml *.musicxml *.mxl *.mid *.midi);;"
+            "Score Files (*.xml *.musicxml *.mxl *.mid *.midi *.gp);;"
             "MusicXML Files (*.xml *.musicxml *.mxl);;"
             "MIDI Files (*.mid *.midi);;"
+            "Guitar Pro Files (*.gp);;"
             "All Files (*)",
         )
         if file_path:

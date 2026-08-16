@@ -1214,7 +1214,26 @@ PHASE J - FILE I/O                                        (6 tasks)
           tracks" only where a track carries real pitched note content.
           See D-19 for the "no synthetic rests for MIDI gaps" decision, and
           Phase S for follow-up fixes/features found reviewing real files.
-[ ] J2  Import Guitar Pro (needs PyGuitarPro) - Ref 25
+[x] J2  Import Guitar Pro - Ref 25
+        > DONE 2026-08-16. Hand-rolled parser (no PyGuitarPro), same
+          reasoning as J1's hand-rolled MIDI parser: parsers/gp_source.py
+          (unzips the .gp container, parses Content/score.gpif, resolves
+          its id-indirection graph into a typed GpSource), parsers/
+          gp_reader.py (GpReader, mirrors MusicXMLReader/MidiReader) and
+          parsers/gp_timeline_builder.py (GpTimelineBuilder, mirrors
+          TimelineBuilder/MidiTimelineBuilder). MusicData.__post_init__ and
+          workers/score_load_worker.py dispatch on the .gp extension. Covers
+          the GP7/GP8 zip+XML container (both share one schema per alphaTab's
+          format docs). Adds a synthetic "Chords" voice (GP_CHORD_VOICE_ID)
+          for any track with real chord-name/brush data - sticky chord name,
+          full chord_pitches for playback, and an explicit (never inferred)
+          strum direction - see CLAUDE.md. Pickup detection (Ref 17) and
+          repeat/ending/hairpin spans (Ref 29) are out of scope for this
+          pass. Ground-truth verified against a real GP8 file (Grateful
+          Dead - Ripple, files/GP/) hand-checked note-by-note during
+          discovery: first note, sticky chord names/positions across a full
+          bar, and the exact 2 explicit Brush-marked beats in the whole
+          piece all match.
 [ ] J3  Import Braille Music Editor - Ref 25
 [ ] J4  Export MusicXML, preserving bars, notes, string and fret data - Ref 26
 [ ] J5  Export MIDI - Ref 26

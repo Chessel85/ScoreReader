@@ -24,6 +24,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCORES_DIR = PROJECT_ROOT / "files"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 MIDI_DIR = PROJECT_ROOT / "files" / "midi"
+GP_DIR = PROJECT_ROOT / "files" / "GP"
 
 
 def _require(path: Path) -> str:
@@ -299,6 +300,19 @@ def midi_blue_peter() -> str:
     the fixture for "percussion is skipped cleanly, not misread as
     pitches"."""
     return _require(MIDI_DIR / "BluePeter.mid")
+
+
+@pytest.fixture
+def gp_ripple() -> str:
+    """Guitar Pro 8 (internally GPVersion 8.1.3; the container/schema is
+    shared with GP7 - see CLAUDE.md), 4 tracks (Acoustic Lead, Acoustic Capo
+    VII, Electric Bass (finger), Mandolin), 102 measures, all 4/4. Tracks 0
+    and 1 carry real chord-name (C/F/G/Dm/G7 on track 1) and/or strum-
+    direction annotations - the fixture for the synthetic "Chords" voice;
+    tracks 2/3 (bass/mandolin) carry neither and must get no synthetic voice
+    at all, confirmed by ear against the real recording (mandolin plays
+    tremolo, not strums) during the GP import discovery pass."""
+    return _require(GP_DIR / "Grateful Dead-Ripple-12-20-2025.gp")
 
 
 @pytest.fixture

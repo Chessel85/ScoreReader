@@ -2362,3 +2362,47 @@ def test_performance_report_action_shows_the_dialog_and_restores_focus(
     assert dialog.report_list.count() > 0
     assert window.focusWidget() is window.region_2
 
+
+def test_gp_file_loads_and_chords_voice_is_toggleable_and_auditions_full_chord(
+    window, qtbot, gp_ripple, null_synth
+):
+    """End-to-end: opening a real Guitar Pro file through the full app
+    pipeline (Open dialog -> ScoreLoadThread -> GpReader -> MusicData ->
+    Region 2/3) shows the synthetic "Chords" voice as an ordinary,
+    independently toggleable Region 2 row - isolating it (real tab voice and
+    every other part switched off) leaves only chord/strum events on the
+    timeline, and auditioning one sounds the whole chord, not one string."""
+    load_and_wait(window, qtbot, gp_ripple)
+
+    nodes = window.region_2._current_visible_nodes
+    chords_row = next(i for i, n in enumerate(nodes) if n.node_id == "voice_P1_1_1000")
+    assert nodes[chords_row].display_name.strip() == "Chords"
+
+    def node_row(node_id: str) -> int:
+        return next(i for i, n in enumerate(window.region_2._current_visible_nodes) if n.node_id == node_id)
+
+    # Switch off every other part, then P1's own real tab voice, leaving
+    # only P1's synthetic Chords voice active.
+    for part_id in ("part_P0", "part_P2", "part_P3"):
+        window.region_2.setCurrentRow(node_row(part_id))
+        qtbot.keyClick(window.region_2, Qt.Key.Key_O)
+    window.region_2.setCurrentRow(node_row("voice_P1_1_1"))
+    qtbot.keyClick(window.region_2, Qt.Key.Key_O)
+
+    active = window._music_data.active_voice_filter
+    assert active == {("P1", 1, 1000)}
+
+    # Move the cursor onto a slice with a chord-voice event and audition it.
+    chord_index = next(
+        i for i, s in enumerate(window._music_data.timeline_slices)
+        if any(n.voice == 1000 and n.part_id == "P1" for n in s.notes)
+    )
+    window._music_data.active_event_index = chord_index
+    window._update_timeline_views()
+
+    assert window.region_3.count() == 1
+    assert null_synth.played, "moving onto a chord-voice event must audition it"
+    assert len(null_synth.last_played["midi_notes"]) >= 4, (
+        "a chord-voice event must sound the whole chord, not a single representative note"
+    )
+

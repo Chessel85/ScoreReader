@@ -92,12 +92,14 @@ class Region2HierarchyModel:
                 part_node.children.append(staff_node)
                 self._node_lookup[staff_node.node_id] = staff_node
 
+                voice_names = s_data.get('voice_names', {})
                 for v_id in s_data.get('voices', []):
                     v_int = int(v_id)
+                    voice_label = voice_names.get(v_int) or f"Voice {v_int}"
                     voice_node = Region2Node(
                         node_id=f"voice_{p_id}_{s_id}_{v_int}",
                         node_type="voice",
-                        display_name=f"    Voice {v_int}",
+                        display_name=f"    {voice_label}",
                         part_id=p_id,
                         staff_id=s_id,
                         voice_id=v_int,

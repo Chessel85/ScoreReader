@@ -14,6 +14,7 @@ from models.performance_region_row import PerformanceRegionRow
 from models.repeat_span import RepeatSpan
 from models.score_config_data import ScoreConfig
 from models.tempo_change import TempoChange
+from parsers.gp_timeline_builder import GpTimelineBuilder
 from parsers.midi_timeline_builder import MidiTimelineBuilder, _spell_pitch
 from parsers.timeline_builder import TimelineBuilder
 
@@ -55,6 +56,11 @@ class MusicData:
     # Pre-parsed MidiSource from MidiReader (parsers/midi_source.py), the
     # MIDI counterpart of xml_root - same reasoning, same fallback when None.
     midi_source: Optional[Any] = None
+
+    # Pre-parsed GpSource from GpReader (parsers/gp_source.py), the Guitar
+    # Pro counterpart of xml_root/midi_source - same reasoning, same
+    # fallback when None.
+    gp_source: Optional[Any] = None
 
     timeline_slices: List[EventSlice] = field(default_factory=list)
     active_event_index: int = 0
@@ -136,6 +142,12 @@ class MusicData:
         Region 2 collapse) don't each repeat it."""
         return self.file_path.lower().endswith((".mid", ".midi"))
 
+    @property
+    def is_gp(self) -> bool:
+        """True for a score loaded from a Guitar Pro (.gp) file - the same
+        extension check __post_init__ uses to pick a timeline builder."""
+        return self.file_path.lower().endswith(".gp")
+
     def __post_init__(self):
         # DISPLAY_ATTRIBUTE_ORDER is the fixed default; attribute_order is
         # the live copy the reorder dialog mutates. A caller-supplied order
@@ -145,6 +157,8 @@ class MusicData:
         if self.file_path:
             if self.is_midi:
                 builder = MidiTimelineBuilder(self.file_path, self.parts_info, source=self.midi_source)
+            elif self.is_gp:
+                builder = GpTimelineBuilder(self.file_path, self.parts_info, source=self.gp_source)
             else:
                 builder = TimelineBuilder(self.file_path, self.parts_info, root=self.xml_root)
             self.timeline_slices = builder.build()
@@ -540,6 +554,11 @@ class MusicData:
                     "id": s_id,
                     "name": p.staves_clefs.get(s_id, "Standard stave"),
                     "voices": p.staves_voices[s_id],
+                    "voice_names": {
+                        v_id: p.voice_names[(s_id, v_id)]
+                        for v_id in p.staves_voices[s_id]
+                        if (s_id, v_id) in p.voice_names
+                    },
                 }
                 for s_id in sorted(p.staves_voices.keys())
             ]
@@ -592,7 +611,7 @@ class MusicData:
     DISPLAY_ATTRIBUTE_ORDER = [
         "step", "octave", "midi", "measure", "beat position", "duration",
         "part", "stave", "voice", "string", "fret",
-        "dynamic", "articulation", "fingering", "pluck",
+        "dynamic", "articulation", "fingering", "pluck", "strum",
     ]
     # A voice with no entry in voice_display_attributes uses this - today's
     # plain-note-name behaviour, not an empty display.
@@ -640,6 +659,8 @@ class MusicData:
             pairs["fingering"] = note.fingering
         if note.pluck is not None:
             pairs["pluck"] = note.pluck
+        if note.strum is not None:
+            pairs["strum"] = note.strum
         return pairs
 
     def _region_4_rows(self, selected_notes: List[NoteData]) -> List[Tuple[str, str, NoteData, str]]:
@@ -897,11 +918,19 @@ class MusicData:
         notes = self._visible_notes()
         if not notes or not selected_indices:
             return []
-        return [
-            notes[i].midi_pitch
-            for i in selected_indices
-            if 0 <= i < len(notes) and notes[i].midi_pitch is not None
-        ]
+        pitches: List[int] = []
+        for i in selected_indices:
+            if not (0 <= i < len(notes)):
+                continue
+            note = notes[i]
+            if note.chord_pitches is not None:
+                # Guitar Pro's synthetic Chords voice: one NoteData per
+                # strum event carries the whole chord here rather than one
+                # pitch in midi_pitch (see NoteData.chord_pitches).
+                pitches.extend(note.chord_pitches)
+            elif note.midi_pitch is not None:
+                pitches.append(note.midi_pitch)
+        return pitches
 
     def get_performance_region_rows(self, index: Optional[int] = None) -> List[PerformanceRegionRow]:
         """Ref 29: Region 5's rows - a start and an end line per span active
@@ -1283,13 +1312,20 @@ class MusicData:
             if not (0 <= i < len(notes)):
                 continue
             note = notes[i]
-            if note.midi_pitch is None:
+            # Guitar Pro's synthetic Chords voice: one NoteData per strum
+            # event carries the whole chord in chord_pitches rather than a
+            # single midi_pitch, so the group sounds every string, not just
+            # a representative one (see NoteData.chord_pitches).
+            pitches = note.chord_pitches if note.chord_pitches is not None else (
+                [note.midi_pitch] if note.midi_pitch is not None else []
+            )
+            if not pitches:
                 continue
             if note.part_id not in notes_by_part:
                 notes_by_part[note.part_id] = []
                 quarter_length_by_part[note.part_id] = 0.0
                 part_order.append(note.part_id)
-            notes_by_part[note.part_id].append(note.midi_pitch)
+            notes_by_part[note.part_id].extend(pitches)
             quarter_length_by_part[note.part_id] = max(
                 quarter_length_by_part[note.part_id], note.quarter_length
             )
