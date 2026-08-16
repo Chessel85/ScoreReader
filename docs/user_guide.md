@@ -80,6 +80,9 @@ since a MIDI track has no real staff or voice concept), and often no - or
 wrong - key signature. Use **Edit > Instruments...** and
 **Edit > Key Signature...** (§12.2) to correct either.
 
+Recall Score can also import chords and lyrics directly from an Ultimate
+Guitar tab page - see §16.
+
 ### 2.4 A Five-Minute First Walkthrough
 
 A short first run-through, once you have a MusicXML file to open:
@@ -591,7 +594,10 @@ directly (see also §14.3).
 
 | Item | Shortcut | What it does |
 | :--- | :--- | :--- |
-| Open... | Ctrl+O | Opens a MusicXML or MIDI file. |
+| Open... | Ctrl+O | Opens a MusicXML or MIDI file, or a previously saved Ultimate Guitar import (§16.4). |
+| Recent Files | - | Submenu listing the last 8 files you've opened, most recent first, for quick reopening. |
+| Import from Ultimate Guitar... | - | Imports chords and lyrics from an Ultimate Guitar tab page URL (§16). |
+| Save Ultimate Guitar Import As... | - | Saves the currently loaded Ultimate Guitar import to a file so it can be reopened later (§16.4). Only meaningful when an Ultimate Guitar import is currently loaded. |
 | Exit | - | Closes Recall Score. |
 
 ### 12.2 Edit Menu
@@ -627,6 +633,7 @@ directly (see also §14.3).
 | Toggle Metronome | Ctrl+M | Turns the beat click on or off (§7.6). |
 | Toggle Position Announcer | Ctrl+P | Turns the spoken beat-position announcer on or off (§7.7). |
 | Reorder Attributes... | - | Changes the order note attributes are read in for the current Region 2 scope (§9.4). |
+| Reorder Parts... | - | Changes the order parts are listed in Region 2, and in turn the order their notes are listed in Region 3 (§16.3). |
 
 ### 12.5 Help Menu
 
@@ -667,6 +674,8 @@ directly (see also §14.3).
 | Play a short preview from the Mixer dialog *(Mixer dialog only)* | Alt+W |
 | Open the Instruments dialog | Ctrl+Shift+I |
 | Open the Key Signature dialog | Ctrl+Shift+K |
+| Move the selected attribute up / down *(Reorder Attributes dialog only)* | Alt+U / Alt+D |
+| Move the selected part up / down *(Reorder Parts dialog only)* | Alt+U / Alt+D |
 | Jump to the start / end of the focused Performance region entry *(Performance region only)* | Ctrl+Home / Ctrl+End |
 | Open the Performance Report | Edit menu > Performance Report... |
 | Open a note attribute's context menu *(Note Attributes region only)* | right-click, or Menu key / Shift+F10 |
@@ -711,3 +720,77 @@ raise an issue on the project's GitHub page:
 
 Include what you were doing, the version number, and - if the app was
 involved - the contents of `recall_score.log` (§14.2).
+
+## 16. Importing Chords and Lyrics from Ultimate Guitar
+
+### 16.1 What This Feature Is For
+
+Alongside notated scores (§2.3), Recall Score can import a song's chords
+and lyrics directly from a chord-tab page on Ultimate Guitar
+(ultimate-guitar.com) - the kind of page that shows chord names
+positioned above the lyric words they go with, rather than full sheet
+music. This is a different, simpler kind of material than a MusicXML or
+MIDI score: there's no notated rhythm or real bar structure, just chord
+changes and the words that go with them.
+
+### 16.2 Importing a Song
+
+Choose **File > Import from Ultimate Guitar...**. A dialog asks for the
+page's web address - paste the full URL of an Ultimate Guitar chords page
+(for example `https://tabs.ultimate-guitar.com/tab/<artist>/<song>-chords-<id>`)
+and select **OK**. Only "Chords"-type tab pages are supported - a Guitar
+Pro tab, plain tab, bass tab or ukulele-chords page on the same site will
+be rejected with an explanation. The import runs in the background, the
+same way opening a file does, so the rest of the app stays responsive
+while it fetches the page.
+
+Once imported, Region 1 shows the song's title, artist, key, tuning,
+difficulty and tempo the same way any other score does, plus (when the
+page provides one) a **Strumming Pattern** field describing the song's
+strum rhythm as a sequence of downstrokes, upstrokes and muted strums.
+
+### 16.3 Chords and Lyrics as Two Parts
+
+An imported song shows up in Region 2 as two parts, **Chords** and
+**Lyrics**, each a single flat row with nothing further to expand
+underneath - the same simplified display a MIDI track gets (§3.3), since
+neither has real staves or voices. Switch either off with `O` exactly as
+you would any other part.
+
+Moving through the Note region works the same as any other score: each
+step forward is one chord change. The Chords row names the chord (for
+example "Fmaj7") and plays it - as a real strummed pattern when the song
+has strumming data, arpeggiated up or down per the pattern rather than
+every note firing at once, otherwise as a plain chord. The Lyrics row
+shows the words sung during that chord, or "No lyrics" for instrumental
+passages such as an intro with nothing sung yet.
+
+Because Region 3's currently-selected row is always the first one shown,
+whichever part is listed first in Region 2 is the one your screen reader
+announces by default on every move. If you'd rather hear the lyric first
+and the chord name second (or vice versa), use **Options > Reorder
+Parts...**: a dialog listing Chords and Lyrics with **Move Up** (`Alt+U`)
+and **Move Down** (`Alt+D`) buttons, plus OK and Cancel. Moving Lyrics
+above Chords and selecting OK swaps which one is read first from then on,
+without affecting anything already switched on or off in Region 2. This
+dialog works the same way for any multi-part score, not just an Ultimate
+Guitar import.
+
+### 16.4 Saving and Reopening an Import
+
+An imported song only exists for the current session until you save it.
+**File > Save Ultimate Guitar Import As...** writes it to a file on disk
+(a `.ug` file) that you can reopen later with the ordinary **File >
+Open...** dialog or from **File > Recent Files** - both treat it exactly
+like any other score file from then on, including remembering its own
+settings (§11.1).
+
+### 16.5 Things to Be Aware Of
+
+Because a chord-tab page has no real notated bar structure, Recall Score
+treats every chord change as one bar - this is a simplification for
+navigation purposes, not a claim about the song's actual notated rhythm.
+Occasionally a lyric line's timing in the source page is imprecise (the
+original contributor's own spacing), which can very occasionally show a
+lyric fragment split slightly oddly - this reflects the source page, not
+a fault in the import.

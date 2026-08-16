@@ -1,10 +1,11 @@
 # controllers/score_session.py
-from typing import Optional
+from typing import Optional, Union
 
 from PySide6.QtCore import QObject, Signal
 
 from models.music_data import MusicData
 from workers.score_load_worker import ScoreLoadThread
+from workers.ug_import_worker import UgImportThread
 
 
 class ScoreSession(QObject):
@@ -30,10 +31,10 @@ class ScoreSession(QObject):
         self.synth = synth
         self.uk_terms = uk_terms
         self.music_data: Optional[MusicData] = None
-        self._load_thread: Optional[ScoreLoadThread] = None
+        self._load_thread: Optional[Union[ScoreLoadThread, UgImportThread]] = None
 
     @property
-    def load_thread(self) -> Optional[ScoreLoadThread]:
+    def load_thread(self) -> Optional[Union[ScoreLoadThread, UgImportThread]]:
         return self._load_thread
 
     def is_loading(self) -> bool:
@@ -46,6 +47,20 @@ class ScoreSession(QObject):
         if self._load_thread is not None:
             return
         self._load_thread = ScoreLoadThread(file_path, self)
+        self._load_thread.loaded.connect(self._on_loaded)
+        self._load_thread.failed.connect(self.load_failed.emit)
+        self._load_thread.finished.connect(self._on_thread_finished)
+        self._load_thread.start()
+
+    def import_from_url(self, url: str) -> None:
+        """Start importing an Ultimate Guitar tab from `url` - the URL
+        counterpart of load() above, same single-slot in-flight guard (a
+        file load and a URL import can't run concurrently either) and the
+        same loaded/failed signal wiring, so _on_loaded/_on_thread_finished
+        are shared unchanged."""
+        if self._load_thread is not None:
+            return
+        self._load_thread = UgImportThread(url, self)
         self._load_thread.loaded.connect(self._on_loaded)
         self._load_thread.failed.connect(self.load_failed.emit)
         self._load_thread.finished.connect(self._on_thread_finished)

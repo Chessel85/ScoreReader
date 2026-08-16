@@ -233,3 +233,34 @@ def test_apply_off_node_keys_ignores_keys_with_no_matching_node(model):
         ("P2", 1, 1),
         ("P2", 1, 2),
     }
+
+
+# --- Options > Reorder Parts... ---------------------------------------------
+
+def test_reorder_roots_reorders_the_part_rows(model):
+    assert [p.part_id for p in model.roots] == ["P1", "P2"]
+    model.reorder_roots(["P2", "P1"])
+    assert [p.part_id for p in model.roots] == ["P2", "P1"]
+
+
+def test_reorder_roots_preserves_each_nodes_on_off_state(model):
+    """The whole point of NOT going through build_from_score again -
+    on/off toggles the user already set must survive a reorder."""
+    model.roots[0].enabled = False  # P1 off
+    model.roots[0].children[0].enabled = False  # its treble staff also off
+
+    model.reorder_roots(["P2", "P1"])
+
+    p1 = next(p for p in model.roots if p.part_id == "P1")
+    assert p1.enabled is False
+    assert p1.children[0].enabled is False
+
+
+def test_reorder_roots_ignores_unknown_part_ids(model):
+    model.reorder_roots(["P2", "Ghost", "P1"])
+    assert [p.part_id for p in model.roots] == ["P2", "P1"]
+
+
+def test_reorder_roots_appends_a_known_part_missing_from_the_order(model):
+    model.reorder_roots(["P2"])  # P1 not mentioned
+    assert [p.part_id for p in model.roots] == ["P2", "P1"]

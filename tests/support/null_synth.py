@@ -12,6 +12,7 @@ class NullSynth:
 
     def __init__(self):
         self.played: List[Dict[str, Any]] = []
+        self.strummed_bars: List[Dict[str, Any]] = []
         self.program_changes: List[tuple] = []
         self.stop_count: int = 0
         self.closed: bool = False
@@ -82,6 +83,36 @@ class NullSynth:
                     "program": program,
                 }
             )
+
+    def play_strummed_bar(
+        self,
+        channel: int,
+        program: Optional[int],
+        midi_pitches: List[int],
+        pattern: List[str],
+        total_duration_ms: float,
+        note_delay_ms: float = 20.0,
+        retrigger: bool = True,
+    ) -> None:
+        """Mirrors SynthEngine.play_strummed_bar - records the call args
+        plus the computed schedule (via the same pure build_strum_schedule
+        every real engine call goes through), so a test can assert on
+        either without needing to wait out real QTimer delays."""
+        from audio.strum_schedule import build_strum_schedule
+
+        if retrigger:
+            self.stop_all_notes()
+        self.strummed_bars.append(
+            {
+                "channel": channel,
+                "program": program,
+                "midi_pitches": list(midi_pitches),
+                "pattern": list(pattern),
+                "total_duration_ms": total_duration_ms,
+                "note_delay_ms": note_delay_ms,
+                "schedule": build_strum_schedule(pattern, midi_pitches, total_duration_ms, note_delay_ms),
+            }
+        )
 
     def play_click(self, channel: int, bank: int, program: int, pitch: int, velocity: int) -> None:
         """E8: mirrors SynthEngine.play_click - recorded separately from

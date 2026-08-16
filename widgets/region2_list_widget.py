@@ -50,6 +50,14 @@ class Region2ListWidget(RegionFocusCycleMixin, QListWidget):
         self.model_manager.rename_part(part_id, new_name)
         self.refresh_list()
 
+    def reorder_parts(self, part_id_order: list) -> None:
+        """Options > Reorder Parts... - reflects a live part reorder onto
+        the already-built tree in place, same "not a load_score_structure
+        rebuild" reasoning as rename_part above (a rebuild would reset
+        every on/off toggle back to enabled)."""
+        self.model_manager.reorder_roots(part_id_order)
+        self.refresh_list()
+
     def apply_off_node_keys(self, parts_off: set, staves_off: set, voices_off: set):
         """Ref 27: restores each node's own on/off state from a saved
         ScoreConfig, after load_score_structure has reset everything to

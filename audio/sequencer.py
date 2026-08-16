@@ -5,6 +5,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 from audio.metronome import click_event_for_beat
 from audio.position_announcer import announcement_event_for_beat
+from audio.strum_schedule import sound_events
 
 
 class Sequencer(QObject):
@@ -117,7 +118,11 @@ class Sequencer(QObject):
             # retrigger=False: a natural advance must not silence other
             # parts' still-ringing notes just because this part has a new
             # attack here. play_from/resume clear the deck themselves.
-            self.synth.play_chord(events, retrigger=False)
+            # sound_events (audio/strum_schedule.py) routes a UG score's
+            # Chords bar through a real strummed pattern when one is
+            # available, else falls through to the unchanged play_chord
+            # path.
+            sound_events(self.synth, self.music_data, events, retrigger=False)
             # Groups carry their own durations, so the longest is what has
             # to finish ringing before this step is done - which matters
             # below when this is the run's final step.

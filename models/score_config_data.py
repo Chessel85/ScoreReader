@@ -62,3 +62,11 @@ class ScoreConfig:
     # rather than filtering against known part_ids.
     key_signature_override_fifths: Optional[int] = None
     key_signature_override_mode: Optional[str] = None
+    # Options > Reorder Parts... - the part_id order the user chose, which
+    # in turn controls Region 3's note-row order (most importantly, which
+    # part's row a screen reader lands on first after every navigation
+    # step - Region 3's "current" row is always row 0). Empty means "use
+    # the score's own natural order" - see MusicData.reorder_parts, which
+    # is best-effort against whatever parts the freshly loaded score
+    # actually has.
+    part_order: List[str] = field(default_factory=list)

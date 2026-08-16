@@ -4,7 +4,7 @@ import sys
 from typing import Optional
 
 from PySide6.QtCore import QLocale, QUrl, Qt
-from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -25,8 +25,8 @@ from controllers.region_presenter import RegionPresenter
 from controllers.score_persistence import ScorePersistenceController
 from controllers.score_session import ScoreSession
 from models.vocabulary import bar_word
+from parsers.ug_source import write_ug_source
 from persistence import app_settings
-from persistence.app_settings import AppSettings
 from widgets.about_dialog import AboutDialog
 from widgets.attribute_order_dialog import AttributeOrderDialog
 from widgets.goto_measure_dialog import GotoMeasureDialog
@@ -34,6 +34,7 @@ from widgets.instrument_dialog import InstrumentDialog
 from widgets.key_signature_dialog import KeySignatureDialog
 from widgets.menu_builder import MenuBuilder, goto_measure_action_text
 from widgets.mixer_dialog import MixerDialog
+from widgets.part_order_dialog import PartOrderDialog
 from widgets.performance_report_dialog import PerformanceReportDialog
 from widgets.region2_list_widget import Region2ListWidget
 from widgets.region2_manager import node_breadcrumb
@@ -43,6 +44,7 @@ from widgets.region_table_widget import RegionTableWidget
 from widgets.status_bar_widget import StatusBarWidget
 from widgets.tempo_offset_dialog import TempoOffsetDialog
 from widgets.timeline_list_widget import TimelineListWidget
+from widgets.ultimate_guitar_import_dialog import UltimateGuitarImportDialog
 
 
 def detect_default_uk_terms(system_locale: Optional[QLocale] = None) -> bool:
@@ -270,6 +272,9 @@ class MainWindow(QMainWindow):
         self.focus.last_measure_action = actions.last_measure
         self.focus.update_navigation_actions_enabled()
 
+        self.recent_files_menu = actions.recent_files_menu
+        self._refresh_recent_files_menu()
+
     def connect_signals(self):
         """The one place the controllers are joined up. Each is otherwise
         unaware of the others."""
@@ -341,18 +346,16 @@ class MainWindow(QMainWindow):
     def open_file_dialog(self):
         self._open_score_file_dialog(start_dir="")
 
-    def open_example_file_dialog(self):
-        self._open_score_file_dialog(start_dir=examples_dir())
-
     def _open_score_file_dialog(self, start_dir: str):
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Open Score",
             start_dir,
-            "Score Files (*.xml *.musicxml *.mxl *.mid *.midi *.gp);;"
+            "Score Files (*.xml *.musicxml *.mxl *.mid *.midi *.gp *.ug);;"
             "MusicXML Files (*.xml *.musicxml *.mxl);;"
             "MIDI Files (*.mid *.midi);;"
             "Guitar Pro Files (*.gp);;"
+            "Recall Score UG Import Files (*.ug);;"
             "All Files (*)",
         )
         if file_path:
@@ -364,6 +367,68 @@ class MainWindow(QMainWindow):
         self._save_current_score_config()
         self.session.load(file_path)
 
+    def open_ultimate_guitar_import_dialog(self):
+        """Experimental (feature/ug-import): File > Import from Ultimate
+        Guitar... - no self._music_data guard, same as open_file_dialog,
+        since this is a loading action that works with no score loaded
+        yet."""
+        dialog = UltimateGuitarImportDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.load_ultimate_guitar_url(dialog.url())
+
+    def load_ultimate_guitar_url(self, url: str):
+        if self.session.is_loading():
+            return
+        self._save_current_score_config()
+        self.session.import_from_url(url)
+
+    def save_ultimate_guitar_import_as(self):
+        """Experimental (feature/ug-import): File > Save Ultimate Guitar
+        Import As... - the app's first-ever save capability, deliberately
+        scoped to just this one format (MusicXML/MIDI/GP files are already
+        real files on disk; there's nothing to "save" there). Always
+        prompts for a location rather than a silent-overwrite Save, to keep
+        this first save path simple.
+
+        After writing, the score behaves exactly like a file that was
+        opened normally: file_path becomes the real saved path, so .rsc
+        persistence/the window title/Edit > Open Local Folder all key off
+        it the same way every other format already does."""
+        if not self._music_data or not self._music_data.is_ug:
+            return
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Ultimate Guitar Import", "", "Recall Score UG Import Files (*.ug)"
+        )
+        if not file_path:
+            return
+        write_ug_source(self._music_data.ug_source, file_path)
+        self._music_data.file_path = file_path
+        self.setWindowTitle(f"{os.path.basename(file_path)} - Recall Score")
+        self.persistence.refresh_clear_action()
+        self._save_current_score_config()
+        app_settings.add_recent_file(file_path)
+        self._refresh_recent_files_menu()
+
+    def _refresh_recent_files_menu(self):
+        """Rebuilds File > Recent Files from AppSettings - called on
+        startup and again after every successful load/save, since either
+        can change the list. A stale entry (moved/deleted since) is not
+        specially detected or pruned here - clicking it just fails the same
+        way opening any other missing file would, through the existing
+        load_failed path."""
+        menu = self.recent_files_menu
+        menu.clear()
+        recent_files = app_settings.load().recent_files
+        if not recent_files:
+            placeholder = QAction("No recent files", self)
+            placeholder.setEnabled(False)
+            menu.addAction(placeholder)
+            return
+        for file_path in recent_files:
+            action = QAction(file_path, self)
+            action.triggered.connect(lambda checked=False, p=file_path: self.load_score_from_file(p))
+            menu.addAction(action)
+
     def _on_score_loaded(self, music_data):
         """Orchestration only - which is why it stays in the shell. The order
         matters: the saved config has to be applied to MusicData before the
@@ -371,6 +436,13 @@ class MainWindow(QMainWindow):
         effect before the first audition, or the opening chord includes
         voices the user had switched off."""
         self.setWindowTitle(f"{os.path.basename(music_data.file_path)} - Recall Score")
+
+        # A URL-imported UG score's file_path is a synthetic slug with
+        # nothing on disk at it (see UgReader) - os.path.exists naturally
+        # excludes that case without needing to special-case is_ug here.
+        if os.path.exists(music_data.file_path):
+            app_settings.add_recent_file(music_data.file_path)
+            self._refresh_recent_files_menu()
 
         saved_config = self.persistence.load_for_current()
         if saved_config is not None:
@@ -399,7 +471,8 @@ class MainWindow(QMainWindow):
             return
         self.presenter.refresh_region_1()
         self.region_2.load_score_structure(
-            self._music_data.get_score_structure(), collapse_to_parts=self._music_data.is_midi
+            self._music_data.get_score_structure(),
+            collapse_to_parts=self._music_data.is_midi or self._music_data.is_ug,
         )
         self.metronome_action.setChecked(self._music_data.metronome_enabled)
         self.position_announcer_action.setChecked(self._music_data.position_announcer_enabled)
@@ -552,6 +625,31 @@ class MainWindow(QMainWindow):
         dialog.exec()
         self.region_2.setFocus()
 
+    def _show_part_order_dialog(self):
+        """Reported: NVDA reads whichever part's row Region 3 lands on
+        first (always row 0 - see RegionPresenter.update_timeline_views's
+        setCurrentRow(0, NoUpdate)) after every navigation step. This lets
+        the user choose that order directly - most relevant for a UG
+        import's Chords/Lyrics parts, but works for any multi-part score.
+
+        Applying goes through MusicData.reorder_parts (the note-order
+        half) and Region2ListWidget.reorder_parts (the Region 2 row-order
+        half, an in-place reorder - NOT load_score_structure, which would
+        reset every on/off toggle back to enabled)."""
+        if not self._music_data:
+            return
+        previous_focus = self.focusWidget()
+        parts = [(p.part_id, p.name) for p in self._music_data.parts_info]
+        dialog = PartOrderDialog(self, parts=parts)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_order = dialog.part_order()
+            if new_order != [p.part_id for p in self._music_data.parts_info]:
+                self._music_data.reorder_parts(new_order)
+                self.region_2.reorder_parts(new_order)
+                self.presenter.update_timeline_views(play_all=False)
+        if previous_focus is not None:
+            previous_focus.setFocus()
+
     # --- presentation (delegators) ------------------------------------
 
     def _populate_table(self, table: QTableWidget, data_dict: dict):
@@ -608,7 +706,12 @@ class MainWindow(QMainWindow):
         Region 1, Regions 3/4 (via the lightweight label refresh, so no
         re-audition or lost selection) and the status bar."""
         self.session.set_uk_terms(uk_terms)
-        app_settings.save(AppSettings(uk_terms=uk_terms))
+        # load-mutate-save, not a fresh AppSettings(uk_terms=uk_terms) -
+        # the latter would silently wipe recent_files back to empty on
+        # every terminology toggle.
+        settings = app_settings.load()
+        settings.uk_terms = uk_terms
+        app_settings.save(settings)
         self.uk_language_action.setChecked(uk_terms)
         self.us_language_action.setChecked(not uk_terms)
         self.goto_measure_action.setText(goto_measure_action_text(uk_terms))

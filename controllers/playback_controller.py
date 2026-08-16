@@ -7,6 +7,7 @@ from audio.metronome import METRONOME_CHANNEL, click_event_for_beat
 from audio.performance_cue import PERFORMANCE_CUE_CHANNEL
 from audio.position_announcer import POSITION_ANNOUNCER_CHANNEL, announcement_event_for_beat
 from audio.sequencer import Sequencer
+from audio.strum_schedule import sound_events
 from models import mixer_settings
 from models.mixer_settings import MixerSettings
 
@@ -419,10 +420,13 @@ class PlaybackController(QObject):
 
         events = self.music_data.get_playback_events_for_indices(selected_indices)
 
-        if events:
-            # Each group carries its own duration, so no slice-wide
-            # duration_ms is needed here.
-            self.synth.play_chord(events)
+        # sound_events (audio/strum_schedule.py) routes a UG score's Chords
+        # bar through a real strummed pattern (play_strummed_bar) when one
+        # is available, else falls straight through to the unchanged
+        # play_chord path used by every other format - each group still
+        # carries its own duration, so no slice-wide duration_ms is needed
+        # here.
+        sound_events(self.synth, self.music_data, events, retrigger=True)
 
         # Ref 14 AC3: fires even with no events at all (a metronome-only
         # beat marker), which is why it isn't folded into `if events`.

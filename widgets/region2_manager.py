@@ -118,6 +118,21 @@ class Region2HierarchyModel:
                 part.display_name = new_name
                 return
 
+    def reorder_roots(self, part_id_order: List[str]) -> None:
+        """Options > Reorder Parts... - reorders self.roots (the part-level
+        nodes) to match part_id_order, leaving every node's full subtree
+        state (enabled, soloed, children) untouched. Deliberately not a
+        call into build_from_score, which resets every node back to
+        enabled=True - same "targeted mutation, not a rebuild" reasoning
+        as rename_part above. An unknown part_id is ignored; a known one
+        missing from part_id_order keeps its existing relative position,
+        appended after every part that was explicitly ordered."""
+        known_ids = [p.part_id for p in self.roots]
+        ordered = [pid for pid in part_id_order if pid in known_ids]
+        ordered += [pid for pid in known_ids if pid not in ordered]
+        order_index = {pid: i for i, pid in enumerate(ordered)}
+        self.roots.sort(key=lambda p: order_index[p.part_id])
+
     def toggle_node(self, node_id: str) -> bool:
         """Toggles enabled status ('on'/'off') of a node. Returns new state."""
         node = self._node_lookup.get(node_id)

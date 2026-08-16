@@ -17,6 +17,7 @@ from widgets.goto_measure_dialog import GotoMeasureDialog
 from widgets.instrument_dialog import InstrumentDialog
 from widgets.key_signature_dialog import KeySignatureDialog
 from widgets.mixer_dialog import MixerDialog
+from widgets.part_order_dialog import PartOrderDialog
 from widgets.tempo_offset_dialog import TempoOffsetDialog
 
 
@@ -2405,4 +2406,349 @@ def test_gp_file_loads_and_chords_voice_is_toggleable_and_auditions_full_chord(
     assert len(null_synth.last_played["midi_notes"]) >= 4, (
         "a chord-voice event must sound the whole chord, not a single representative note"
     )
+
+
+# --- Experimental (feature/ug-import): File > Import from Ultimate Guitar --
+
+def _fake_ug_import_dialog(monkeypatch, window, *, url: str, accept: bool = True):
+    """Same convention as _fake_key_signature_dialog/_fake_instrument_dialog
+    above (CLAUDE.md: dialog construction stays in MainWindow, so tests
+    monkeypatch main_window.<DialogClass>)."""
+    from widgets.ultimate_guitar_import_dialog import UltimateGuitarImportDialog
+
+    dialog = UltimateGuitarImportDialog(window)
+    dialog.url_edit.setText(url)
+
+    def fake_exec():
+        return QDialog.DialogCode.Accepted if accept else QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(dialog, "exec", fake_exec)
+    monkeypatch.setattr("main_window.UltimateGuitarImportDialog", lambda parent: dialog)
+    return dialog
+
+
+def _fake_ug_source(content: str, strum_codes=None):
+    from parsers.ug_source import UgSource
+
+    return UgSource(
+        song_name="Test Song",
+        artist_name="Test Artist",
+        tonality="C",
+        tuning="E A D G B E",
+        difficulty="novice",
+        content=content,
+        bpm=115,
+        is_triplet=True,
+        tab_id=1,
+        source_url="https://tabs.ultimate-guitar.com/tab/test/test-chords-1",
+        strum_codes=strum_codes or [],
+    )
+
+
+def test_ultimate_guitar_import_populates_two_flat_region_2_parts_and_region_3(
+    window, qtbot, monkeypatch, null_synth
+):
+    """End-to-end: File > Import from Ultimate Guitar... (dialog -> a fake,
+    offline UgReader.load() so no real network call happens in tests) shows
+    the Chords/Lyrics parts as flat, childless Region 2 rows (collapse_to_parts
+    via MusicData.is_ug) and Region 3 shows the chord plus its lyric
+    fragment together; auditioning the Chords voice sounds a real chord and
+    never the Lyrics voice, which carries no midi_pitch at all."""
+    content = "[Verse 1]\n\n[tab][ch]C[/ch]     [ch]G[/ch]\nHello world[/tab]\n"
+    monkeypatch.setattr("parsers.ug_reader.read_ug_source", lambda url: _fake_ug_source(content))
+
+    _fake_ug_import_dialog(
+        monkeypatch, window, url="https://tabs.ultimate-guitar.com/tab/test/test-chords-1"
+    )
+    window.open_ultimate_guitar_import_dialog()
+    qtbot.waitUntil(lambda: window._load_thread is None, timeout=5000)
+
+    assert window._music_data.is_ug
+    nodes = window.region_2._current_visible_nodes
+    assert [n.node_type for n in nodes] == ["part", "part"]
+    assert {n.display_name for n in nodes} == {"Chords", "Lyrics"}
+
+    # Move onto the second chord ("G", paired with the "world" lyric
+    # fragment) and confirm Region 3 shows both together.
+    window._music_data.active_event_index = 1
+    window._update_timeline_views()
+    assert window.region_3.count() == 2
+    row_texts = [window.region_3.item(i).text() for i in range(window.region_3.count())]
+    assert row_texts == ["G", "world"]
+
+    null_synth.played.clear()
+    window._audition_current_selection()
+    assert null_synth.played, "the Chords voice must audition a real chord"
+    sounded_pitches = {p for group in null_synth.played for p in group["midi_notes"]}
+    from music21 import harmony
+    expected = {p.midi for p in harmony.ChordSymbol("G").pitches}
+    assert sounded_pitches == expected
+
+
+def test_ultimate_guitar_import_dialog_does_nothing_on_cancel(window, qtbot, monkeypatch):
+    _fake_ug_import_dialog(
+        monkeypatch, window, url="https://tabs.ultimate-guitar.com/tab/test/test-chords-1",
+        accept=False,
+    )
+    window.open_ultimate_guitar_import_dialog()
+    assert window._music_data is None
+
+
+def _load_ug_import(window, qtbot, monkeypatch, content: str, strum_codes=None):
+    monkeypatch.setattr(
+        "parsers.ug_reader.read_ug_source", lambda url: _fake_ug_source(content, strum_codes)
+    )
+    _fake_ug_import_dialog(
+        monkeypatch, window, url="https://tabs.ultimate-guitar.com/tab/test/test-chords-1"
+    )
+    window.open_ultimate_guitar_import_dialog()
+    qtbot.waitUntil(lambda: window._load_thread is None, timeout=5000)
+
+
+def test_save_ultimate_guitar_import_writes_a_file_and_updates_file_path(
+    window, qtbot, monkeypatch, tmp_path
+):
+    """File > Save Ultimate Guitar Import As... - the app's first-ever save
+    capability. After saving, the score must behave exactly like a file
+    that was opened normally: file_path becomes the real saved path, so
+    .rsc persistence/the window title key off it the same way every other
+    format already does."""
+    content = "[Verse 1]\n\n[tab][ch]C[/ch]     [ch]G[/ch]\nHello world[/tab]\n"
+    _load_ug_import(window, qtbot, monkeypatch, content)
+
+    save_path = str(tmp_path / "Test Song.ug")
+    monkeypatch.setattr(
+        "main_window.QFileDialog.getSaveFileName", lambda *a, **k: (save_path, "")
+    )
+    window.save_ultimate_guitar_import_as()
+
+    import os
+    assert os.path.exists(save_path)
+    assert window._music_data.file_path == save_path
+    assert window.windowTitle() == "Test Song.ug - Recall Score"
+
+
+def test_save_ultimate_guitar_import_does_nothing_with_no_score_loaded(window, qtbot):
+    window.save_ultimate_guitar_import_as()  # must not crash
+
+
+def test_save_ultimate_guitar_import_does_nothing_for_a_non_ug_score(
+    window, qtbot, monkeypatch, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    called = []
+    monkeypatch.setattr(
+        "main_window.QFileDialog.getSaveFileName", lambda *a, **k: called.append(True)
+    )
+    window.save_ultimate_guitar_import_as()
+    assert called == []
+
+
+def test_opening_a_saved_ug_file_reproduces_the_original_import(
+    window, qtbot, monkeypatch, tmp_path
+):
+    """Full round trip through the real File > Open path (ScoreLoadThread's
+    new .ug dispatch branch, no network involved since it's a local file) -
+    a saved-and-reopened import must look identical to the live one it came
+    from."""
+    content = "[Verse 1]\n\n[tab][ch]C[/ch]     [ch]G[/ch]\nHello world[/tab]\n"
+    _load_ug_import(window, qtbot, monkeypatch, content)
+
+    save_path = str(tmp_path / "Test Song.ug")
+    monkeypatch.setattr(
+        "main_window.QFileDialog.getSaveFileName", lambda *a, **k: (save_path, "")
+    )
+    window.save_ultimate_guitar_import_as()
+
+    load_and_wait(window, qtbot, save_path)
+
+    assert window._music_data.is_ug
+    assert window._music_data.file_path == save_path
+    nodes = window.region_2._current_visible_nodes
+    assert {n.display_name for n in nodes} == {"Chords", "Lyrics"}
+    window._music_data.active_event_index = 1
+    window._update_timeline_views()
+    row_texts = [window.region_3.item(i).text() for i in range(window.region_3.count())]
+    assert row_texts == ["G", "world"]
+
+
+def test_auditioning_a_ug_bar_with_strumming_data_plays_a_strummed_bar(
+    window, qtbot, monkeypatch, null_synth
+):
+    """End-to-end: a UG import that has real strummings data must audition
+    through synth.play_strummed_bar (a real arpeggiated pattern), not the
+    flat synth.play_chord every other format still uses."""
+    content = "[Verse 1]\n\n[tab][ch]C[/ch]     [ch]G[/ch]\nHello world[/tab]\n"
+    _load_ug_import(window, qtbot, monkeypatch, content, strum_codes=[1, 202, 101])
+
+    null_synth.played.clear()
+    null_synth.strummed_bars.clear()
+    window._audition_current_selection()
+
+    assert null_synth.strummed_bars, "must route through the strummed-bar path"
+    assert null_synth.played == [], "must NOT also play a flat chord"
+    call = null_synth.strummed_bars[-1]
+    assert call["pattern"] == ["down", "mute", "up"]
+    from music21 import harmony
+    assert set(call["midi_pitches"]) == {p.midi for p in harmony.ChordSymbol("C").pitches}
+
+
+def test_auditioning_a_ug_bar_with_no_strumming_data_still_plays_a_flat_chord(
+    window, qtbot, monkeypatch, null_synth
+):
+    """A UG tab with no strummings block at all must fall straight through
+    to the unchanged play_chord path - no regression for a tab lacking
+    that data."""
+    content = "[Verse 1]\n\n[tab][ch]C[/ch]     [ch]G[/ch]\nHello world[/tab]\n"
+    _load_ug_import(window, qtbot, monkeypatch, content, strum_codes=[])
+
+    null_synth.played.clear()
+    null_synth.strummed_bars.clear()
+    window._audition_current_selection()
+
+    assert null_synth.played, "must use the ordinary flat-chord path"
+    assert null_synth.strummed_bars == []
+
+
+def test_auditioning_a_non_ug_score_never_uses_the_strummed_bar_path(
+    window, qtbot, null_synth, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+
+    null_synth.played.clear()
+    null_synth.strummed_bars.clear()
+    window._audition_current_selection()
+
+    assert null_synth.strummed_bars == []
+
+
+# --- File > Recent Files -----------------------------------------------
+
+def test_recent_files_menu_shows_a_placeholder_when_empty(window):
+    actions = [a.text() for a in window.recent_files_menu.actions()]
+    assert actions == ["No recent files"]
+    assert window.recent_files_menu.actions()[0].isEnabled() is False
+
+
+def test_opening_a_file_adds_it_to_recent_files_menu(window, qtbot, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+
+    actions = window.recent_files_menu.actions()
+    assert len(actions) == 1
+    assert actions[0].text() == minimal_score
+
+
+def test_triggering_a_recent_file_action_reopens_it(window, qtbot, minimal_score):
+    import os
+
+    load_and_wait(window, qtbot, minimal_score)
+    window.setWindowTitle("something else")  # prove the reload actually ran
+
+    action = window.recent_files_menu.actions()[0]
+    action.trigger()
+    qtbot.waitUntil(lambda: window._load_thread is None, timeout=5000)
+
+    assert window.windowTitle() == f"{os.path.basename(minimal_score)} - Recall Score"
+
+
+def test_a_ug_import_from_a_url_is_not_added_to_recent_files(window, qtbot, monkeypatch):
+    """A live URL import's file_path is a synthetic slug with nothing on
+    disk - os.path.exists must exclude it, or clicking it later would just
+    fail to open a path that was never real."""
+    content = "[Verse 1]\n\n[tab][ch]C[/ch]     [ch]G[/ch]\nHello world[/tab]\n"
+    _load_ug_import(window, qtbot, monkeypatch, content)
+
+    actions = [a.text() for a in window.recent_files_menu.actions()]
+    assert actions == ["No recent files"]
+
+
+def test_saving_a_ug_import_adds_the_real_path_to_recent_files(
+    window, qtbot, monkeypatch, tmp_path
+):
+    content = "[Verse 1]\n\n[tab][ch]C[/ch]     [ch]G[/ch]\nHello world[/tab]\n"
+    _load_ug_import(window, qtbot, monkeypatch, content)
+
+    save_path = str(tmp_path / "Test Song.ug")
+    monkeypatch.setattr(
+        "main_window.QFileDialog.getSaveFileName", lambda *a, **k: (save_path, "")
+    )
+    window.save_ultimate_guitar_import_as()
+
+    actions = [a.text() for a in window.recent_files_menu.actions()]
+    assert actions == [save_path]
+
+
+# --- Options > Reorder Parts... -----------------------------------------
+
+def _fake_part_order_dialog(monkeypatch, window, *, accept: bool, on_exec=None):
+    """Same convention as _fake_instrument_dialog above."""
+    parts = [(p.part_id, p.name) for p in window._music_data.parts_info]
+    dialog = PartOrderDialog(window, parts=parts)
+
+    def fake_exec():
+        if on_exec is not None:
+            on_exec(dialog)
+        return QDialog.DialogCode.Accepted if accept else QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(dialog, "exec", fake_exec)
+    monkeypatch.setattr("main_window.PartOrderDialog", lambda parent, parts: dialog)
+    return dialog
+
+
+def test_reordering_parts_updates_region_2_and_region_3_order_without_resetting_toggles(
+    window, qtbot, monkeypatch
+):
+    """End-to-end: the user's own stated reason for this feature - NVDA
+    reads whichever part's row Region 3 lands on first, and this dialog
+    lets them choose which part that is."""
+    content = "[Verse 1]\n\n[tab][ch]C[/ch]     [ch]G[/ch]\nHello world[/tab]\n"
+    _load_ug_import(window, qtbot, monkeypatch, content)
+
+    assert [p.part_id for p in window._music_data.parts_info] == ["chords", "lyrics"]
+
+    # Switch Lyrics off first, to prove the reorder doesn't reset it.
+    lyrics_row = next(
+        i for i, n in enumerate(window.region_2._current_visible_nodes) if n.node_id == "part_lyrics"
+    )
+    window.region_2.setCurrentRow(lyrics_row)
+    qtbot.keyClick(window.region_2, Qt.Key.Key_O)
+    assert window.region_2.model_manager.roots[1].enabled is False
+
+    def move_lyrics_to_front(dialog):
+        dialog.part_list.setCurrentRow(1)  # "Lyrics"
+        dialog._move(-1)
+
+    _fake_part_order_dialog(monkeypatch, window, accept=True, on_exec=move_lyrics_to_front)
+    window._show_part_order_dialog()
+
+    assert [p.part_id for p in window._music_data.parts_info] == ["lyrics", "chords"]
+    assert [n.part_id for n in window.region_2.model_manager.roots] == ["lyrics", "chords"]
+    lyrics_node = next(n for n in window.region_2.model_manager.roots if n.part_id == "lyrics")
+    assert lyrics_node.enabled is False, "reordering must not reset the on/off toggle"
+
+    window._music_data.active_event_index = 0
+    window._update_timeline_views()
+    row_texts = [window.region_3.item(i).text() for i in range(window.region_3.count())]
+    # Lyrics is off, so only the Chords row shows - but it's now the ONLY
+    # part, proving reorder_parts touched the underlying note order too
+    # (with Lyrics back on, its row would come first).
+    assert row_texts == ["C"]
+
+
+def test_part_order_dialog_does_nothing_on_cancel(window, qtbot, monkeypatch):
+    content = "[Verse 1]\n\n[tab][ch]C[/ch]     [ch]G[/ch]\nHello world[/tab]\n"
+    _load_ug_import(window, qtbot, monkeypatch, content)
+
+    def move_lyrics_to_front(dialog):
+        dialog.part_list.setCurrentRow(1)
+        dialog._move(-1)
+
+    _fake_part_order_dialog(monkeypatch, window, accept=False, on_exec=move_lyrics_to_front)
+    window._show_part_order_dialog()
+
+    assert [p.part_id for p in window._music_data.parts_info] == ["chords", "lyrics"]
+
+
+def test_part_order_dialog_does_nothing_with_no_score_loaded(window, qtbot):
+    window._show_part_order_dialog()  # must not crash
 

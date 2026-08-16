@@ -17,6 +17,8 @@ from models.tempo_change import TempoChange
 from parsers.gp_timeline_builder import GpTimelineBuilder
 from parsers.midi_timeline_builder import MidiTimelineBuilder, _spell_pitch
 from parsers.timeline_builder import TimelineBuilder
+from parsers.ug_source import strum_directions
+from parsers.ug_timeline_builder import UgTimelineBuilder
 
 
 @dataclass
@@ -61,6 +63,13 @@ class MusicData:
     # Pro counterpart of xml_root/midi_source - same reasoning, same
     # fallback when None.
     gp_source: Optional[Any] = None
+
+    # Pre-parsed UgSource from UgReader (parsers/ug_source.py), the
+    # Ultimate Guitar counterpart of xml_root/midi_source/gp_source. Unlike
+    # those three, there is no fallback re-parse from file_path alone - a UG
+    # import's file_path is a synthetic slug with nothing fetchable at it
+    # (see UgReader/UgTimelineBuilder), so this must always be provided.
+    ug_source: Optional[Any] = None
 
     timeline_slices: List[EventSlice] = field(default_factory=list)
     active_event_index: int = 0
@@ -148,6 +157,29 @@ class MusicData:
         extension check __post_init__ uses to pick a timeline builder."""
         return self.file_path.lower().endswith(".gp")
 
+    @property
+    def is_ug(self) -> bool:
+        """True for a score imported from Ultimate Guitar - the same
+        synthetic-extension check __post_init__ uses to pick a timeline
+        builder (see UgReader for where file_path gets its .ug suffix).
+        Also drives Region 2's collapse_to_parts, same as is_midi - both
+        of UG's synthetic parts (Chords/Lyrics) are flat, nothing useful to
+        toggle below the part level."""
+        return self.file_path.lower().endswith(".ug")
+
+    @property
+    def ug_strum_pattern(self) -> List[str]:
+        """The whole-song strum pattern ("down"/"up"/"mute" per stroke),
+        decoded from ug_source.strum_codes - empty for a UG tab with no
+        strumming block, or any non-UG score. Computed on read rather than
+        cached: cheap (a handful of dict lookups over a short list), so
+        there's no invalidation concern to manage. Consumed by
+        audio/strum_schedule.py's sound_events() to decide whether a UG
+        Chords bar plays as a real strummed pattern or a flat chord."""
+        if self.ug_source is None:
+            return []
+        return strum_directions(self.ug_source.strum_codes)
+
     def __post_init__(self):
         # DISPLAY_ATTRIBUTE_ORDER is the fixed default; attribute_order is
         # the live copy the reorder dialog mutates. A caller-supplied order
@@ -159,6 +191,8 @@ class MusicData:
                 builder = MidiTimelineBuilder(self.file_path, self.parts_info, source=self.midi_source)
             elif self.is_gp:
                 builder = GpTimelineBuilder(self.file_path, self.parts_info, source=self.gp_source)
+            elif self.is_ug:
+                builder = UgTimelineBuilder(self.file_path, self.parts_info, source=self.ug_source)
             else:
                 builder = TimelineBuilder(self.file_path, self.parts_info, root=self.xml_root)
             self.timeline_slices = builder.build()
@@ -314,6 +348,24 @@ class MusicData:
                     if first_idx is None:
                         first_idx = i
                     last_idx = i
+            if first_idx is None:
+                # Nothing in the current filter actually sounds - e.g. a UG
+                # import with only its Lyrics part visible (silent by
+                # design, see parsers/ug_timeline_builder.py) and its
+                # Chords part switched off in Region 2. Falling back to
+                # "has any visible note" bounds means there's still
+                # something to navigate - a part with real, visible
+                # content should never become entirely unreachable just
+                # because none of it makes sound. This is strictly a
+                # fallback: whenever anything does sound, the stricter
+                # pass above already found real bounds and this branch
+                # never runs, so every existing format's trailing-rest-
+                # padding exclusion (Ref 2/3/5) is unaffected.
+                for i in range(len(self.timeline_slices)):
+                    if self._slice_has_visible_notes(i):
+                        if first_idx is None:
+                            first_idx = i
+                        last_idx = i
             self._sounding_bounds_cache = (
                 (first_idx, last_idx) if first_idx is not None else None
             )
@@ -856,6 +908,42 @@ class MusicData:
                     present |= self._note_attribute_pairs(note).keys()
         return [key for key in self.attribute_order if key in present]
 
+    def reorder_parts(self, part_id_order: List[str]) -> None:
+        """Options > Reorder Parts... - the order parts_info lists parts
+        in, live and user-controlled (the same "mutable order the render
+        layer reads" pattern attribute_order already established, just for
+        parts instead of attributes). Affects Region 2's part-row order
+        (main_window.py reorders Region2HierarchyModel.roots to match
+        separately, without a full rebuild - see
+        Region2ListWidget.reorder_parts, since a load_score_structure
+        rebuild would discard on/off toggles) and, in turn, Region 3's
+        note-row order: a stable re-sort of every EventSlice.notes list by
+        the new part order, so e.g. a UG score's Chords/Lyrics rows come
+        back in whichever order the user chose - most importantly
+        controlling which part's row a screen reader lands on first after
+        every navigation step, since Region 3's "current" row is always
+        row 0 (this is the whole point of the feature: NVDA reading the
+        chord name when the user wanted to hear the lyric, or vice versa).
+
+        Best-effort, like every other saved-config restore in this class:
+        an unknown part_id in part_id_order is ignored; a known part_id
+        missing from it keeps its existing relative order, appended after
+        every part that was explicitly ordered - so a stale or partial
+        saved order still applies everything it can rather than being
+        rejected outright."""
+        known_ids = [p.part_id for p in self.parts_info]
+        ordered = [pid for pid in part_id_order if pid in known_ids]
+        ordered += [pid for pid in known_ids if pid not in ordered]
+        order_index = {pid: i for i, pid in enumerate(ordered)}
+
+        self.parts_info.sort(key=lambda p: order_index[p.part_id])
+
+        def note_sort_key(note: NoteData) -> int:
+            return order_index.get(note.part_id, len(ordered))
+
+        for event_slice in self.timeline_slices:
+            event_slice.notes.sort(key=note_sort_key)
+
     def export_config(self) -> ScoreConfig:
         """Ref 27: this score's state as a ScoreConfig. voices_off is the
         complement of active_voice_filter, not the ON-list - an OFF-list is
@@ -878,6 +966,7 @@ class MusicData:
             part_program_overrides=dict(self.part_program_overrides),
             key_signature_override_fifths=self.key_signature_override_fifths,
             key_signature_override_mode=self.key_signature_override_mode,
+            part_order=[p.part_id for p in self.parts_info],
         )
 
     def apply_config(self, config: ScoreConfig) -> None:
@@ -913,6 +1002,9 @@ class MusicData:
         self.apply_key_signature_override(
             config.key_signature_override_fifths, config.key_signature_override_mode
         )
+
+        if config.part_order:
+            self.reorder_parts(config.part_order)
 
     def get_midi_notes_for_indices(self, selected_indices: List[int]) -> List[int]:
         notes = self._visible_notes()

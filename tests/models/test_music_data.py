@@ -257,6 +257,74 @@ def test_move_timeline_right_stops_at_the_last_sounding_note_not_trailing_rests(
     assert md.active_event_index == 15
 
 
+def test_sounding_bounds_falls_back_to_visible_notes_when_nothing_sounds():
+    """Reported bug: a UG import's Lyrics part is silent by design
+    (midi_pitch=None on every note - parsers/ug_timeline_builder.py), so
+    filtering the Chords part off in Region 2 and leaving only Lyrics
+    visible left every slice with zero real sounding notes -
+    _sounding_bounds() returned None and Left/Right stopped working
+    entirely, even though there was real content to navigate. Not UG-
+    specific in the fix itself: any part whose notes are all midi_pitch=
+    None should still be navigable when it's the only thing visible."""
+    silent_note = NoteData(
+        step_name="Hello",
+        measure=1,
+        beat_position=1.0,
+        ts_duration=4.0,
+        quarter_length=4.0,
+        part_id="lyrics",
+        part_name="Lyrics",
+        staff=1,
+        voice=1,
+        midi_pitch=None,
+    )
+    other_silent_note = NoteData(
+        step_name="World",
+        measure=2,
+        beat_position=1.0,
+        ts_duration=4.0,
+        quarter_length=4.0,
+        part_id="lyrics",
+        part_name="Lyrics",
+        staff=1,
+        voice=1,
+        midi_pitch=None,
+    )
+    md = MusicData(
+        timeline_slices=[
+            EventSlice(measure=1, beat_position=1.0, quarter_length=4.0, notes=[silent_note]),
+            EventSlice(measure=2, beat_position=1.0, quarter_length=4.0, notes=[other_silent_note]),
+        ],
+    )
+    md.active_voice_filter = {("lyrics", 1, 1)}
+    md._invalidate_visibility_cache()
+    md.active_event_index = 0
+
+    assert md._sounding_bounds() == (0, 1)
+    assert md.move_timeline_right() is True
+    assert md.active_event_index == 1
+    assert md.move_timeline_left() is True
+    assert md.active_event_index == 0
+
+
+def test_sounding_bounds_stays_none_when_nothing_is_visible_at_all():
+    """The fallback must not resurrect navigation when literally nothing
+    passes the filter - switching every part off is still "nothing to
+    navigate", the same as today."""
+    note = NoteData(
+        step_name="C", measure=1, beat_position=1.0, ts_duration=4.0, quarter_length=4.0,
+        part_id="chords", part_name="Chords", staff=1, voice=1, midi_pitch=60,
+    )
+    md = MusicData(
+        timeline_slices=[EventSlice(measure=1, beat_position=1.0, quarter_length=4.0, notes=[note])],
+    )
+    md.active_voice_filter = set()  # nothing enabled anywhere
+    md._invalidate_visibility_cache()
+
+    assert md._sounding_bounds() is None
+    assert md.move_timeline_right() is False
+
+
 def test_move_timeline_right_by_measure_stops_at_the_last_sounding_note(timeline, score_duet):
     md = timeline(score_duet)
     md.active_event_index = 15  # measure 3, beat 1 - the final dotted crotchet
@@ -1325,6 +1393,65 @@ def test_apply_config_drops_a_part_override_for_a_part_no_longer_in_the_score():
 
     assert md.parts_info[0].name == "Track 1"
     assert md.parts_info[0].gmidi_program == 1
+
+
+# --- Options > Reorder Parts... ---------------------------------------------
+
+def _two_part_music_data() -> MusicData:
+    chord_note = NoteData(
+        step_name="C", measure=1, beat_position=1.0, ts_duration=4.0, quarter_length=4.0,
+        part_id="chords", part_name="Chords", staff=1, voice=1, midi_pitch=60,
+    )
+    lyric_note = NoteData(
+        step_name="Hello", measure=1, beat_position=1.0, ts_duration=4.0, quarter_length=4.0,
+        part_id="lyrics", part_name="Lyrics", staff=1, voice=1, midi_pitch=None,
+    )
+    return MusicData(
+        parts_info=[
+            PartStructureInfo(part_id="chords", name="Chords"),
+            PartStructureInfo(part_id="lyrics", name="Lyrics"),
+        ],
+        timeline_slices=[
+            EventSlice(measure=1, beat_position=1.0, quarter_length=4.0, notes=[chord_note, lyric_note]),
+        ],
+    )
+
+
+def test_reorder_parts_reorders_parts_info():
+    md = _two_part_music_data()
+    md.reorder_parts(["lyrics", "chords"])
+    assert [p.part_id for p in md.parts_info] == ["lyrics", "chords"]
+
+
+def test_reorder_parts_reorders_notes_within_every_slice():
+    md = _two_part_music_data()
+    md.reorder_parts(["lyrics", "chords"])
+    assert [n.part_id for n in md.timeline_slices[0].notes] == ["lyrics", "chords"]
+
+
+def test_reorder_parts_ignores_unknown_part_ids():
+    md = _two_part_music_data()
+    md.reorder_parts(["lyrics", "ghost", "chords"])
+    assert [p.part_id for p in md.parts_info] == ["lyrics", "chords"]
+
+
+def test_reorder_parts_appends_a_known_part_missing_from_the_order():
+    md = _two_part_music_data()
+    md.reorder_parts(["lyrics"])  # "chords" not mentioned at all
+    assert [p.part_id for p in md.parts_info] == ["lyrics", "chords"]
+
+
+def test_export_config_then_apply_config_round_trips_part_order():
+    md = _two_part_music_data()
+    md.reorder_parts(["lyrics", "chords"])
+
+    config = md.export_config()
+
+    fresh = _two_part_music_data()
+    fresh.apply_config(config)
+
+    assert [p.part_id for p in fresh.parts_info] == ["lyrics", "chords"]
+    assert [n.part_id for n in fresh.timeline_slices[0].notes] == ["lyrics", "chords"]
 
 
 # --- S6: key signature override ---------------------------------------------

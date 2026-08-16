@@ -386,6 +386,23 @@ Stored on Disk</a></li>
 <li><a href="#getting-help-and-reporting-problems"
 id="toc-getting-help-and-reporting-problems">15. Getting Help and
 Reporting Problems</a></li>
+<li><a href="#importing-chords-and-lyrics-from-ultimate-guitar"
+id="toc-importing-chords-and-lyrics-from-ultimate-guitar">16. Importing
+Chords and Lyrics from Ultimate Guitar</a>
+<ul>
+<li><a href="#what-this-feature-is-for"
+id="toc-what-this-feature-is-for">16.1 What This Feature Is For</a></li>
+<li><a href="#importing-a-song" id="toc-importing-a-song">16.2 Importing
+a Song</a></li>
+<li><a href="#chords-and-lyrics-as-two-parts"
+id="toc-chords-and-lyrics-as-two-parts">16.3 Chords and Lyrics as Two
+Parts</a></li>
+<li><a href="#saving-and-reopening-an-import"
+id="toc-saving-and-reopening-an-import">16.4 Saving and Reopening an
+Import</a></li>
+<li><a href="#things-to-be-aware-of" id="toc-things-to-be-aware-of">16.5
+Things to Be Aware Of</a></li>
+</ul></li>
 </ul></li>
 </ul>
 </nav>
@@ -457,6 +474,8 @@ since a MIDI track has no real staff or voice concept), and often no -
 or wrong - key signature. Use <strong>Edit &gt; Instruments…</strong>
 and <strong>Edit &gt; Key Signature…</strong> (§12.2) to correct
 either.</p>
+<p>Recall Score can also import chords and lyrics directly from an
+Ultimate Guitar tab page - see §16.</p>
 <h3 id="a-five-minute-first-walkthrough">2.4 A Five-Minute First
 Walkthrough</h3>
 <p>A short first run-through, once you have a MusicXML file to open:</p>
@@ -942,6 +961,11 @@ inspect or back them up directly (see also §14.3).</p>
 <h2 id="menu-reference">12. Menu Reference</h2>
 <h3 id="file-menu">12.1 File Menu</h3>
 <table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
 <thead>
 <tr>
 <th style="text-align: left;">Item</th>
@@ -953,7 +977,27 @@ inspect or back them up directly (see also §14.3).</p>
 <tr>
 <td style="text-align: left;">Open…</td>
 <td style="text-align: left;">Ctrl+O</td>
-<td style="text-align: left;">Opens a MusicXML or MIDI file.</td>
+<td style="text-align: left;">Opens a MusicXML or MIDI file, or a
+previously saved Ultimate Guitar import (§16.4).</td>
+</tr>
+<tr>
+<td style="text-align: left;">Recent Files</td>
+<td style="text-align: left;">-</td>
+<td style="text-align: left;">Submenu listing the last 8 files you’ve
+opened, most recent first, for quick reopening.</td>
+</tr>
+<tr>
+<td style="text-align: left;">Import from Ultimate Guitar…</td>
+<td style="text-align: left;">-</td>
+<td style="text-align: left;">Imports chords and lyrics from an Ultimate
+Guitar tab page URL (§16).</td>
+</tr>
+<tr>
+<td style="text-align: left;">Save Ultimate Guitar Import As…</td>
+<td style="text-align: left;">-</td>
+<td style="text-align: left;">Saves the currently loaded Ultimate Guitar
+import to a file so it can be reopened later (§16.4). Only meaningful
+when an Ultimate Guitar import is currently loaded.</td>
 </tr>
 <tr>
 <td style="text-align: left;">Exit</td>
@@ -1128,6 +1172,13 @@ on or off (§7.7).</td>
 <td style="text-align: left;">-</td>
 <td style="text-align: left;">Changes the order note attributes are read
 in for the current Region 2 scope (§9.4).</td>
+</tr>
+<tr>
+<td style="text-align: left;">Reorder Parts…</td>
+<td style="text-align: left;">-</td>
+<td style="text-align: left;">Changes the order parts are listed in
+Region 2, and in turn the order their notes are listed in Region 3
+(§16.3).</td>
 </tr>
 </tbody>
 </table>
@@ -1306,6 +1357,16 @@ tempo</td>
 <td style="text-align: left;">Ctrl+Shift+K</td>
 </tr>
 <tr>
+<td style="text-align: left;">Move the selected attribute up / down
+<em>(Reorder Attributes dialog only)</em></td>
+<td style="text-align: left;">Alt+U / Alt+D</td>
+</tr>
+<tr>
+<td style="text-align: left;">Move the selected part up / down
+<em>(Reorder Parts dialog only)</em></td>
+<td style="text-align: left;">Alt+U / Alt+D</td>
+</tr>
+<tr>
 <td style="text-align: left;">Jump to the start / end of the focused
 Performance region entry <em>(Performance region only)</em></td>
 <td style="text-align: left;">Ctrl+Home / Ctrl+End</td>
@@ -1359,5 +1420,73 @@ page:</p>
 class="uri">https://github.com/Chessel85/ScoreReader/issues</a></p>
 <p>Include what you were doing, the version number, and - if the app was
 involved - the contents of <code>recall_score.log</code> (§14.2).</p>
+<h2 id="importing-chords-and-lyrics-from-ultimate-guitar">16. Importing
+Chords and Lyrics from Ultimate Guitar</h2>
+<h3 id="what-this-feature-is-for">16.1 What This Feature Is For</h3>
+<p>Alongside notated scores (§2.3), Recall Score can import a song’s
+chords and lyrics directly from a chord-tab page on Ultimate Guitar
+(ultimate-guitar.com) - the kind of page that shows chord names
+positioned above the lyric words they go with, rather than full sheet
+music. This is a different, simpler kind of material than a MusicXML or
+MIDI score: there’s no notated rhythm or real bar structure, just chord
+changes and the words that go with them.</p>
+<h3 id="importing-a-song">16.2 Importing a Song</h3>
+<p>Choose <strong>File &gt; Import from Ultimate Guitar…</strong>. A
+dialog asks for the page’s web address - paste the full URL of an
+Ultimate Guitar chords page (for example
+<code>https://tabs.ultimate-guitar.com/tab/&lt;artist&gt;/&lt;song&gt;-chords-&lt;id&gt;</code>)
+and select <strong>OK</strong>. Only “Chords”-type tab pages are
+supported - a Guitar Pro tab, plain tab, bass tab or ukulele-chords page
+on the same site will be rejected with an explanation. The import runs
+in the background, the same way opening a file does, so the rest of the
+app stays responsive while it fetches the page.</p>
+<p>Once imported, Region 1 shows the song’s title, artist, key, tuning,
+difficulty and tempo the same way any other score does, plus (when the
+page provides one) a <strong>Strumming Pattern</strong> field describing
+the song’s strum rhythm as a sequence of downstrokes, upstrokes and
+muted strums.</p>
+<h3 id="chords-and-lyrics-as-two-parts">16.3 Chords and Lyrics as Two
+Parts</h3>
+<p>An imported song shows up in Region 2 as two parts,
+<strong>Chords</strong> and <strong>Lyrics</strong>, each a single flat
+row with nothing further to expand underneath - the same simplified
+display a MIDI track gets (§3.3), since neither has real staves or
+voices. Switch either off with <code>O</code> exactly as you would any
+other part.</p>
+<p>Moving through the Note region works the same as any other score:
+each step forward is one chord change. The Chords row names the chord
+(for example “Fmaj7”) and plays it - as a real strummed pattern when the
+song has strumming data, arpeggiated up or down per the pattern rather
+than every note firing at once, otherwise as a plain chord. The Lyrics
+row shows the words sung during that chord, or “No lyrics” for
+instrumental passages such as an intro with nothing sung yet.</p>
+<p>Because Region 3’s currently-selected row is always the first one
+shown, whichever part is listed first in Region 2 is the one your screen
+reader announces by default on every move. If you’d rather hear the
+lyric first and the chord name second (or vice versa), use
+<strong>Options &gt; Reorder Parts…</strong>: a dialog listing Chords
+and Lyrics with <strong>Move Up</strong> (<code>Alt+U</code>) and
+<strong>Move Down</strong> (<code>Alt+D</code>) buttons, plus OK and
+Cancel. Moving Lyrics above Chords and selecting OK swaps which one is
+read first from then on, without affecting anything already switched on
+or off in Region 2. This dialog works the same way for any multi-part
+score, not just an Ultimate Guitar import.</p>
+<h3 id="saving-and-reopening-an-import">16.4 Saving and Reopening an
+Import</h3>
+<p>An imported song only exists for the current session until you save
+it. <strong>File &gt; Save Ultimate Guitar Import As…</strong> writes it
+to a file on disk (a <code>.ug</code> file) that you can reopen later
+with the ordinary <strong>File &gt; Open…</strong> dialog or from
+<strong>File &gt; Recent Files</strong> - both treat it exactly like any
+other score file from then on, including remembering its own settings
+(§11.1).</p>
+<h3 id="things-to-be-aware-of">16.5 Things to Be Aware Of</h3>
+<p>Because a chord-tab page has no real notated bar structure, Recall
+Score treats every chord change as one bar - this is a simplification
+for navigation purposes, not a claim about the song’s actual notated
+rhythm. Occasionally a lyric line’s timing in the source page is
+imprecise (the original contributor’s own spacing), which can very
+occasionally show a lyric fragment split slightly oddly - this reflects
+the source page, not a fault in the import.</p>
 </body>
 </html>

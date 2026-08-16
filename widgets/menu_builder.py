@@ -4,6 +4,7 @@ from typing import Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
+from PySide6.QtWidgets import QMenu
 
 from models.vocabulary import bar_word
 
@@ -19,7 +20,9 @@ class Actions:
     """
 
     open: Optional[QAction] = None
-    open_example: Optional[QAction] = None
+    recent_files_menu: Optional[QMenu] = None
+    import_from_ultimate_guitar: Optional[QAction] = None
+    save_ug_import: Optional[QAction] = None
     exit: Optional[QAction] = None
     open_folder: Optional[QAction] = None
     clear_preferences: Optional[QAction] = None
@@ -36,6 +39,7 @@ class Actions:
     move_to_attributes: Optional[QAction] = None
     move_to_performance: Optional[QAction] = None
     tempo_offset: Optional[QAction] = None
+    part_order: Optional[QAction] = None
     uk_language: Optional[QAction] = None
     us_language: Optional[QAction] = None
     terminology_group: Optional[QActionGroup] = None
@@ -92,16 +96,36 @@ class MenuBuilder:
             "&Open...", self.slots.open_file_dialog,
             QKeySequence.Open, "Open a MusicXML file",
         )
-        # The same dialog as Open..., but starting in the bundled examples/
-        # rather than the last-used location.
-        a.open_example = self._action(
-            "Open E&xample Score...", self.slots.open_example_file_dialog,
-            status_tip="Open a bundled example score",
+        # Populated dynamically by main_window.py's
+        # _refresh_recent_files_menu (on startup and after every load/save)
+        # - not a static QAction like the rest of this menu, since the item
+        # count/text changes over time. Built empty here (bare constructor,
+        # not file_menu.addMenu(title) - that inserts immediately, which
+        # would place it before &Open below); actually added to file_menu
+        # in the addAction block, in the position it belongs.
+        a.recent_files_menu = QMenu("&Recent Files", self.window)
+        # Experimental (feature/ug-import): chords + lyrics from an
+        # Ultimate Guitar chord-tab page - no natural OS-standard/single-
+        # letter binding and infrequent, so no shortcut, just a status tip.
+        a.import_from_ultimate_guitar = self._action(
+            "Import from &Ultimate Guitar...", self.slots.open_ultimate_guitar_import_dialog,
+            status_tip="Import chords and lyrics from an Ultimate Guitar tab page",
+        )
+        # Same "infrequent, no natural OS-standard/single-letter binding"
+        # reasoning as Import above - no shortcut, just a status tip. Only
+        # meaningful for a currently-loaded UG import; silently no-ops
+        # otherwise, same guard style every other MusicData-dependent
+        # dialog already uses (main_window.py's save_ultimate_guitar_import_as).
+        a.save_ug_import = self._action(
+            "Save Ultimate Guitar Import &As...", self.slots.save_ultimate_guitar_import_as,
+            status_tip="Save the current Ultimate Guitar import to a file",
         )
         a.exit = self._action("E&xit", self.window.close, QKeySequence.Quit)
 
         file_menu.addAction(a.open)
-        file_menu.addAction(a.open_example)
+        file_menu.addMenu(a.recent_files_menu)
+        file_menu.addAction(a.import_from_ultimate_guitar)
+        file_menu.addAction(a.save_ug_import)
         file_menu.addSeparator()
         file_menu.addAction(a.exit)
 
@@ -262,6 +286,16 @@ class MenuBuilder:
             "Reorder &Attributes...", self.slots._show_attribute_order_dialog
         )
         options_menu.addAction(a.attribute_order)
+
+        # Reported: NVDA reads whichever part's row Region 3 lands on
+        # first (always row 0) after every navigation step - this
+        # controls that order directly. Mnemonic on R, not P (Reorder
+        # &Attributes puts it on the noun, but P already belongs to
+        # Toggle &Position Announcer above in this same menu).
+        a.part_order = self._action(
+            "&Reorder Parts...", self.slots._show_part_order_dialog
+        )
+        options_menu.addAction(a.part_order)
 
     def _help_menu(self, menu_bar, a: Actions) -> None:
         help_menu = menu_bar.addMenu("&Help")
