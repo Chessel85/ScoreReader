@@ -209,8 +209,11 @@ class MainWindow(QMainWindow):
         self.tempo_faster_shortcut = window_shortcut(Qt.Key.Key_F, self.tempo_faster)
         self.tempo_slower_shortcut = window_shortcut(Qt.Key.Key_S, self.tempo_slower)
         self.tempo_reset_shortcut = window_shortcut(Qt.Key.Key_D, self.tempo_reset)
-        self.play_stop_shortcut = window_shortcut(Qt.Key.Key_Space, self.toggle_play_stop)
-        self.pause_resume_shortcut = window_shortcut("Ctrl+Space", self.toggle_pause_resume)
+        # Space/Ctrl+Space are bound via the Playback menu's play_stop/
+        # pause_resume QAction shortcuts instead of a QShortcut here - two
+        # bindings for the same key sequence in the same WindowShortcut
+        # context would be ambiguous and neither would fire. Same pattern
+        # Ctrl+M/Ctrl+P/Ctrl+G/Ctrl+T already use.
 
         # Ref 13: re-trigger the chord at the cursor on demand. No held-key
         # tracking needed - AC2's "hold for the marked length" is already
@@ -245,6 +248,13 @@ class MainWindow(QMainWindow):
         # the window already use.
         self.clear_preferences_action = actions.clear_preferences
         self.performance_report_action = actions.performance_report
+        self.play_stop_action = actions.play_stop
+        self.pause_resume_action = actions.pause_resume
+        self.preview_action = actions.preview
+        self.mute_action = actions.mute
+        self.solo_action = actions.solo
+        self.unmute_all_action = actions.unmute_all
+        self.unsolo_all_action = actions.unsolo_all
         self.mixer_action = actions.mixer
         self.instruments_action = actions.instruments
         self.key_signature_action = actions.key_signature
@@ -271,6 +281,11 @@ class MainWindow(QMainWindow):
         self.focus.first_measure_action = actions.first_measure
         self.focus.last_measure_action = actions.last_measure
         self.focus.update_navigation_actions_enabled()
+        self.focus.mute_action = actions.mute
+        self.focus.solo_action = actions.solo
+        self.focus.unmute_all_action = actions.unmute_all
+        self.focus.unsolo_all_action = actions.unsolo_all
+        self.focus.update_region2_actions_enabled()
 
         self.recent_files_menu = actions.recent_files_menu
         self._refresh_recent_files_menu()
@@ -458,8 +473,11 @@ class MainWindow(QMainWindow):
         # saved as off, even though every later move excludes them.
         self._update_ui_regions(play_all=saved_config is None)
         if saved_config is not None:
-            self.region_2.apply_off_node_keys(
-                saved_config.parts_off, saved_config.staves_off, saved_config.voices_off
+            self.region_2.apply_muted_node_keys(
+                saved_config.parts_muted, saved_config.staves_muted, saved_config.voices_muted
+            )
+            self.region_2.apply_soloed_node_keys(
+                saved_config.parts_soloed, saved_config.staves_soloed, saved_config.voices_soloed
             )
             self._audition_current_selection()
 
@@ -520,6 +538,18 @@ class MainWindow(QMainWindow):
 
     def audition_phrase(self):
         self.playback.audition_phrase()
+
+    def toggle_mute_current_region2_row(self):
+        self.region_2.toggle_mute_current()
+
+    def toggle_solo_current_region2_row(self):
+        self.region_2.toggle_solo_current()
+
+    def unmute_all_region2(self):
+        self.region_2.unmute_all()
+
+    def unsolo_all_region2(self):
+        self.region_2.unsolo_all()
 
     def tempo_faster(self):
         self.playback.tempo_faster()

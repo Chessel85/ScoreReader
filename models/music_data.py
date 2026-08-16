@@ -963,16 +963,19 @@ class MusicData:
             event_slice.notes.sort(key=note_sort_key)
 
     def export_config(self) -> ScoreConfig:
-        """Ref 27: this score's state as a ScoreConfig. voices_off is the
-        complement of active_voice_filter, not the ON-list - an OFF-list is
-        what lets a changed score still load best-effort (see apply_config).
-        MainWindow overwrites it with Region 2's own per-node state, which
-        is lossless where this derived version is not."""
-        voices_off: Set[Tuple[str, int, int]] = set()
+        """Ref 27: this score's state as a ScoreConfig. voices_muted is the
+        complement of active_voice_filter, not the active list - a muted-set
+        is what lets a changed score still load best-effort (see
+        apply_config). MainWindow overwrites it with Region 2's own
+        per-node state, which is lossless where this derived version is
+        not (and MusicData has no solo concept at all, so parts_soloed/
+        staves_soloed/voices_soloed stay at their empty defaults here -
+        also only ever filled in by Region 2's own state)."""
+        voices_muted: Set[Tuple[str, int, int]] = set()
         if self.active_voice_filter is not None:
-            voices_off = self._all_voice_tuples() - self.active_voice_filter
+            voices_muted = self._all_voice_tuples() - self.active_voice_filter
         return ScoreConfig(
-            voices_off=voices_off,
+            voices_muted=voices_muted,
             metronome_enabled=self.metronome_enabled,
             position_announcer_enabled=self.position_announcer_enabled,
             voice_display_attributes={
@@ -993,7 +996,7 @@ class MusicData:
         unknown attribute key) is dropped silently rather than rejecting the
         whole config, so a stale .rsc still applies everything it can."""
         known_voices = self._all_voice_tuples()
-        active = known_voices - (config.voices_off & known_voices)
+        active = known_voices - (config.voices_muted & known_voices)
         self.set_active_voice_filter(active)
 
         self.voice_display_attributes = {

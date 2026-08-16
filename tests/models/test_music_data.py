@@ -1213,13 +1213,14 @@ def test_region_4_rows_follow_a_mutated_attribute_order(timeline, minimal_score)
 
 def test_export_config_defaults_to_an_all_visible_empty_config(timeline, minimal_score):
     """A fresh MusicData with nothing toggled must export an empty
-    voices_off (not the full voice list) - see apply_config's docstring for
-    why voices_off, not an on-list, is what makes reloading best-effort."""
+    voices_muted (not the full voice list) - see apply_config's docstring
+    for why voices_muted, not an active-list, is what makes reloading
+    best-effort."""
     md = timeline(minimal_score)
 
     config = md.export_config()
 
-    assert config.voices_off == set()
+    assert config.voices_muted == set()
     assert config.metronome_enabled is False
     assert config.position_announcer_enabled is False
     assert config.voice_display_attributes == {}
@@ -1280,9 +1281,9 @@ def test_apply_config_is_best_effort_against_a_mismatched_score(timeline, minima
     the user."""
     config = ScoreConfig(
         # "Classical Guitar" part/voice this score doesn't have - the
-        # scenario from planning: config says a part is off, but that part
-        # is simply absent from the current score.
-        voices_off={("Classical Guitar", 1, 1)},
+        # scenario from planning: config says a part is muted, but that
+        # part is simply absent from the current score.
+        voices_muted={("Classical Guitar", 1, 1)},
         metronome_enabled=True,
         position_announcer_enabled=True,
         voice_display_attributes={("Classical Guitar", 1, 1): {"step", "octave"}},
@@ -1292,7 +1293,7 @@ def test_apply_config_is_best_effort_against_a_mismatched_score(timeline, minima
     target = timeline(minimal_score)  # single part "P1", no "Classical Guitar" voice at all
     target.apply_config(config)
 
-    # The unknown voices_off entry doesn't correspond to anything in this
+    # The unknown voices_muted entry doesn't correspond to anything in this
     # score, so every voice minimal_score actually has stays visible.
     assert target.active_voice_filter == {("P1", 1, 1)}
     # Same for voice_display_attributes: the unknown key is dropped.

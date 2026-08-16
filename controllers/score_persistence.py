@@ -41,15 +41,18 @@ class ScorePersistenceController:
         metronome state to its .rsc. Called when swapping files and on
         shutdown - the two points the user asked for, not on every toggle.
 
-        export_config()'s own voices_off is a best-effort derivation for
-        standalone use; it is overwritten here with Region 2's per-node
-        state, which is lossless where the derived version is not. See
-        ScoreConfig's docstring."""
+        export_config()'s own voices_muted is a best-effort derivation for
+        standalone use, and it has no solo concept at all; both are
+        overwritten here with Region 2's per-node state, which is lossless
+        where the derived version is not. See ScoreConfig's docstring."""
         if not self._has_file():
             return
         config = self.music_data.export_config()
-        config.parts_off, config.staves_off, config.voices_off = (
-            self.region_2.model_manager.get_off_node_keys()
+        config.parts_muted, config.staves_muted, config.voices_muted = (
+            self.region_2.model_manager.get_muted_node_keys()
+        )
+        config.parts_soloed, config.staves_soloed, config.voices_soloed = (
+            self.region_2.model_manager.get_soloed_node_keys()
         )
         score_config.save(self.music_data.file_path, config)
 

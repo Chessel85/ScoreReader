@@ -1,5 +1,4 @@
 * when metronome is on, but moving up and down a chord, do not sound the metronome click.
-* can we import musescore files directly?  And midi?
 * A mute option so midi is not played.
 * Solo option for parts, staves and voices. including an unsolo all but does not include the metronomes 
 * score report should include key signature , time signature and tempo changes.
@@ -11,7 +10,6 @@ Perhaps have add and remove buttons in the reorder dialogue, or perhaps a find n
 * Notes need to account for staff symbol e.g. a piano bass stave (without a treble) seems to play too high
 * Want an audio indicator of crossing a barline. Or does the metronome already do that?
 * Want to know about codas.  
-* Need to find out more about guitar pictures, chords and lyrics and how these can be catered for.
 * There might be some tiny clicks in my headphones when Recall Score starts.  This might be indicative of something bad.  Can I make Reaper reaSynth go silent again when RS closes and restarts?
 
 midi test files:

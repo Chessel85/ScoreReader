@@ -1,5 +1,5 @@
 # controllers/focus_controller.py
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMenu, QMenuBar
 
 
 class FocusController:
@@ -20,7 +20,9 @@ class FocusController:
     """
 
     def __init__(self, window, regions: list, status_bar,
-                 first_measure_action=None, last_measure_action=None):
+                 first_measure_action=None, last_measure_action=None,
+                 mute_action=None, solo_action=None,
+                 unmute_all_action=None, unsolo_all_action=None):
         # `window` is kept specifically for window.focusWidget(), which is
         # NOT the same as QApplication.focusWidget(): the former reports the
         # focus widget within this window's own subtree even when the window
@@ -31,6 +33,13 @@ class FocusController:
         self._status_bar = status_bar
         self.first_measure_action = first_measure_action
         self.last_measure_action = last_measure_action
+        # Playback menu's Mute/Solo/Unmute All/Unsolo All - only meaningful
+        # with Region 2 focused, same "greyed out elsewhere" reasoning as
+        # first_measure_action/last_measure_action above.
+        self.mute_action = mute_action
+        self.solo_action = solo_action
+        self.unmute_all_action = unmute_all_action
+        self.unsolo_all_action = unsolo_all_action
         self.last_focused_region = regions[0] if regions else None
         self._tracking_connected = False
 
@@ -64,6 +73,7 @@ class FocusController:
         if now in self._regions:
             self.last_focused_region = now
         self.update_navigation_actions_enabled(now)
+        self.update_region2_actions_enabled(now)
 
     def update_navigation_actions_enabled(self, focus_widget=None) -> None:
         """Home/End only act on the Note region, so they are greyed out
@@ -78,7 +88,40 @@ class FocusController:
         self.first_measure_action.setEnabled(in_note_region)
         self.last_measure_action.setEnabled(in_note_region)
 
+    def update_region2_actions_enabled(self, focus_widget=None) -> None:
+        """Mute/Solo/Unmute All/Unsolo All only act on Region 2's focused
+        row, so they are greyed out elsewhere - same reasoning as
+        update_navigation_actions_enabled above. Called with no argument at
+        menu-build time, before any focusChanged has fired.
+
+        Reported bug, live-tested: opening the Playback menu itself (Alt or
+        mouse) moves real Qt keyboard focus onto the QMenuBar/QMenu while
+        it's open, which - via this same on_focus_changed path - flipped
+        these actions to disabled right as the user opened the menu to look
+        at them, even though Region 2 genuinely had focus a moment earlier.
+        A focus move INTO the menu system itself is therefore ignored here
+        (left exactly as it was) rather than read as "focus left Region 2".
+        """
+        actions = (
+            self.mute_action, self.solo_action,
+            self.unmute_all_action, self.unsolo_all_action,
+        )
+        if all(action is None for action in actions):
+            return
+        if focus_widget is None:
+            focus_widget = self._window.focusWidget()
+        if isinstance(focus_widget, (QMenuBar, QMenu)):
+            return
+        in_region_2 = focus_widget is self.region_2
+        for action in actions:
+            if action is not None:
+                action.setEnabled(in_region_2)
+
     # --- the cycle ----------------------------------------------------
+
+    @property
+    def region_2(self):
+        return self._regions[1]
 
     @property
     def note_region(self):

@@ -9,8 +9,8 @@ class Region2Node:
     node_id: str                   # Unique identifier (e.g., 'part_P1', 'staff_P1_1', 'voice_P1_1_1')
     node_type: str                 # 'part', 'staff', or 'voice'
     display_name: str              # Label for Column 0 (e.g., "Classical Guitar", "Treble Clef", "Voice 1")
-    enabled: bool = True           # User toggle state ('on'/'off')
-    soloed: bool = False           # Wishlist #8; see get_active_voice_tuples
+    muted: bool = False            # User mute toggle - independent of soloed, see get_active_voice_tuples
+    soloed: bool = False           # See get_active_voice_tuples
     part_id: str = ""
     staff_id: Optional[int] = None
     voice_id: Optional[int] = None
@@ -50,7 +50,11 @@ class Region2HierarchyModel:
         self.roots.clear()
         self._node_lookup.clear()
 
-    def _part_is_collapsed(self, part_id: str) -> bool:
+    def part_is_collapsed(self, part_id: str) -> bool:
+        """True for a part with no real staff/voice concept underneath it
+        (Ref 25/S2: MIDI, a pure Ultimate Guitar import, or one of the
+        synthetic Chords/Lyrics parts) - such a part's row is never
+        expandable, regardless of Region 2's own collapse/expand state."""
         if self.collapse_to_parts is True:
             return True
         if self.collapse_to_parts is False:
@@ -101,7 +105,7 @@ class Region2HierarchyModel:
                 staff_node = Region2Node(
                     node_id=f"staff_{p_id}_{s_id}",
                     node_type="staff",
-                    display_name=f"  {s_name}",
+                    display_name=s_name,
                     part_id=p_id,
                     staff_id=s_id,
                     parent=part_node
@@ -116,7 +120,7 @@ class Region2HierarchyModel:
                     voice_node = Region2Node(
                         node_id=f"voice_{p_id}_{s_id}_{v_int}",
                         node_type="voice",
-                        display_name=f"    {voice_label}",
+                        display_name=voice_label,
                         part_id=p_id,
                         staff_id=s_id,
                         voice_id=v_int,
@@ -128,8 +132,8 @@ class Region2HierarchyModel:
     def rename_part(self, part_id: str, new_name: str) -> None:
         """S5: reflects an instrument-dialog rename onto the already-built
         tree. Deliberately not a call into build_from_score, which resets
-        every node's enabled state - this only ever touches display_name,
-        so on/off toggles the user already set survive untouched."""
+        every node's mute/solo state - this only ever touches display_name,
+        so mute/solo toggles the user already set survive untouched."""
         for part in self.roots:
             if part.part_id == part_id:
                 part.display_name = new_name
@@ -138,9 +142,9 @@ class Region2HierarchyModel:
     def reorder_roots(self, part_id_order: List[str]) -> None:
         """Options > Reorder Parts... - reorders self.roots (the part-level
         nodes) to match part_id_order, leaving every node's full subtree
-        state (enabled, soloed, children) untouched. Deliberately not a
+        state (muted, soloed, children) untouched. Deliberately not a
         call into build_from_score, which resets every node back to
-        enabled=True - same "targeted mutation, not a rebuild" reasoning
+        muted=False - same "targeted mutation, not a rebuild" reasoning
         as rename_part above. An unknown part_id is ignored; a known one
         missing from part_id_order keeps its existing relative position,
         appended after every part that was explicitly ordered."""
@@ -150,22 +154,39 @@ class Region2HierarchyModel:
         order_index = {pid: i for i, pid in enumerate(ordered)}
         self.roots.sort(key=lambda p: order_index[p.part_id])
 
-    def toggle_node(self, node_id: str) -> bool:
-        """Toggles enabled status ('on'/'off') of a node. Returns new state."""
+    def toggle_mute(self, node_id: str) -> bool:
+        """Toggles one node's mute state. Returns the new state."""
         node = self._node_lookup.get(node_id)
         if not node:
             return False
 
-        node.enabled = not node.enabled
-        return node.enabled
+        node.muted = not node.muted
+        return node.muted
+
+    def clear_all_mute(self) -> None:
+        """Unmute All: deliberately does not touch soloed state - un-muting
+        restores whatever solo state was already set, rather than clearing
+        it too."""
+        for part in self.roots:
+            part.muted = False
+            for staff in part.children:
+                staff.muted = False
+                for voice in staff.children:
+                    voice.muted = False
+
+    def node(self, node_id: str) -> Optional[Region2Node]:
+        return self._node_lookup.get(node_id)
 
     def get_visible_nodes(self) -> List[Region2Node]:
         """
-        Returns a flat list of nodes that should currently be displayed.
-        If a parent node is 'off', its child rows are omitted/hidden from the list.
+        Returns a flat list of every node that should ever have a row -
+        mute/solo state no longer hides a node's children (Region 2 is a
+        real tree now; only expand/collapse, a pure UI concern with no
+        model-level representation, hides a row, and that is never
+        persisted).
 
         With collapse_to_parts set (Ref 25/S2), a part row's own staff/voice
-        children are never appended here regardless of enabled state - they
+        children are never appended here regardless of mute state - they
         still exist in the tree underneath (get_active_voice_tuples still
         walks down to them), just never rendered as their own rows.
         """
@@ -173,62 +194,96 @@ class Region2HierarchyModel:
 
         def traverse(node: Region2Node):
             visible.append(node)
-            if node.node_type == "part" and self._part_is_collapsed(node.part_id):
+            if node.node_type == "part" and self.part_is_collapsed(node.part_id):
                 return
-            # Only traverse children if parent is enabled ('on')
-            if node.enabled:
-                for child in node.children:
-                    traverse(child)
+            for child in node.children:
+                traverse(child)
 
         for root in self.roots:
             traverse(root)
 
         return visible
 
-    def get_off_node_keys(
+    def get_muted_node_keys(
         self,
     ) -> Tuple[Set[str], Set[Tuple[str, int]], Set[Tuple[str, int, int]]]:
-        """Every node's OWN enabled state, as three OFF-sets, for ScoreConfig
+        """Every node's OWN mute state, as three sets, for ScoreConfig
         (Ref 27 AC1: part, stave and voice toggles are independently
         persistent).
 
         Deliberately NOT ancestor-gated, unlike get_active_voice_tuples: a
-        voice that is individually on but hidden because its part is off must
-        come back on when the part does, and only an ungated read can tell
-        that from a voice that was individually switched off."""
-        parts_off: Set[str] = set()
-        staves_off: Set[Tuple[str, int]] = set()
-        voices_off: Set[Tuple[str, int, int]] = set()
+        voice that is individually unmuted but silenced because its part is
+        muted must come back when the part does, and only an ungated read
+        can tell that from a voice that was individually muted."""
+        parts_muted: Set[str] = set()
+        staves_muted: Set[Tuple[str, int]] = set()
+        voices_muted: Set[Tuple[str, int, int]] = set()
         for part in self.roots:
-            if not part.enabled:
-                parts_off.add(part.part_id)
+            if part.muted:
+                parts_muted.add(part.part_id)
             for staff in part.children:
-                if not staff.enabled:
-                    staves_off.add((staff.part_id, staff.staff_id))
+                if staff.muted:
+                    staves_muted.add((staff.part_id, staff.staff_id))
                 for voice in staff.children:
-                    if not voice.enabled:
-                        voices_off.add((voice.part_id, voice.staff_id, voice.voice_id))
-        return parts_off, staves_off, voices_off
+                    if voice.muted:
+                        voices_muted.add((voice.part_id, voice.staff_id, voice.voice_id))
+        return parts_muted, staves_muted, voices_muted
 
-    def apply_off_node_keys(
+    def apply_muted_node_keys(
         self,
-        parts_off: Set[str],
-        staves_off: Set[Tuple[str, int]],
-        voices_off: Set[Tuple[str, int, int]],
+        parts_muted: Set[str],
+        staves_muted: Set[Tuple[str, int]],
+        voices_muted: Set[Tuple[str, int, int]],
     ) -> None:
-        """Restores every node's OWN enabled state (the counterpart to
-        get_off_node_keys), e.g. after build_from_score has reset everything
-        to enabled=True. A lossless round trip - a part being off and a
-        sub-voice being individually on are independent facts, not collapsed
-        into one. Best-effort: a saved key matching no node is skipped."""
+        """Restores every node's OWN mute state (the counterpart to
+        get_muted_node_keys), e.g. after build_from_score has reset
+        everything to muted=False. A lossless round trip - a part being
+        muted and a sub-voice being individually unmuted are independent
+        facts, not collapsed into one. Best-effort: a saved key matching no
+        node is skipped."""
         for part in self.roots:
-            part.enabled = part.part_id not in parts_off
+            part.muted = part.part_id in parts_muted
             for staff in part.children:
-                staff.enabled = (staff.part_id, staff.staff_id) not in staves_off
+                staff.muted = (staff.part_id, staff.staff_id) in staves_muted
                 for voice in staff.children:
-                    voice.enabled = (
+                    voice.muted = (
                         voice.part_id, voice.staff_id, voice.voice_id
-                    ) not in voices_off
+                    ) in voices_muted
+
+    def get_soloed_node_keys(
+        self,
+    ) -> Tuple[Set[str], Set[Tuple[str, int]], Set[Tuple[str, int, int]]]:
+        """The soloed counterpart to get_muted_node_keys - every node's OWN
+        solo state, ungated, for ScoreConfig."""
+        parts_soloed: Set[str] = set()
+        staves_soloed: Set[Tuple[str, int]] = set()
+        voices_soloed: Set[Tuple[str, int, int]] = set()
+        for part in self.roots:
+            if part.soloed:
+                parts_soloed.add(part.part_id)
+            for staff in part.children:
+                if staff.soloed:
+                    staves_soloed.add((staff.part_id, staff.staff_id))
+                for voice in staff.children:
+                    if voice.soloed:
+                        voices_soloed.add((voice.part_id, voice.staff_id, voice.voice_id))
+        return parts_soloed, staves_soloed, voices_soloed
+
+    def apply_soloed_node_keys(
+        self,
+        parts_soloed: Set[str],
+        staves_soloed: Set[Tuple[str, int]],
+        voices_soloed: Set[Tuple[str, int, int]],
+    ) -> None:
+        """The soloed counterpart to apply_muted_node_keys."""
+        for part in self.roots:
+            part.soloed = part.part_id in parts_soloed
+            for staff in part.children:
+                staff.soloed = (staff.part_id, staff.staff_id) in staves_soloed
+                for voice in staff.children:
+                    voice.soloed = (
+                        voice.part_id, voice.staff_id, voice.voice_id
+                    ) in voices_soloed
 
     def any_soloed(self) -> bool:
         """Wishlist #8: is anything soloed anywhere in the tree?"""
@@ -247,9 +302,9 @@ class Region2HierarchyModel:
         return node.soloed
 
     def clear_all_solo(self) -> None:
-        """Wishlist #8's "unsolo all". Deliberately does not touch enabled
-        state - un-soloing restores whatever on/off toggles were already
-        set, rather than switching everything on."""
+        """Unsolo All. Deliberately does not touch mute state - un-soloing
+        restores whatever mute toggles were already set, rather than
+        clearing them too."""
         for part in self.roots:
             part.soloed = False
             for staff in part.children:
@@ -262,10 +317,11 @@ class Region2HierarchyModel:
         Returns a set of (part_id, staff_id, voice_id) tuples that are currently active
         for filtering Region 3 note lists.
 
-        Wishlist #8: when anything is soloed, only voices under a soloed
-        node are active. With nothing soloed - which is every case today,
-        since no UI sets it - this falls through to the ancestor-gated
-        enabled walk below, unchanged.
+        When anything is soloed, only voices under a soloed node are active
+        - solo overrides mute entirely (see _soloed_voice_tuples). With
+        nothing soloed, this falls through to the ancestor-gated mute walk
+        below: a muted part or stave silences everything beneath it, same
+        as any other mixer's mute cascades down its hierarchy.
         """
         if self.any_soloed():
             return self._soloed_voice_tuples()
@@ -273,13 +329,13 @@ class Region2HierarchyModel:
         active_set: Set[Tuple[str, int, int]] = set()
 
         for root in self.roots:
-            if not root.enabled:
+            if root.muted:
                 continue
             for staff in root.children:
-                if not staff.enabled:
+                if staff.muted:
                     continue
                 for voice in staff.children:
-                    if voice.enabled:
+                    if not voice.muted:
                         if voice.part_id and voice.staff_id is not None and voice.voice_id is not None:
                             active_set.add((voice.part_id, voice.staff_id, voice.voice_id))
 
@@ -287,9 +343,9 @@ class Region2HierarchyModel:
 
     def _soloed_voice_tuples(self) -> Set[Tuple[str, int, int]]:
         """Every voice under a soloed part, stave or voice. Solo overrides
-        the on/off toggles rather than intersecting with them: soloing a
-        part the user had switched off should still be heard, which is the
-        point of a solo control."""
+        mute rather than intersecting with it: soloing a part the user had
+        muted should still be heard, which is the point of a solo
+        control."""
         active_set: Set[Tuple[str, int, int]] = set()
         for part in self.roots:
             for staff in part.children:
@@ -306,9 +362,9 @@ class Region2HierarchyModel:
 
 def voice_tuples_for_node(node: Region2Node) -> Set[Tuple[str, int, int]]:
     """Every (part_id, staff_id, voice_id) below `node`, regardless of
-    enabled state - distinct from get_active_voice_tuples, since the
-    attribute-order dialog scopes by tree position, not by what is toggled
-    on."""
+    mute/solo state - distinct from get_active_voice_tuples, since the
+    attribute-order dialog scopes by tree position, not by what currently
+    sounds."""
     if node.node_type == "voice":
         return {(node.part_id, node.staff_id, node.voice_id)}
     if node.node_type == "staff":
@@ -322,11 +378,26 @@ def voice_tuples_for_node(node: Region2Node) -> Set[Tuple[str, int, int]]:
 
 def node_breadcrumb(node: Region2Node) -> str:
     """"Piano > Bass Clef > Voice 5" path from the root to `node`, for the
-    attribute-order dialog's title. display_name carries leading spaces for
-    the flat-list rendering, which strip() removes here."""
+    attribute-order dialog's title."""
     parts = []
     current: Optional[Region2Node] = node
     while current is not None:
         parts.append(current.display_name.strip())
         current = current.parent
     return " > ".join(reversed(parts))
+
+
+def node_status_label(node: Region2Node) -> str:
+    """A tree row's text: the bare name when neither muted nor soloed
+    ("Piano"), else the name plus "muted"/"soloed" in that fixed order
+    ("Piano muted", "Piano soloed", "Piano muted soloed"). Solo beats mute
+    in what actually sounds (get_active_voice_tuples), but both states are
+    independently real and both get named here."""
+    suffix_words = []
+    if node.muted:
+        suffix_words.append("muted")
+    if node.soloed:
+        suffix_words.append("soloed")
+    if not suffix_words:
+        return node.display_name
+    return f"{node.display_name} {' '.join(suffix_words)}"

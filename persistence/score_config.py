@@ -64,9 +64,12 @@ def load_for(file_path: str) -> Optional[ScoreConfig]:
             data = json.load(f)
         return ScoreConfig(
             schema_version=data.get("schema_version", 1),
-            parts_off=set(data.get("parts_off", [])),
-            staves_off={_decode_staff_key(k) for k in data.get("staves_off", [])},
-            voices_off={_decode_voice_key(k) for k in data.get("voices_off", [])},
+            parts_muted=set(data.get("parts_muted", [])),
+            staves_muted={_decode_staff_key(k) for k in data.get("staves_muted", [])},
+            voices_muted={_decode_voice_key(k) for k in data.get("voices_muted", [])},
+            parts_soloed=set(data.get("parts_soloed", [])),
+            staves_soloed={_decode_staff_key(k) for k in data.get("staves_soloed", [])},
+            voices_soloed={_decode_voice_key(k) for k in data.get("voices_soloed", [])},
             metronome_enabled=data.get("metronome_enabled", False),
             position_announcer_enabled=data.get("position_announcer_enabled", False),
             voice_display_attributes={
@@ -95,9 +98,12 @@ def save(file_path: str, config: ScoreConfig) -> None:
     path = path_for(file_path)
     data = {
         "schema_version": config.schema_version,
-        "parts_off": sorted(config.parts_off),
-        "staves_off": [_encode_staff_key(k) for k in sorted(config.staves_off)],
-        "voices_off": [_encode_voice_key(k) for k in sorted(config.voices_off)],
+        "parts_muted": sorted(config.parts_muted),
+        "staves_muted": [_encode_staff_key(k) for k in sorted(config.staves_muted)],
+        "voices_muted": [_encode_voice_key(k) for k in sorted(config.voices_muted)],
+        "parts_soloed": sorted(config.parts_soloed),
+        "staves_soloed": [_encode_staff_key(k) for k in sorted(config.staves_soloed)],
+        "voices_soloed": [_encode_voice_key(k) for k in sorted(config.voices_soloed)],
         "metronome_enabled": config.metronome_enabled,
         "position_announcer_enabled": config.position_announcer_enabled,
         "voice_display_attributes": {

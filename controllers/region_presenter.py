@@ -68,8 +68,12 @@ class RegionPresenter(QObject):
         self.region_2.load_score_structure(self.music_data.get_score_structure())
         self.update_timeline_views(play_all=play_all)
 
-    def restore_off_node_keys(self, parts_off, staves_off, voices_off) -> None:
-        self.region_2.apply_off_node_keys(parts_off, staves_off, voices_off)
+    def restore_mute_solo_node_keys(
+        self, parts_muted, staves_muted, voices_muted,
+        parts_soloed, staves_soloed, voices_soloed,
+    ) -> None:
+        self.region_2.apply_muted_node_keys(parts_muted, staves_muted, voices_muted)
+        self.region_2.apply_soloed_node_keys(parts_soloed, staves_soloed, voices_soloed)
 
     # --- timeline / regions 3, 4, 5 -----------------------------------
 

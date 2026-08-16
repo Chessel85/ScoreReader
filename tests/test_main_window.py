@@ -170,21 +170,18 @@ def test_toggling_the_tab_staff_off_removes_the_duplicate_notes(
     """B4, Ref 7/Ref 8: the Bourree sample has a notation staff and a TAB
     staff duplicating it, so the first slice shows E,E,G,G today - highest
     pitch first (E4 over G2), the two staves' duplicate E4s and G2s each
-    kept adjacent by the stable sort. Toggling the TAB staff off in
-    Region 2 (O key) must filter Region 3 down to just the notation
-    staff's E,G."""
+    kept adjacent by the stable sort. Muting the TAB staff in Region 2
+    (F8) must filter Region 3 down to just the notation staff's E,G."""
     load_and_wait(window, qtbot, score_bourree)
 
     assert [
         window.region_3.item(i).text() for i in range(window.region_3.count())
     ] == ["E", "E", "G", "G"]
 
-    tab_staff_row = next(
-        i for i, node in enumerate(window.region_2._current_visible_nodes)
-        if node.node_id == "staff_P1_2"
-    )
-    window.region_2.setCurrentRow(tab_staff_row)
-    qtbot.keyClick(window.region_2, Qt.Key.Key_O)
+    _show(window, qtbot)
+    _focus(window.region_2)
+    window.region_2.select_node("staff_P1_2")
+    qtbot.keyClick(window.region_2, Qt.Key.Key_F8)
 
     assert [
         window.region_3.item(i).text() for i in range(window.region_3.count())
@@ -838,16 +835,19 @@ def test_loading_a_midi_file_collapses_region_2_to_part_rows(window, qtbot, midi
     staff/voice rows."""
     load_and_wait(window, qtbot, midi_bach_bourree)
 
-    assert window.region_2.count() == len(window._music_data.parts_info)
-    assert window.region_2.item(0).text().startswith("클래식 기타")
+    assert len(window.region_2.visible_item_texts()) == len(window._music_data.parts_info)
+    assert window.region_2.visible_item_texts()[0].startswith("클래식 기타")
 
 
 def test_loading_a_musicxml_file_still_shows_staff_and_voice_rows(window, qtbot, score_duet):
     """Confirms S2's collapse is MIDI-only - a MusicXML score's real staff/
-    voice structure must still be fully navigable, unchanged."""
+    voice structure must still exist and be reachable (nodes start
+    collapsed now, so this checks the underlying model richness, not the
+    currently-built widget rows - see test_region_2_starts_fully_collapsed
+    for that)."""
     load_and_wait(window, qtbot, score_duet)
 
-    assert window.region_2.count() > len(window._music_data.parts_info)
+    assert len(window.region_2.model_manager.get_visible_nodes()) > len(window._music_data.parts_info)
 
 
 def test_loading_a_missing_file_does_not_crash_or_leave_the_thread_dangling(window, qtbot):
@@ -977,9 +977,7 @@ def test_attribute_order_pairs_scope_to_the_selected_region_2_node(
     window, qtbot, dynamics_articulation_fingering_score
 ):
     load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
-    node = next(
-        n for n in window.region_2._current_visible_nodes if n.node_id == "voice_P1_1_1"
-    )
+    node = window.region_2.model_manager.node("voice_P1_1_1")
 
     keys = [key for key, _ in window._attribute_order_pairs_for_node(node)]
 
@@ -1235,7 +1233,7 @@ def test_instrument_dialog_ok_renames_the_part_and_reprograms_it(
     assert matching and all(n.part_name == "Renamed Part" for n in matching)
 
     # Region 2's part row reflects the rename in place.
-    assert window.region_2.item(0).text().startswith("Renamed Part")
+    assert window.region_2.visible_item_texts()[0].startswith("Renamed Part")
 
     # Ref 27-style persistence: reload the same file and the override must
     # still be there.
@@ -1268,12 +1266,14 @@ def test_instrument_dialog_rename_does_not_reset_region_2_toggle_state(
 ):
     """The rename must go through Region2ListWidget.rename_part (an
     in-place label edit), never a load_score_structure rebuild - that would
-    silently switch every part/staff/voice back on, discarding whatever the
-    user had already toggled off."""
+    silently unmute every part/staff/voice again, discarding whatever the
+    user had already muted."""
     load_and_wait(window, qtbot, score_duet)
-    window.region_2.setCurrentRow(0)
-    qtbot.keyClick(window.region_2, Qt.Key.Key_O)  # switch the first part off
-    assert window.region_2.model_manager.roots[0].enabled is False
+    _show(window, qtbot)
+    _focus(window.region_2)
+    window.region_2.select_node(window.region_2.model_manager.roots[0].node_id)
+    qtbot.keyClick(window.region_2, Qt.Key.Key_F8)  # mute the first part
+    assert window.region_2.model_manager.roots[0].muted is True
 
     def edit(dialog):
         dialog.row_list.setCurrentRow(0)
@@ -1282,7 +1282,7 @@ def test_instrument_dialog_rename_does_not_reset_region_2_toggle_state(
     _fake_instrument_dialog(monkeypatch, window, accept=True, on_exec=edit)
     window._show_instrument_dialog()
 
-    assert window.region_2.model_manager.roots[0].enabled is False
+    assert window.region_2.model_manager.roots[0].muted is True
     assert window.region_2.model_manager.roots[0].display_name == "Renamed"
 
 
@@ -1785,6 +1785,289 @@ def test_position_announcer_word_plays_on_region_3_navigation(
     assert len(null_synth.words) == 1
 
 
+# --- Playback menu: mute/solo (F8/F9/Alt+F8/Alt+F9) -----------------------
+
+def test_playback_menu_shortcuts(window):
+    assert window.play_stop_action.shortcut() == QKeySequence(Qt.Key.Key_Space)
+    assert window.pause_resume_action.shortcut() == QKeySequence("Ctrl+Space")
+    assert window.preview_action.shortcut().isEmpty(), (
+        "Enter is handled locally by the Note region - a window shortcut here would conflict"
+    )
+    assert window.preview_action.text().endswith("\tEnter"), (
+        "must still visibly show Enter as a hint, via text rather than a real shortcut"
+    )
+    assert window.mute_action.shortcut() == QKeySequence(Qt.Key.Key_F8)
+    assert window.solo_action.shortcut() == QKeySequence(Qt.Key.Key_F9)
+    assert window.unmute_all_action.shortcut() == QKeySequence("Alt+F8")
+    assert window.unsolo_all_action.shortcut() == QKeySequence("Alt+F9")
+    assert window.mixer_action.shortcut() == QKeySequence("Ctrl+Shift+X")
+
+
+def test_mute_solo_actions_are_only_enabled_with_region_2_focused(
+    window, qtbot, minimal_score
+):
+    """Greyed out everywhere except Region 2, same "only meaningful with a
+    particular region focused" pattern as Move to First/Last Note."""
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+
+    for region in (window.region_1, window.region_3, window.region_4):
+        _focus(region)
+        assert not window.mute_action.isEnabled()
+        assert not window.solo_action.isEnabled()
+        assert not window.unmute_all_action.isEnabled()
+        assert not window.unsolo_all_action.isEnabled()
+
+    _focus(window.region_2)
+    assert window.mute_action.isEnabled()
+    assert window.solo_action.isEnabled()
+    assert window.unmute_all_action.isEnabled()
+    assert window.unsolo_all_action.isEnabled()
+
+
+def test_mute_solo_actions_stay_enabled_while_the_menu_bar_itself_has_focus(
+    window, qtbot, minimal_score
+):
+    """Reported bug, live-tested: opening the Playback menu (Alt or mouse)
+    moves real Qt keyboard focus onto the QMenuBar/QMenu while it's open,
+    which used to flip these actions to disabled via the very same
+    focus-tracking path - so Mute/Solo/Unmute All/Unsolo All looked
+    unavailable right when the user opened the menu to use them, even
+    though Region 2 genuinely had focus a moment before."""
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+    _focus(window.region_2)
+    assert window.mute_action.isEnabled()
+
+    window.menuBar().setFocus()
+    QApplication.processEvents()
+
+    assert window.mute_action.isEnabled()
+    assert window.solo_action.isEnabled()
+    assert window.unmute_all_action.isEnabled()
+    assert window.unsolo_all_action.isEnabled()
+
+
+def test_f9_solos_the_focused_row_and_overrides_a_muted_ancestor(
+    window, qtbot, flute_crotchets_viola_semibreves_score
+):
+    load_and_wait(window, qtbot, flute_crotchets_viola_semibreves_score)
+    _show(window, qtbot)
+    _focus(window.region_2)
+
+    window.region_2.select_node("part_P1")  # flute
+    qtbot.keyClick(window.region_2, Qt.Key.Key_F8)  # mute the flute part
+    assert window._music_data.active_voice_filter == {("P2", 1, 1)}
+
+    window.region_2.select_node("voice_P1_1_1")
+    qtbot.keyClick(window.region_2, Qt.Key.Key_F9)  # solo the muted flute's own voice
+
+    assert window._music_data.active_voice_filter == {("P1", 1, 1)}, (
+        "a soloed voice must be heard even though its part is muted"
+    )
+    assert window.region_2.model_manager.node("part_P1").muted is True, (
+        "the ancestor's own mute flag is untouched by soloing a descendant"
+    )
+    assert window.region_2.model_manager.node("voice_P1_1_1").soloed is True
+
+
+def test_alt_f8_unmutes_every_row_and_leaves_solo_state_alone(
+    window, qtbot, flute_crotchets_viola_semibreves_score
+):
+    load_and_wait(window, qtbot, flute_crotchets_viola_semibreves_score)
+    _show(window, qtbot)
+    _focus(window.region_2)
+
+    window.region_2.select_node("part_P1")
+    qtbot.keyClick(window.region_2, Qt.Key.Key_F8)  # flute muted
+    window.region_2.select_node("part_P2")
+    qtbot.keyClick(window.region_2, Qt.Key.Key_F9)  # viola soloed
+
+    qtbot.keyClick(window, Qt.Key.Key_F8, Qt.KeyboardModifier.AltModifier)
+
+    assert window.region_2.model_manager.node("part_P1").muted is False
+    assert window.region_2.model_manager.node("part_P2").soloed is True, (
+        "Unmute All must not also clear solo state"
+    )
+
+
+def test_alt_f9_unsolos_every_row_and_leaves_mute_state_alone(
+    window, qtbot, flute_crotchets_viola_semibreves_score
+):
+    load_and_wait(window, qtbot, flute_crotchets_viola_semibreves_score)
+    _show(window, qtbot)
+    _focus(window.region_2)
+
+    window.region_2.select_node("part_P1")
+    qtbot.keyClick(window.region_2, Qt.Key.Key_F8)  # flute muted
+    window.region_2.select_node("part_P2")
+    qtbot.keyClick(window.region_2, Qt.Key.Key_F9)  # viola soloed
+
+    qtbot.keyClick(window, Qt.Key.Key_F9, Qt.KeyboardModifier.AltModifier)
+
+    assert window.region_2.model_manager.node("part_P2").soloed is False
+    assert window.region_2.model_manager.node("part_P1").muted is True, (
+        "Unsolo All must not also clear mute state"
+    )
+    assert window._music_data.active_voice_filter == {("P2", 1, 1)}, (
+        "with nothing soloed anymore, the flute's own mute state applies again"
+    )
+
+
+def test_muting_a_part_keeps_its_staff_and_voice_rows_visible(
+    window, qtbot, score_duet
+):
+    """Region 2 is a real tree now - unlike the old on/off toggle, mute no
+    longer hides descendant rows, since a voice must stay reachable to be
+    individually soloed even while its part is muted. Expand the part
+    first (nodes start collapsed) so there are staff/voice rows to check
+    at all."""
+    load_and_wait(window, qtbot, score_duet)
+    _show(window, qtbot)
+    _focus(window.region_2)
+
+    part_id = window.region_2.model_manager.roots[0].node_id
+    window.region_2.select_node(part_id)
+    qtbot.keyClick(window.region_2, Qt.Key.Key_Right)
+    before = len(window.region_2.visible_item_texts())
+    assert before > 1, "the part must have expanded to reveal at least one staff row"
+
+    window.region_2.select_node(part_id)
+    qtbot.keyClick(window.region_2, Qt.Key.Key_F8)
+
+    assert len(window.region_2.visible_item_texts()) == before
+
+
+def test_region_2_starts_fully_collapsed(window, qtbot, score_duet):
+    """The user's own confirmed preference (revising the original spec):
+    every part row shows on load, but with no staff/voice rows built
+    underneath until the user expands one - not "fully expanded"."""
+    load_and_wait(window, qtbot, score_duet)
+
+    r2 = window.region_2
+    assert r2.topLevelItemCount() == len(window._music_data.parts_info)
+    for i in range(r2.topLevelItemCount()):
+        item = r2.topLevelItem(i)
+        assert item.childCount() == 0
+        assert item.childIndicatorPolicy() == item.ChildIndicatorPolicy.ShowIndicator, (
+            "a part with real staves underneath must still show an expand arrow"
+        )
+
+
+def test_collapsing_a_part_removes_its_children_and_one_down_reaches_the_next_part(
+    window, qtbot, score_duet
+):
+    """Reported bug, live-tested against NVDA: Qt's native isExpanded()/
+    setExpanded() only visually hides children, it doesn't remove them, and
+    NVDA's own browse-mode buffer kept announcing the now-hidden rows as
+    blank on every further Down press - worse the more of the tree had been
+    collapsed in the session. Region2ListWidget now actually removes the
+    child QTreeWidgetItems on collapse (see its Left/Right handling), so a
+    single Down press from a freshly-collapsed part must land straight on
+    the next part, with no leftover rows in between."""
+    load_and_wait(window, qtbot, score_duet)
+    _show(window, qtbot)
+    _focus(window.region_2)
+
+    first_part = window.region_2.model_manager.roots[0]
+    second_part = window.region_2.model_manager.roots[1]
+    window.region_2.select_node(first_part.node_id)
+    item = window.region_2.currentItem()
+    assert item.childCount() == 0, "nodes start collapsed"
+
+    qtbot.keyClick(window.region_2, Qt.Key.Key_Right)
+    assert item.childCount() > 0, "Right must expand it, revealing at least one staff"
+
+    qtbot.keyClick(window.region_2, Qt.Key.Key_Left)
+    assert item.childCount() == 0, "collapsing must remove the child items, not just hide them"
+
+    qtbot.keyClick(window.region_2, Qt.Key.Key_Down)
+    assert window.region_2.current_node().node_id == second_part.node_id, (
+        "one Down press from a collapsed part must land on the very next part"
+    )
+
+    # Right re-expands it, rebuilding its subtree from the model.
+    window.region_2.select_node(first_part.node_id)
+    qtbot.keyClick(window.region_2, Qt.Key.Key_Right)
+    assert window.region_2.currentItem().childCount() > 0
+
+
+def test_collapsing_a_part_forgets_a_childs_expand_state(
+    window, qtbot, score_duet
+):
+    """Reverted per the user's own call after live-testing a "remember each
+    descendant's own state across a collapse" version and finding it
+    behaved oddly (it shared the setExpanded(True) bug the regression test
+    below covers): "I'll live with the child nodes collapsing when the
+    parent is collapsed." Expand a staff, collapse its parent part, then
+    re-expand the part - the staff must come back collapsed again, not
+    already open."""
+    load_and_wait(window, qtbot, score_duet)
+    _show(window, qtbot)
+    _focus(window.region_2)
+
+    part = window.region_2.model_manager.roots[0]
+    window.region_2.select_node(part.node_id)
+    qtbot.keyClick(window.region_2, Qt.Key.Key_Right)  # expand the part
+
+    staff = part.children[0]
+    window.region_2.select_node(staff.node_id)
+    staff_item = window.region_2.currentItem()
+    qtbot.keyClick(window.region_2, Qt.Key.Key_Right)  # expand the staff too
+    assert staff_item.childCount() > 0
+
+    # Collapse the part - the staff's own item is removed along with it.
+    window.region_2.select_node(part.node_id)
+    qtbot.keyClick(window.region_2, Qt.Key.Key_Left)
+
+    # Re-expand the part: the staff comes back, but collapsed again.
+    qtbot.keyClick(window.region_2, Qt.Key.Key_Right)
+    rebuilt_staff_item = window.region_2._item_by_node_id[staff.node_id]
+    assert rebuilt_staff_item.childCount() == 0
+
+
+def test_down_arrow_reaches_a_freshly_expanded_nodes_children(
+    window, qtbot, score_duet
+):
+    """Reported bug, live-tested: _expand_item added the child QTreeWidget
+    Items but never called item.setExpanded(True) - QTreeWidget's keyboard
+    navigation tracks that as a SEPARATE flag from whatever children an
+    item actually holds, so Down from a freshly-expanded row silently
+    skipped straight past its brand new children to the next sibling,
+    however many "expand" presses had happened. A plain Right then Down
+    must land on the first real child, not skip it."""
+    load_and_wait(window, qtbot, score_duet)
+    _show(window, qtbot)
+    _focus(window.region_2)
+
+    part = window.region_2.model_manager.roots[0]
+    window.region_2.select_node(part.node_id)
+    qtbot.keyClick(window.region_2, Qt.Key.Key_Right)
+
+    qtbot.keyClick(window.region_2, Qt.Key.Key_Down)
+
+    assert window.region_2.current_node().node_id == part.children[0].node_id, (
+        "Down right after expanding must land on the part's first staff, not skip past it"
+    )
+
+
+def test_region_2_row_text_reflects_mute_and_solo_state(window, qtbot, score_duet):
+    load_and_wait(window, qtbot, score_duet)
+    _show(window, qtbot)
+    _focus(window.region_2)
+    part_id = window.region_2.model_manager.roots[0].node_id
+    part_name = window.region_2.model_manager.roots[0].display_name
+
+    assert window.region_2.visible_item_texts()[0] == part_name
+
+    window.region_2.select_node(part_id)
+    qtbot.keyClick(window.region_2, Qt.Key.Key_F8)
+    assert window.region_2.visible_item_texts()[0] == f"{part_name} muted"
+
+    qtbot.keyClick(window.region_2, Qt.Key.Key_F9)
+    assert window.region_2.visible_item_texts()[0] == f"{part_name} muted soloed"
+
+
 # --- F4/D-6: UK/US terminology toggle -------------------------------------
 
 def test_detect_default_uk_terms_true_for_a_non_us_locale():
@@ -2173,26 +2456,24 @@ def test_voice_filter_persists_across_reload_of_same_file(
 ):
     """Live-tested regression: _update_ui_regions rebuilds Region 2 from
     scratch via load_score_structure, which resets every node to its
-    default enabled=True and - through the very same filter_changed signal
+    default muted=False and - through the very same filter_changed signal
     a live toggle uses - silently overwrote the active_voice_filter
-    MusicData.apply_config had just restored, so a saved "voice off" toggle
-    came back on after every reload. _on_score_loaded must hand the saved
-    per-node toggles to Region 2 (apply_off_node_keys) after that rebuild,
-    not rely on apply_config's write to MusicData surviving it."""
+    MusicData.apply_config had just restored, so a saved mute toggle came
+    back unmuted after every reload. _on_score_loaded must hand the saved
+    per-node toggles to Region 2 (apply_muted_node_keys) after that
+    rebuild, not rely on apply_config's write to MusicData surviving it."""
     load_and_wait(window, qtbot, flute_crotchets_viola_semibreves_score)
 
-    viola_row = next(
-        i for i, node in enumerate(window.region_2._current_visible_nodes)
-        if node.node_id == "part_P2"
-    )
-    window.region_2.setCurrentRow(viola_row)
-    qtbot.keyClick(window.region_2, Qt.Key.Key_O)
+    _show(window, qtbot)
+    _focus(window.region_2)
+    window.region_2.select_node("part_P2")
+    qtbot.keyClick(window.region_2, Qt.Key.Key_F8)
     assert window._music_data.active_voice_filter == {("P1", 1, 1)}
 
     load_and_wait(window, qtbot, flute_crotchets_viola_semibreves_score)
 
     assert window._music_data.active_voice_filter == {("P1", 1, 1)}
-    assert window.region_2._current_visible_nodes[viola_row].enabled is False
+    assert window.region_2.model_manager.node("part_P2").muted is True
 
 
 def test_initial_audition_on_reload_respects_the_restored_voice_filter(
@@ -2207,12 +2488,10 @@ def test_initial_audition_on_reload_respects_the_restored_voice_filter(
     first audition when there's a filter to restore and fires it itself once
     Region 2's restored state is actually in effect."""
     load_and_wait(window, qtbot, flute_crotchets_viola_semibreves_score)
-    viola_row = next(
-        i for i, node in enumerate(window.region_2._current_visible_nodes)
-        if node.node_id == "part_P2"
-    )
-    window.region_2.setCurrentRow(viola_row)
-    qtbot.keyClick(window.region_2, Qt.Key.Key_O)  # viola off
+    _show(window, qtbot)
+    _focus(window.region_2)
+    window.region_2.select_node("part_P2")
+    qtbot.keyClick(window.region_2, Qt.Key.Key_F8)  # viola muted
 
     null_synth.played.clear()
     load_and_wait(window, qtbot, flute_crotchets_viola_semibreves_score)
@@ -2224,41 +2503,38 @@ def test_initial_audition_on_reload_respects_the_restored_voice_filter(
 def test_a_sub_staffs_own_toggle_survives_reload_under_an_off_part(
     window, qtbot, dynamics_articulation_fingering_score
 ):
-    """Reported bug, live-tested: toggling a part off with a sub-element
-    still individually on, closing, then reopening the score showed the
-    part correctly off - but switching the part back on revealed its
-    sub-elements had also silently gone off, losing their original state.
+    """Reported bug, live-tested: muting a part with a sub-element still
+    individually unmuted, closing, then reopening the score showed the
+    part correctly muted - but unmuting the part again revealed its
+    sub-elements had also silently gone muted, losing their original state.
     dynamics_articulation_fingering_score's Piano (P1) has two staves;
-    switch staff 2 off individually, then the whole Piano part off (staff 1
-    stays individually on underneath), reload, and switch Piano back on -
-    staff 1 must come back on and staff 2 must still be off, exactly as
-    they were before the part was toggled."""
+    mute staff 2 individually, then the whole Piano part (staff 1 stays
+    individually unmuted underneath), reload, and unmute Piano again -
+    staff 1 must come back unmuted and staff 2 must still be muted, exactly
+    as they were before the part was toggled."""
     load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
+    _show(window, qtbot)
+    _focus(window.region_2)
 
-    def node_row(node_id):
-        return next(
-            i for i, n in enumerate(window.region_2._current_visible_nodes)
-            if n.node_id == node_id
-        )
+    window.region_2.select_node("staff_P1_2")
+    qtbot.keyClick(window.region_2, Qt.Key.Key_F8)  # staff 2 muted, staff 1 stays unmuted
 
-    window.region_2.setCurrentRow(node_row("staff_P1_2"))
-    qtbot.keyClick(window.region_2, Qt.Key.Key_O)  # staff 2 off, staff 1 stays on
-
-    window.region_2.setCurrentRow(node_row("part_P1"))
-    qtbot.keyClick(window.region_2, Qt.Key.Key_O)  # whole Piano part off
+    window.region_2.select_node("part_P1")
+    qtbot.keyClick(window.region_2, Qt.Key.Key_F8)  # whole Piano part muted
 
     load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
+    _focus(window.region_2)
 
-    assert window.region_2._current_visible_nodes[node_row("part_P1")].enabled is False
+    assert window.region_2.model_manager.node("part_P1").muted is True
 
-    window.region_2.setCurrentRow(node_row("part_P1"))
-    qtbot.keyClick(window.region_2, Qt.Key.Key_O)  # Piano back on
+    window.region_2.select_node("part_P1")
+    qtbot.keyClick(window.region_2, Qt.Key.Key_F8)  # Piano unmuted again
 
-    assert window.region_2._current_visible_nodes[node_row("staff_P1_1")].enabled is True, (
-        "staff 1 was individually on before the part was toggled off - must come back on"
+    assert window.region_2.model_manager.node("staff_P1_1").muted is False, (
+        "staff 1 was individually unmuted before the part was muted - must come back unmuted"
     )
-    assert window.region_2._current_visible_nodes[node_row("staff_P1_2")].enabled is False, (
-        "staff 2 was individually off before the part was toggled off - must stay off"
+    assert window.region_2.model_manager.node("staff_P1_2").muted is True, (
+        "staff 2 was individually muted before the part was muted - must stay muted"
     )
 
 
@@ -2395,20 +2671,19 @@ def test_gp_file_loads_and_chords_voice_is_toggleable_and_auditions_full_chord(
     timeline, and auditioning one sounds the whole chord, not one string."""
     load_and_wait(window, qtbot, gp_ripple)
 
-    nodes = window.region_2._current_visible_nodes
-    chords_row = next(i for i, n in enumerate(nodes) if n.node_id == "voice_P1_1_1000")
-    assert nodes[chords_row].display_name.strip() == "Chords"
+    chords_node = window.region_2.model_manager.node("voice_P1_1_1000")
+    assert chords_node.display_name == "Chords"
 
-    def node_row(node_id: str) -> int:
-        return next(i for i, n in enumerate(window.region_2._current_visible_nodes) if n.node_id == node_id)
+    _show(window, qtbot)
+    _focus(window.region_2)
 
-    # Switch off every other part, then P1's own real tab voice, leaving
-    # only P1's synthetic Chords voice active.
+    # Mute every other part, then P1's own real tab voice, leaving only
+    # P1's synthetic Chords voice active.
     for part_id in ("part_P0", "part_P2", "part_P3"):
-        window.region_2.setCurrentRow(node_row(part_id))
-        qtbot.keyClick(window.region_2, Qt.Key.Key_O)
-    window.region_2.setCurrentRow(node_row("voice_P1_1_1"))
-    qtbot.keyClick(window.region_2, Qt.Key.Key_O)
+        window.region_2.select_node(part_id)
+        qtbot.keyClick(window.region_2, Qt.Key.Key_F8)
+    window.region_2.select_node("voice_P1_1_1")
+    qtbot.keyClick(window.region_2, Qt.Key.Key_F8)
 
     active = window._music_data.active_voice_filter
     assert active == {("P1", 1, 1000)}
@@ -2484,7 +2759,7 @@ def test_ultimate_guitar_import_populates_two_flat_region_2_parts_and_region_3(
     qtbot.waitUntil(lambda: window._load_thread is None, timeout=5000)
 
     assert window._music_data.is_ug
-    nodes = window.region_2._current_visible_nodes
+    nodes = window.region_2.model_manager.get_visible_nodes()
     assert [n.node_type for n in nodes] == ["part", "part"]
     assert {n.display_name for n in nodes} == {"Chords", "Lyrics"}
 
@@ -2584,7 +2859,7 @@ def test_opening_a_saved_ug_file_reproduces_the_original_import(
 
     assert window._music_data.is_ug
     assert window._music_data.file_path == save_path
-    nodes = window.region_2._current_visible_nodes
+    nodes = window.region_2.model_manager.get_visible_nodes()
     assert {n.display_name for n in nodes} == {"Chords", "Lyrics"}
     window._music_data.active_event_index = 1
     window._update_timeline_views()
@@ -2726,13 +3001,12 @@ def test_reordering_parts_updates_region_2_and_region_3_order_without_resetting_
 
     assert [p.part_id for p in window._music_data.parts_info] == ["chords", "lyrics"]
 
-    # Switch Lyrics off first, to prove the reorder doesn't reset it.
-    lyrics_row = next(
-        i for i, n in enumerate(window.region_2._current_visible_nodes) if n.node_id == "part_lyrics"
-    )
-    window.region_2.setCurrentRow(lyrics_row)
-    qtbot.keyClick(window.region_2, Qt.Key.Key_O)
-    assert window.region_2.model_manager.roots[1].enabled is False
+    # Mute Lyrics first, to prove the reorder doesn't reset it.
+    _show(window, qtbot)
+    _focus(window.region_2)
+    window.region_2.select_node("part_lyrics")
+    qtbot.keyClick(window.region_2, Qt.Key.Key_F8)
+    assert window.region_2.model_manager.roots[1].muted is True
 
     def move_lyrics_to_front(dialog):
         dialog.part_list.setCurrentRow(1)  # "Lyrics"
@@ -2744,14 +3018,14 @@ def test_reordering_parts_updates_region_2_and_region_3_order_without_resetting_
     assert [p.part_id for p in window._music_data.parts_info] == ["lyrics", "chords"]
     assert [n.part_id for n in window.region_2.model_manager.roots] == ["lyrics", "chords"]
     lyrics_node = next(n for n in window.region_2.model_manager.roots if n.part_id == "lyrics")
-    assert lyrics_node.enabled is False, "reordering must not reset the on/off toggle"
+    assert lyrics_node.muted is True, "reordering must not reset the mute toggle"
 
     window._music_data.active_event_index = 0
     window._update_timeline_views()
     row_texts = [window.region_3.item(i).text() for i in range(window.region_3.count())]
-    # Lyrics is off, so only the Chords row shows - but it's now the ONLY
+    # Lyrics is muted, so only the Chords row shows - but it's now the ONLY
     # part, proving reorder_parts touched the underlying note order too
-    # (with Lyrics back on, its row would come first).
+    # (with Lyrics unmuted, its row would come first).
     assert row_texts == ["C"]
 
 

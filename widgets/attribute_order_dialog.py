@@ -86,8 +86,7 @@ class AttributeOrderDialog(QDialog):
 
     def refresh_list(self, pairs: List[Tuple[str, str]], preferred_key: Optional[str] = None):
         """Rebuilds the rows after a move - re-anchors on preferred_key (the
-        attribute that just moved) so NVDA keeps tracking it, same reanchor-
-        after-rebuild shape as Region2ListWidget.refresh_list."""
+        attribute that just moved) so NVDA keeps tracking it."""
         self._populate(pairs)
         target_row = 0
         if preferred_key is not None:

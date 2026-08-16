@@ -21,29 +21,37 @@ StaffKey = Tuple[str, int]
 @dataclass
 class ScoreConfig:
     """Per-file config (Ref 27): which part/staff/voice combinations are
-    switched off, which optional attributes are shown against notes in each
-    voice, the order those attributes render in, and whether the metronome
-    was on - everything MainWindow needs to restore a score to how the user
-    last left it. Deliberately excludes language (persistence/app_settings.py
-    - a global preference, not a per-file one).
+    muted or soloed, which optional attributes are shown against notes in
+    each voice, the order those attributes render in, and whether the
+    metronome was on - everything MainWindow needs to restore a score to how
+    the user last left it. Deliberately excludes language
+    (persistence/app_settings.py - a global preference, not a per-file one)
+    and Region 2's expand/collapse state, which is a pure navigation
+    convenience that always resets to fully expanded on load, never saved.
 
-    parts_off/staves_off/voices_off are each that node's OWN toggle state,
+    parts_muted/staves_muted/voices_muted (and the parts_soloed/staves_soloed/
+    voices_soloed counterparts) are each that node's OWN toggle state,
     independent of its ancestors - NOT the "effectively active" set, which
-    cannot distinguish "this voice was switched off" from "this voice is
-    merely hidden because its part is off", and so loses the voice's own
-    state on reload. Region2HierarchyModel.get_off_node_keys()/
-    apply_off_node_keys() are the lossless read/write side;
-    MusicData.export_config() fills in only a best-effort voices_off for
-    standalone use, which MainWindow overwrites before saving.
+    cannot distinguish "this voice was individually muted" from "this voice
+    is merely silenced because its part is muted", and so loses the voice's
+    own state on reload. Region2HierarchyModel.get_muted_node_keys()/
+    apply_muted_node_keys() (and the soloed counterparts) are the lossless
+    read/write side; MusicData.export_config() fills in only a best-effort
+    voices_muted for standalone use, which MainWindow overwrites before
+    saving.
 
-    Storing OFF-lists (rather than ON-lists) and filtering them against the
-    freshly loaded score is what makes loading best-effort: an entry
-    matching nothing in the current score is dropped, not fatal."""
+    Storing muted/soloed sets (rather than the complementary "active" list)
+    and filtering them against the freshly loaded score is what makes
+    loading best-effort: an entry matching nothing in the current score is
+    dropped, not fatal."""
 
-    schema_version: int = 1
-    parts_off: Set[str] = field(default_factory=set)
-    staves_off: Set[StaffKey] = field(default_factory=set)
-    voices_off: Set[VoiceKey] = field(default_factory=set)
+    schema_version: int = 2
+    parts_muted: Set[str] = field(default_factory=set)
+    staves_muted: Set[StaffKey] = field(default_factory=set)
+    voices_muted: Set[VoiceKey] = field(default_factory=set)
+    parts_soloed: Set[str] = field(default_factory=set)
+    staves_soloed: Set[StaffKey] = field(default_factory=set)
+    voices_soloed: Set[VoiceKey] = field(default_factory=set)
     metronome_enabled: bool = False
     position_announcer_enabled: bool = False
     voice_display_attributes: Dict[VoiceKey, Set[str]] = field(default_factory=dict)

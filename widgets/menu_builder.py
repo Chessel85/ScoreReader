@@ -27,7 +27,6 @@ class Actions:
     open_folder: Optional[QAction] = None
     clear_preferences: Optional[QAction] = None
     performance_report: Optional[QAction] = None
-    mixer: Optional[QAction] = None
     instruments: Optional[QAction] = None
     key_signature: Optional[QAction] = None
     first_measure: Optional[QAction] = None
@@ -38,6 +37,14 @@ class Actions:
     move_to_notes: Optional[QAction] = None
     move_to_attributes: Optional[QAction] = None
     move_to_performance: Optional[QAction] = None
+    play_stop: Optional[QAction] = None
+    pause_resume: Optional[QAction] = None
+    preview: Optional[QAction] = None
+    mute: Optional[QAction] = None
+    solo: Optional[QAction] = None
+    unmute_all: Optional[QAction] = None
+    unsolo_all: Optional[QAction] = None
+    mixer: Optional[QAction] = None
     tempo_offset: Optional[QAction] = None
     part_order: Optional[QAction] = None
     uk_language: Optional[QAction] = None
@@ -74,6 +81,7 @@ class MenuBuilder:
         self._file_menu(menu_bar, a)
         self._edit_menu(menu_bar, a)
         self._navigation_menu(menu_bar, a)
+        self._playback_menu(menu_bar, a)
         self._options_menu(menu_bar, a)
         self._help_menu(menu_bar, a)
         return a
@@ -153,14 +161,6 @@ class MenuBuilder:
         )
         edit_menu.addAction(a.performance_report)
 
-        # Wishlist #4: volume/pan per instrument plus the click, position
-        # announcer and performance-cue channels.
-        a.mixer = self._action(
-            "&Mixer...", self.slots._show_mixer_dialog, "Ctrl+Shift+X",
-            status_tip="Set volume and pan for each instrument and sound",
-        )
-        edit_menu.addAction(a.mixer)
-
         # S5: per-part display-name/instrument override, for both MusicXML
         # and MIDI scores.
         a.instruments = self._action(
@@ -235,6 +235,81 @@ class MenuBuilder:
         navigation_menu.addAction(a.move_to_notes)
         navigation_menu.addAction(a.move_to_attributes)
         navigation_menu.addAction(a.move_to_performance)
+
+    def _playback_menu(self, menu_bar, a: Actions) -> None:
+        """Consolidates the existing transport controls plus the new
+        mute/solo actions and the relocated Mixer entry (previously in
+        Edit). No functional change to Play/Stop, Pause/Resume, Preview or
+        Mixer - just a single place to find them and, for Play/Stop and
+        Pause/Resume, a QAction carrying the shortcut instead of a bare
+        QShortcut in main_window.py (same pattern Ctrl+M/Ctrl+P/Ctrl+G/
+        Ctrl+T already use), so Space/Ctrl+Space show up here too.
+
+        Mute/Solo/Unmute All/Unsolo All act on Region 2's focused row -
+        FocusController greys all four out unless Region 2 has focus, the
+        same "only meaningful with a particular region focused" pattern
+        already used for Move to First/Last Note.
+        """
+        playback_menu = menu_bar.addMenu("&Playback")
+
+        a.play_stop = self._action(
+            "&Play/Stop", self.slots.toggle_play_stop, QKeySequence(Qt.Key.Key_Space),
+        )
+        playback_menu.addAction(a.play_stop)
+
+        a.pause_resume = self._action(
+            "Pa&use/Resume", self.slots.toggle_pause_resume, QKeySequence("Ctrl+Space"),
+        )
+        playback_menu.addAction(a.pause_resume)
+
+        # No QKeySequence/setShortcut: Enter is already handled inside the
+        # Note region's own keyPressEvent with dual behaviour (jump to a
+        # typed measure number vs. phrase preview) - a real window-level
+        # shortcut here would be ambiguous with that region-local handling.
+        # The embedded "\tEnter" is Qt's classic trick for showing a
+        # right-aligned shortcut-style hint in the menu text WITHOUT
+        # registering an actual QShortcut, so the item still visibly says
+        # "Enter" alongside every other item's real shortcut without the
+        # conflict a bound one would cause.
+        a.preview = self._action(
+            "Pre&view\tEnter", self.slots.audition_phrase,
+            status_tip="Note region: Enter previews the current phrase",
+        )
+        playback_menu.addAction(a.preview)
+
+        playback_menu.addSeparator()
+
+        a.mute = self._action(
+            "&Mute", self.slots.toggle_mute_current_region2_row, QKeySequence(Qt.Key.Key_F8),
+            status_tip="Mute the focused row in the Parts region",
+        )
+        playback_menu.addAction(a.mute)
+
+        a.solo = self._action(
+            "&Solo", self.slots.toggle_solo_current_region2_row, QKeySequence(Qt.Key.Key_F9),
+            status_tip="Solo the focused row in the Parts region",
+        )
+        playback_menu.addAction(a.solo)
+
+        a.unmute_all = self._action(
+            "Unmute &All", self.slots.unmute_all_region2, QKeySequence("Alt+F8"),
+        )
+        playback_menu.addAction(a.unmute_all)
+
+        a.unsolo_all = self._action(
+            "Unsolo A&ll", self.slots.unsolo_all_region2, QKeySequence("Alt+F9"),
+        )
+        playback_menu.addAction(a.unsolo_all)
+
+        playback_menu.addSeparator()
+
+        # Wishlist #4: volume/pan per instrument plus the click, position
+        # announcer and performance-cue channels.
+        a.mixer = self._action(
+            "&Mixer...", self.slots._show_mixer_dialog, "Ctrl+Shift+X",
+            status_tip="Set volume and pan for each instrument and sound",
+        )
+        playback_menu.addAction(a.mixer)
 
     def _options_menu(self, menu_bar, a: Actions) -> None:
         options_menu = menu_bar.addMenu("&Options")

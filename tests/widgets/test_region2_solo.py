@@ -1,9 +1,8 @@
 # tests/widgets/test_region2_solo.py
-"""Region 2 solo (wishlist #8) - groundwork, no UI or keybinding yet.
+"""Region 2 solo (F9/Alt+F9 in the Playback menu, see main_window.py).
 
-The load-bearing property is that with nothing soloed - every case in the
-app today - get_active_voice_tuples() returns exactly what it always did.
-"""
+The load-bearing property is that with nothing soloed, get_active_voice_
+tuples() falls through to the plain mute-based filter unchanged."""
 from widgets.region2_manager import Region2HierarchyModel
 
 PARTS = [
@@ -55,12 +54,12 @@ def test_soloing_a_part_activates_every_voice_beneath_it():
     assert model.get_active_voice_tuples() == {("P1", 1, 1), ("P1", 1, 2), ("P1", 2, 5)}
 
 
-def test_solo_overrides_a_switched_off_ancestor():
-    """The point of a solo control: soloing something the user had switched
-    off should still make it audible, rather than intersecting with the
-    on/off state and producing silence."""
+def test_solo_overrides_a_muted_ancestor():
+    """The point of a solo control: soloing something the user had muted
+    should still make it audible, rather than intersecting with the mute
+    state and producing silence."""
     model = _model()
-    model.toggle_node("part_P1")  # switch the whole part off
+    model.toggle_mute("part_P1")  # mute the whole part
     assert ("P1", 1, 1) not in model.get_active_voice_tuples()
 
     model.toggle_solo("voice_P1_1_1")
@@ -68,11 +67,11 @@ def test_solo_overrides_a_switched_off_ancestor():
     assert model.get_active_voice_tuples() == {("P1", 1, 1)}
 
 
-def test_clear_all_solo_restores_the_previous_on_off_state_exactly():
-    """"Unsolo all" must not double as "switch everything on" - a part the
-    user had toggled off before soloing stays off afterwards."""
+def test_clear_all_solo_restores_the_previous_mute_state_exactly():
+    """"Unsolo all" must not double as "unmute everything" - a part the
+    user had muted before soloing stays muted afterwards."""
     model = _model()
-    model.toggle_node("staff_P1_2")  # bass stave off
+    model.toggle_mute("staff_P1_2")  # mute the bass stave
     before = model.get_active_voice_tuples()
 
     model.toggle_solo("voice_P2_1_1")

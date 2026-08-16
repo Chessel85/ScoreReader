@@ -28,9 +28,12 @@ def test_load_for_with_no_saved_file_returns_none():
 
 def test_save_then_load_round_trips_all_fields():
     config = ScoreConfig(
-        parts_off={"P3"},
-        staves_off={("P1", 2)},
-        voices_off={("P2", 1, 1)},
+        parts_muted={"P3"},
+        staves_muted={("P1", 2)},
+        voices_muted={("P2", 1, 1)},
+        parts_soloed={"P2"},
+        staves_soloed={("P1", 1)},
+        voices_soloed={("P3", 1, 1)},
         metronome_enabled=True,
         position_announcer_enabled=True,
         voice_display_attributes={("P1", 1, 1): {"step", "string", "fret"}},
@@ -39,32 +42,55 @@ def test_save_then_load_round_trips_all_fields():
     score_config.save("Chessel Duet.mxl", config)
 
     loaded = score_config.load_for("Chessel Duet.mxl")
-    assert loaded.parts_off == {"P3"}
-    assert loaded.staves_off == {("P1", 2)}
-    assert loaded.voices_off == {("P2", 1, 1)}
+    assert loaded.parts_muted == {"P3"}
+    assert loaded.staves_muted == {("P1", 2)}
+    assert loaded.voices_muted == {("P2", 1, 1)}
+    assert loaded.parts_soloed == {"P2"}
+    assert loaded.staves_soloed == {("P1", 1)}
+    assert loaded.voices_soloed == {("P3", 1, 1)}
     assert loaded.metronome_enabled is True
     assert loaded.position_announcer_enabled is True
     assert loaded.voice_display_attributes == {("P1", 1, 1): {"step", "string", "fret"}}
     assert loaded.attribute_order == ["step", "string", "fret", "octave"]
 
 
-def test_load_for_a_file_saved_before_parts_off_staves_off_existed():
-    """Backward compatibility: an .rsc written by an older build has no
-    "parts_off"/"staves_off" keys at all - loading it must default those to
-    empty sets rather than erroring, so old per-file configs keep working."""
+def test_load_for_a_file_missing_parts_muted_staves_muted_keys():
+    """Backward compatibility: an .rsc missing "parts_muted"/"staves_muted"
+    keys entirely (an older build, or a hand-edited file) must default those
+    to empty sets rather than erroring."""
     path = score_config.path_for("Chessel Duet.mxl")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        '{"schema_version": 1, "voices_off": ["P2|1|1"], "metronome_enabled": false, '
+        '{"schema_version": 2, "voices_muted": ["P2|1|1"], "metronome_enabled": false, '
         '"voice_display_attributes": {}, "attribute_order": []}',
         encoding="utf-8",
     )
 
     loaded = score_config.load_for("Chessel Duet.mxl")
 
-    assert loaded.parts_off == set()
-    assert loaded.staves_off == set()
-    assert loaded.voices_off == {("P2", 1, 1)}
+    assert loaded.parts_muted == set()
+    assert loaded.staves_muted == set()
+    assert loaded.voices_muted == {("P2", 1, 1)}
+
+
+def test_load_for_a_file_saved_before_solo_existed():
+    """An .rsc written before mute/solo were split apart has no
+    "parts_soloed"/"staves_soloed"/"voices_soloed" keys at all - loading it
+    must default those to empty sets rather than erroring."""
+    path = score_config.path_for("Chessel Duet.mxl")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        '{"schema_version": 2, "parts_muted": ["P3"], "metronome_enabled": false, '
+        '"voice_display_attributes": {}, "attribute_order": []}',
+        encoding="utf-8",
+    )
+
+    loaded = score_config.load_for("Chessel Duet.mxl")
+
+    assert loaded.parts_muted == {"P3"}
+    assert loaded.parts_soloed == set()
+    assert loaded.staves_soloed == set()
+    assert loaded.voices_soloed == set()
 
 
 def test_load_for_a_file_saved_before_position_announcer_existed():
@@ -74,7 +100,7 @@ def test_load_for_a_file_saved_before_position_announcer_existed():
     path = score_config.path_for("Chessel Duet.mxl")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        '{"schema_version": 1, "voices_off": [], "metronome_enabled": true, '
+        '{"schema_version": 1, "voices_muted": [], "metronome_enabled": true, '
         '"voice_display_attributes": {}, "attribute_order": []}',
         encoding="utf-8",
     )
