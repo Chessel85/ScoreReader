@@ -416,6 +416,7 @@ class TimelineBuilder:
                                 beat_position=round(h_beat_pos, 2),
                                 ts_duration=float(walker.ts_num),
                                 quarter_length=full_bar_quarters,
+                                duration_name_us=quarter_length_to_display_name(full_bar_quarters),
                                 part_id=CHORDS_PART_ID,
                                 part_name=CHORDS_PART_NAME,
                                 staff=1,
@@ -670,6 +671,7 @@ class TimelineBuilder:
                             voice=1,
                             chord_pitches=current_chord_pitches,
                             strum=strum,
+                            duration_name_us=duration_name_us,
                         )
                         buckets[key].append(stroke_note)
 
