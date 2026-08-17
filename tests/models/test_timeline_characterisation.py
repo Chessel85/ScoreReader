@@ -701,3 +701,43 @@ def test_no_harmony_or_lyric_means_no_synthetic_parts(timeline, minimal_score):
     part_ids = {n.part_id for s in md.timeline_slices for n in s.notes}
     assert CHORDS_PART_ID not in part_ids
     assert LYRICS_PART_ID not in part_ids
+
+
+def test_unpitched_percussion_notes_are_not_dropped(timeline, score_hit_it):
+    """Wishlist #8: an <unpitched> note used to be silently skipped entirely
+    (TimelineBuilder required a <pitch> element) - Hit It.mxl is 100% such
+    notes, so this used to parse to zero timeline events."""
+    md = timeline(score_hit_it)
+
+    notes = [n for s in md.timeline_slices for n in s.notes]
+    assert notes
+    assert all(n.octave is None for n in notes)
+
+
+def test_unpitched_note_name_and_sound_come_from_its_instrument_ref(timeline, score_hit_it):
+    """A percussion note's real name/sound comes from its <instrument id>
+    resolving into the score-part's own <score-instrument>/<midi-instrument>
+    children - never from <display-step>/<display-octave>, which is only
+    where MuseScore draws the notehead on the percussion staff."""
+    md = timeline(score_hit_it)
+
+    first_slice_names = {n.step_name for n in md.timeline_slices[0].notes}
+    assert "Closed Hi-Hat" in first_slice_names
+
+    hihat = next(
+        n for s in md.timeline_slices for n in s.notes if n.step_name == "Closed Hi-Hat"
+    )
+    # <midi-instrument id="P1-I43"><midi-unpitched>43</midi-unpitched> in
+    # the real file, read directly rather than guessed from the id string.
+    assert hihat.midi_pitch == 43
+
+
+def test_simultaneous_percussion_hits_share_one_event_slice(timeline, score_hit_it):
+    """Multiple <chord/>-grouped unpitched notes at the same beat (hi-hat +
+    bass drum together) bucket into one slice, the same <chord/> handling
+    already established for pitched notes."""
+    md = timeline(score_hit_it)
+
+    multi_hit_slice = next(s for s in md.timeline_slices if len(s.notes) > 1)
+    assert len(multi_hit_slice.notes) >= 2
+    assert all(n.octave is None for n in multi_hit_slice.notes)

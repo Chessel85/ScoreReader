@@ -148,3 +148,37 @@ def test_guitar_notes_play_the_guitar_program_not_the_piano_program(score_duet):
     assert program == 24, "Classical Guitar is GM program 25, zero-indexed 24"
     assert channel == data.get_channel_for_part("P2")
     assert channel != data.get_channel_for_part("P1"), "parts must not share a channel"
+
+
+@pytest.mark.slow
+def test_percussion_clef_flags_the_part_as_percussion(score_hit_it):
+    """Wishlist #8: Hit It.mxl's two parts both use <clef><sign>percussion,
+    so both parts_info entries must come back is_percussion=True with a
+    "Percussion stave" label - not the default "Treble stave"."""
+    data = MusicXMLReader(score_hit_it).load()
+
+    assert len(data.parts_info) == 2
+    for part in data.parts_info:
+        assert part.is_percussion is True
+        assert part.staves_clefs[1] == "Percussion stave"
+    assert {p.name for p in data.parts_info} == {"Drum Kit", "Tambourine"}
+
+
+@pytest.mark.slow
+def test_percussion_parts_play_on_separate_channels_at_the_gm_percussion_bank(score_hit_it):
+    """Two real percussion parts (Drum Kit + Tambourine) in one score must
+    not collide on one channel - each gets its OWN channel like any other
+    part, program-selected to bank 128 (GM's percussion bank) instead of
+    each part's own meaningless gmidi_program."""
+    data = MusicXMLReader(score_hit_it).load()
+
+    drum_kit_id = next(p.part_id for p in data.parts_info if p.name == "Drum Kit")
+    tambourine_id = next(p.part_id for p in data.parts_info if p.name == "Tambourine")
+    assert data.get_channel_for_part(drum_kit_id) != data.get_channel_for_part(tambourine_id)
+
+    first_slice = data.timeline_slices[0]
+    events = data.get_playback_events_for_indices(list(range(len(first_slice.notes))), index=0)
+    assert events
+    for channel, program, midi_notes, duration_ms, bank in events:
+        assert bank == 128
+        assert program == 0

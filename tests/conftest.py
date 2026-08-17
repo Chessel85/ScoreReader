@@ -231,6 +231,17 @@ def score_duet_mxl() -> str:
 
 
 @pytest.fixture
+def score_hit_it() -> str:
+    """Wishlist #8: a real MuseScore percussion-clef export with TWO drum
+    parts (Drum Kit + Tambourine), every note an <unpitched> with
+    <instrument id> refs into each score-part's own
+    <score-instrument>/<midi-instrument> children - the fixture for real
+    percussion support (a percussion note used to be silently dropped
+    entirely, since TimelineBuilder required a <pitch> element)."""
+    return _require(SCORES_DIR / "Hit It.mxl")
+
+
+@pytest.fixture
 def score_long_tune() -> str:
     """4/4, one part, 130 measures, no pickup - a real score with genuine
     multi-digit measure numbers, for C4's digit-entry bar jump (Ref 6).
@@ -327,9 +338,9 @@ def midi_pachelbel() -> str:
 @pytest.fixture
 def midi_blue_peter() -> str:
     """A 9-usable-track (10 raw tracks: one empty conductor track) real-world
-    MIDI file with a genuine channel-10 percussion track (track index 2) -
-    the fixture for "percussion is skipped cleanly, not misread as
-    pitches"."""
+    MIDI file with a genuine channel-10 percussion track (track index 2,
+    "Low Floor Tom" among others) - the fixture for wishlist #8's percussion
+    support (reported: this file's drum track used to come out as silence)."""
     return _require(MIDI_DIR / "BluePeter.mid")
 
 

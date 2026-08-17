@@ -675,13 +675,16 @@ def test_get_channel_for_part_assigns_one_channel_per_part_in_order():
     assert md.get_channel_for_part("P2") == 1
 
 
-def test_get_channel_for_part_skips_the_percussion_announcer_and_cue_channels():
-    """MIDI channel 10 (0-indexed 9) is reserved for percussion (D-5);
-    channel 9 (0-indexed 8) is reserved for the position announcer
-    (Ref 28); channel 8 (0-indexed 7) is reserved for the Performance
-    region's change cue (Ref 29) - see MusicData.RESERVED_CHANNELS. 11
-    parts (idx 0-10) walk straight through the 7 usable channels below the
-    reservations, then resume past all three."""
+def test_get_channel_for_part_skips_the_metronome_announcer_and_cue_channels():
+    """MIDI channel 10 (0-indexed 9) is reserved for the click metronome
+    (D-5) - a REAL percussion part is NOT routed here (wishlist #8: it gets
+    an ordinary channel like any other part, program-selected to the GM
+    percussion bank instead); channel 9 (0-indexed 8) is reserved for the
+    position announcer (Ref 28); channel 8 (0-indexed 7) is reserved for the
+    Performance region's change cue (Ref 29) - see
+    MusicData.RESERVED_CHANNELS. 11 parts (idx 0-10) walk straight through
+    the 7 usable channels below the reservations, then resume past all
+    three."""
     parts = [PartStructureInfo(part_id=f"P{i}", gmidi_program=1) for i in range(1, 12)]
     md = MusicData(parts_info=parts)
 
@@ -708,6 +711,33 @@ def test_get_gmidi_program_for_part_returns_that_parts_own_program():
     assert md.get_gmidi_program_for_part("P2") == 25
 
 
+def test_is_percussion_part_reads_the_parts_own_flag():
+    md = MusicData(parts_info=[
+        PartStructureInfo(part_id="P1", name="Piano", gmidi_program=1, is_percussion=False),
+        PartStructureInfo(part_id="P2", name="Drum Kit", gmidi_program=1, is_percussion=True),
+    ])
+
+    assert md.is_percussion_part("P1") is False
+    assert md.is_percussion_part("P2") is True
+    assert md.is_percussion_part("does-not-exist") is False
+
+
+def test_percussion_part_gets_its_own_ordinary_channel_not_a_reserved_one():
+    """Wishlist #8: a percussion part is NOT special-cased in channel
+    assignment - it walks the same usable-channel pool as any other part,
+    so two real percussion parts in one score (Hit It.mxl's Drum Kit +
+    Tambourine) still get distinct channels rather than colliding."""
+    md = MusicData(parts_info=[
+        PartStructureInfo(part_id="P1", name="Drum Kit", is_percussion=True),
+        PartStructureInfo(part_id="P2", name="Tambourine", is_percussion=True),
+    ])
+
+    assert md.get_channel_for_part("P1") == 0
+    assert md.get_channel_for_part("P2") == 1
+    assert md.get_channel_for_part("P1") not in md.RESERVED_CHANNELS
+    assert md.get_channel_for_part("P2") not in md.RESERVED_CHANNELS
+
+
 def test_playback_events_group_simultaneous_notes_by_part(timeline, two_parts_chord_score):
     """A8, Ref 8: a chord spanning two parts must not collapse onto one instrument."""
     md = timeline(two_parts_chord_score, parts_info=[
@@ -724,6 +754,147 @@ def test_playback_events_group_simultaneous_notes_by_part(timeline, two_parts_ch
     events_by_channel = {channel: (program, notes) for channel, program, notes, _ in events}
     assert events_by_channel[0] == (0, [60]), "Piano: channel 0, program 0-indexed, C4"
     assert events_by_channel[1] == (24, [52]), "Guitar: channel 1, program 0-indexed, E3"
+
+
+def test_playback_events_route_a_percussion_part_to_the_gm_percussion_bank(timeline, score_hit_it):
+    """Wishlist #8: a percussion part's playback group carries a trailing
+    bank=128 and program=0 (models.gm_percussion_map.GM_PERCUSSION_BANK/
+    GM_PERCUSSION_PROGRAM), regardless of whatever gmidi_program its
+    PartStructureInfo happens to carry - that value is meaningless for
+    percussion and must never be read."""
+    md = timeline(score_hit_it, parts_info=[
+        PartStructureInfo(part_id="P1", name="Drum Kit", gmidi_program=1, is_percussion=True),
+        PartStructureInfo(part_id="P2", name="Tambourine", gmidi_program=1, is_percussion=True),
+    ])
+
+    first_slice = md.timeline_slices[0]
+    events = md.get_playback_events_for_indices(list(range(len(first_slice.notes))), index=0)
+
+    assert events
+    for channel, program, midi_notes, duration_ms, bank in events:
+        assert bank == 128
+        assert program == 0
+    channels = {e[0] for e in events}
+    assert len(channels) == 2, "the two percussion parts must not collide on one channel"
+
+
+def _hit_it_parts_info():
+    """Real staff/voice shape for files/Hit It.mxl's two percussion parts -
+    each distinct item is its own "voice", numbered by its own declared key
+    (Region 2 follow-up: "the pitch defines the instrument"), not by
+    Hit It.mxl's real notated <voice> (which groups Closed Hi-Hat/Snare
+    together under 1, Bass Drum under 2)."""
+    return [
+        PartStructureInfo(
+            part_id="P1", name="Drum Kit", is_percussion=True,
+            staves_clefs={1: "Percussion stave"}, staves_voices={1: [43, 39, 37]},
+        ),
+        PartStructureInfo(
+            part_id="P2", name="Tambourine", is_percussion=True,
+            staves_clefs={1: "Percussion stave"}, staves_voices={1: [55]},
+        ),
+    ]
+
+
+def test_get_percussion_items_for_part_lists_distinct_items_in_first_seen_order(
+    timeline, score_hit_it
+):
+    md = timeline(score_hit_it, parts_info=_hit_it_parts_info())
+
+    items = md.get_percussion_items_for_part("P1")
+    names = [name for _, name, _ in items]
+    # Chronological order across the whole timeline, not raw XML source
+    # order - bar 1 beat 1 sounds Closed Hi-Hat (voice 1) and Bass Drum
+    # (voice 2) together (Hi-Hat sorts first within that slice, higher
+    # pitch), Snare only appears later at beat 2.
+    assert names == ["Closed Hi-Hat", "Bass Drum", "Snare"]
+    # item_key is (part_id, the file's OWN declared key), and the third
+    # element is the CURRENT effective sounding key - both equal at this
+    # point, since nothing has been overridden yet.
+    assert items[0] == (("P1", 43), "Closed Hi-Hat", 43)
+
+
+def test_percussion_voice_names_split_one_item_per_voice(timeline, score_hit_it):
+    """Region 2 follow-up: each percussion item is its own voice (numbered
+    by its own declared key), so Closed Hi-Hat and Snare - both real
+    MusicXML voice 1 - must appear as two SEPARATE, independently
+    mute/soloable Region 2 rows, not one combined "Closed Hi-Hat, Snare"
+    label."""
+    md = timeline(score_hit_it, parts_info=_hit_it_parts_info())
+
+    part = next(p for p in md.parts_info if p.part_id == "P1")
+    assert part.voice_names[(1, 43)] == "Closed Hi-Hat"
+    assert part.voice_names[(1, 39)] == "Snare"
+    assert part.voice_names[(1, 37)] == "Bass Drum"
+
+    tambourine = next(p for p in md.parts_info if p.part_id == "P2")
+    assert tambourine.voice_names[(1, 55)] == "Tambourine"
+
+
+def test_apply_percussion_overrides_manual_override_wins_over_auto_correct(
+    timeline, score_hit_it
+):
+    """An explicit percussion_item_overrides entry always wins, even when
+    auto-correct is also enabled and would otherwise apply its own shift to
+    the same item."""
+    md = timeline(score_hit_it, parts_info=_hit_it_parts_info())
+    md.percussion_auto_correct_enabled = True
+    md.percussion_item_overrides[("P1", 43)] = 99  # manual: Closed Hi-Hat -> 99
+    md.apply_percussion_overrides()
+
+    items = {key: key_sound for key, _, key_sound in md.get_percussion_items_for_part("P1")}
+    assert items[("P1", 43)] == 99, "manual override wins"
+    assert items[("P1", 39)] == 38, "Snare still gets the auto-detected -1 shift"
+
+
+def test_apply_percussion_overrides_auto_correct_infers_shift_from_exact_matches(
+    timeline, score_hit_it
+):
+    """Closed Hi-Hat/Tambourine exactly match GM names and agree on a -1
+    shift (declared - real) - that same shift is applied to Snare/Bass
+    Drum, which have no exact GM name match of their own."""
+    md = timeline(score_hit_it, parts_info=_hit_it_parts_info())
+    md.percussion_auto_correct_enabled = True
+    md.apply_percussion_overrides()
+
+    p1_items = {name: key for _, name, key in md.get_percussion_items_for_part("P1")}
+    assert p1_items == {"Closed Hi-Hat": 42, "Snare": 38, "Bass Drum": 36}
+    p2_items = {name: key for _, name, key in md.get_percussion_items_for_part("P2")}
+    assert p2_items == {"Tambourine": 54}
+
+
+def test_apply_percussion_overrides_off_reverts_to_the_files_own_key(timeline, score_hit_it):
+    md = timeline(score_hit_it, parts_info=_hit_it_parts_info())
+    md.percussion_auto_correct_enabled = True
+    md.apply_percussion_overrides()
+    assert md.get_percussion_items_for_part("P1")[0][2] == 42
+
+    md.percussion_auto_correct_enabled = False
+    md.apply_percussion_overrides()
+    assert md.get_percussion_items_for_part("P1")[0][2] == 43, "back to the file's own declared key"
+
+
+def test_apply_percussion_overrides_rename_updates_voice_label_and_is_used_for_auto_correct(
+    timeline, score_hit_it
+):
+    """Renaming an item (a) changes the Region 2 voice label, and (b) is
+    what auto-correct cross-references, not the file's original text - if
+    the user renamed "Snare" to "Acoustic Snare", that IS an exact GM
+    match and can now be auto-corrected on its own, independent of the
+    part-wide shift."""
+    md = timeline(score_hit_it, parts_info=_hit_it_parts_info())
+    md.percussion_item_name_overrides[("P1", 39)] = "Acoustic Snare"
+    md.percussion_auto_correct_enabled = True
+    md.apply_percussion_overrides()
+
+    items = {name: key for _, name, key in md.get_percussion_items_for_part("P1")}
+    assert items["Acoustic Snare"] == 38
+    part = next(p for p in md.parts_info if p.part_id == "P1")
+    # Snare's voice is still keyed by its own ORIGINAL declared key (39,
+    # unaffected by the rename or the sound change) - only the label text
+    # changes.
+    assert part.voice_names[(1, 39)] == "Acoustic Snare"
+    assert part.voice_names[(1, 43)] == "Closed Hi-Hat"
 
 
 def test_playback_events_carry_each_parts_own_duration_not_the_shortest_at_the_slice(
@@ -1581,9 +1752,25 @@ def test_collapsed_part_ids_empty_for_an_ordinary_score():
     assert md.collapsed_part_ids == set()
 
 
-def test_collapsed_part_ids_is_true_for_midi():
-    """MIDI has no real staff concept anywhere in the score, so every part
-    collapses - the whole-tree True this property replaces (Ref 25/S2)."""
+def test_collapsed_part_ids_collapses_pitched_midi_parts():
+    """MIDI has no real staff concept anywhere in the score, so an ordinary
+    (pitched) part collapses."""
     md = MusicData(file_path="nonexistent.mid", parts_info=[PartStructureInfo(part_id="P1", name="Track 1")])
 
-    assert md.collapsed_part_ids is True
+    assert md.collapsed_part_ids == {"P1"}
+
+
+def test_collapsed_part_ids_does_not_collapse_a_midi_percussion_part():
+    """Region 2 follow-up: unlike every other MIDI part, a percussion
+    track's "voices" are now real, independently mute/soloable rows (one
+    per distinct drum/cymbal - see parsers/midi_reader.py), so it must stay
+    expandable."""
+    md = MusicData(
+        file_path="nonexistent.mid",
+        parts_info=[
+            PartStructureInfo(part_id="P1", name="Piano"),
+            PartStructureInfo(part_id="P2", name="Drum Kit", is_percussion=True),
+        ],
+    )
+
+    assert md.collapsed_part_ids == {"P1"}

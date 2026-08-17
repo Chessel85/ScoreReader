@@ -832,20 +832,62 @@ class MainWindow(QMainWindow):
         in place (rename_part, never a full load_score_structure rebuild,
         which would reset every on/off toggle back to enabled) and Region
         3/4/5 through the normal update_timeline_views refresh, same as any
-        other display-only change."""
+        other display-only change.
+
+        Wishlist #8 follow-up: a percussion part also contributes one
+        dialog row per distinct item it carries (MusicData.
+        get_percussion_items_for_part). Applying those goes through the new
+        MusicData.apply_percussion_overrides, which also recomputes the
+        affected voices' labels (part.voice_names) - Region 2 is told about
+        each one via region_2.rename_voice (mirrors rename_part: an
+        in-place label update, never a load_score_structure rebuild, which
+        would reset every mute/solo toggle and expand state)."""
         if not self._music_data:
             return
         previous_focus = self.focusWidget()
         rows = [
             (p.part_id, p.name, p.gmidi_program) for p in self._music_data.parts_info
         ]
-        dialog = InstrumentDialog(self, rows=rows)
+        percussion_part_ids = [p.part_id for p in self._music_data.parts_info if p.is_percussion]
+        percussion_rows = {
+            part_id: self._music_data.get_percussion_items_for_part(part_id)
+            for part_id in percussion_part_ids
+        }
+        dialog = InstrumentDialog(
+            self,
+            rows=rows,
+            percussion_part_ids=percussion_part_ids,
+            percussion_rows=percussion_rows,
+            auto_correct_enabled=self._music_data.percussion_auto_correct_enabled,
+        )
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            name_overrides, program_overrides = dialog.overrides()
+            (
+                name_overrides,
+                program_overrides,
+                item_name_overrides,
+                item_sound_overrides,
+                auto_correct_enabled,
+            ) = dialog.overrides()
+            percussion_changed = (
+                item_name_overrides
+                or item_sound_overrides
+                or auto_correct_enabled != self._music_data.percussion_auto_correct_enabled
+            )
             if name_overrides or program_overrides:
                 self._music_data.apply_part_overrides(name_overrides, program_overrides)
                 for part_id, name in name_overrides.items():
                     self.region_2.rename_part(part_id, name)
+            if percussion_changed:
+                self._music_data.percussion_item_name_overrides.update(item_name_overrides)
+                self._music_data.percussion_item_overrides.update(item_sound_overrides)
+                self._music_data.percussion_auto_correct_enabled = auto_correct_enabled
+                self._music_data.apply_percussion_overrides()
+                for part in self._music_data.parts_info:
+                    if not part.is_percussion:
+                        continue
+                    for (staff_id, voice_id), label in part.voice_names.items():
+                        self.region_2.rename_voice(part.part_id, staff_id, voice_id, label)
+            if name_overrides or program_overrides or percussion_changed:
                 self.presenter.update_timeline_views(play_all=False)
         if previous_focus is not None:
             previous_focus.setFocus()

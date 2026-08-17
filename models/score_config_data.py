@@ -16,6 +16,7 @@ from models.mixer_settings import MixerSettings
 
 VoiceKey = Tuple[str, int, int]
 StaffKey = Tuple[str, int]
+PercussionItemKey = Tuple[str, int]
 
 
 @dataclass
@@ -64,6 +65,13 @@ class ScoreConfig:
     # every part keeps showing exactly what the file itself declared.
     part_name_overrides: Dict[str, str] = field(default_factory=dict)
     part_program_overrides: Dict[str, int] = field(default_factory=dict)
+    # Wishlist #8 follow-up: per-percussion-item sound/name overrides and
+    # the "Apply MusicXML offset for percussion" checkbox - see
+    # MusicData.percussion_item_overrides/percussion_item_name_overrides/
+    # percussion_auto_correct_enabled, which this mirrors verbatim.
+    percussion_item_overrides: Dict[PercussionItemKey, int] = field(default_factory=dict)
+    percussion_item_name_overrides: Dict[PercussionItemKey, str] = field(default_factory=dict)
+    percussion_auto_correct_enabled: bool = False
     # S6: a single whole-piece key signature override. None/None means "use
     # the file's own key(s)" - not tied to score content the way the part
     # overrides above are, so apply_config() applies it unconditionally

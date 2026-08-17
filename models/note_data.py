@@ -42,3 +42,11 @@ class NoteData:
     # note's own original spelling when the override is cleared, with no
     # re-parse and no separate cached "original text" field.
     file_key_fifths: Optional[int] = None
+    # Wishlist #8 follow-up: a percussion note's ORIGINAL, file-declared
+    # sounding key (MusicXML's <midi-unpitched>, or the raw MIDI note
+    # number) - None for every non-percussion note. midi_pitch itself stays
+    # mutable (the EFFECTIVE playback key, changed by
+    # MusicData.apply_percussion_overrides), so this is what lets an
+    # override/auto-correction be losslessly reverted - the same role
+    # file_key_fifths plays for a MIDI note's spelling.
+    percussion_source_key: Optional[int] = None

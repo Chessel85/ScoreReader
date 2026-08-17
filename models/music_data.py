@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from models import vocabulary
 from models.ending_span import EndingSpan
 from models.event_slice import EventSlice
+from models.gm_percussion_map import GM_PERCUSSION_BANK, GM_PERCUSSION_PROGRAM, detect_percussion_key_shift
 from models.hairpin_span import HairpinSpan
 from models.key_signatures import key_signature_display_name
 from models.mixer_settings import MixerSettings
@@ -122,6 +123,27 @@ class MusicData:
     part_name_overrides: Dict[str, str] = field(default_factory=dict)
     part_program_overrides: Dict[str, int] = field(default_factory=dict)
 
+    # Wishlist #8 follow-up: per-percussion-item playback/name overrides,
+    # set via widgets/instrument_dialog.py, same "explicit overrides only"
+    # bookkeeping shape as the two above. Keyed by (part_id, the item's
+    # ORIGINAL file-declared key - NoteData.percussion_source_key), NOT by
+    # its current display name - a name is itself overridable
+    # (percussion_item_name_overrides), and keying by name would orphan a
+    # sound override the moment the item was renamed.
+    percussion_item_overrides: Dict[Tuple[str, int], int] = field(default_factory=dict)
+    percussion_item_name_overrides: Dict[Tuple[str, int], str] = field(default_factory=dict)
+    # "Apply MusicXML offset for percussion" (Edit > Instruments...) -
+    # best-effort auto-correction, cross-referencing each percussion item's
+    # OWN declared name against its OWN declared key via
+    # models.gm_percussion_map.gm_percussion_key_for_name. Off by default -
+    # every other override in this app starts as "nothing changed" and this
+    # is no different, even though the file that motivated it (Hit It.mxl)
+    # needed it for every one of its percussion instruments. MusicXML-only
+    # in effect: a MIDI note's name is already DERIVED from its key
+    # (gm_percussion_name), so there is nothing for it to disagree with -
+    # see apply_percussion_overrides.
+    percussion_auto_correct_enabled: bool = False
+
     # S6: a single whole-piece key signature override, set via the
     # Instruments & Key dialog. None means "use the file's own key(s)".
     key_signature_override_fifths: Optional[int] = None
@@ -180,9 +202,19 @@ class MusicData:
         have nothing real underneath them (reported: showing them as a
         3-level tree read as redundant, made-up navigation - the same
         "chords don't have layers below them" call already made for GP's
-        synthetic Chords voice and a pure UG import's Chords/Lyrics parts)."""
-        if self.is_midi or self.is_ug:
+        synthetic Chords voice and a pure UG import's Chords/Lyrics parts).
+
+        Region 2 follow-up (wishlist #8): a MIDI percussion part is no
+        longer collapsed - unlike every other MIDI part, its "voices" are
+        now real, independently mute/soloable rows (one per distinct
+        drum/cymbal, via PartStructureInfo.staves_voices - see
+        parsers/midi_reader.py), not a fake single always-voice-1 concept
+        with nothing to gain from expanding. Every other MIDI part still
+        collapses exactly as before."""
+        if self.is_ug:
             return True
+        if self.is_midi:
+            return {p.part_id for p in self.parts_info if not p.is_percussion}
         return {p.part_id for p in self.parts_info if p.part_id in (CHORDS_PART_ID, LYRICS_PART_ID)}
 
     @property
@@ -221,6 +253,7 @@ class MusicData:
             self.hairpin_spans = builder.hairpin_spans
             self.total_measures = builder.total_measures
             self.active_event_index = 0
+            self._set_percussion_voice_names()
         else:
             self._beat_markers: List[EventSlice] = []
         # The real, marker-free timeline, kept stable so
@@ -988,6 +1021,9 @@ class MusicData:
             key_signature_override_fifths=self.key_signature_override_fifths,
             key_signature_override_mode=self.key_signature_override_mode,
             part_order=[p.part_id for p in self.parts_info],
+            percussion_item_overrides=dict(self.percussion_item_overrides),
+            percussion_item_name_overrides=dict(self.percussion_item_name_overrides),
+            percussion_auto_correct_enabled=self.percussion_auto_correct_enabled,
         )
 
     def apply_config(self, config: ScoreConfig) -> None:
@@ -1026,6 +1062,21 @@ class MusicData:
 
         if config.part_order:
             self.reorder_parts(config.part_order)
+
+        known_percussion_items = {
+            (n.part_id, n.percussion_source_key)
+            for s in self._real_timeline_slices
+            for n in s.notes
+            if n.percussion_source_key is not None
+        }
+        self.percussion_item_overrides = {
+            k: v for k, v in config.percussion_item_overrides.items() if k in known_percussion_items
+        }
+        self.percussion_item_name_overrides = {
+            k: v for k, v in config.percussion_item_name_overrides.items() if k in known_percussion_items
+        }
+        self.percussion_auto_correct_enabled = config.percussion_auto_correct_enabled
+        self.apply_percussion_overrides()
 
     def get_midi_notes_for_indices(self, selected_indices: List[int]) -> List[int]:
         notes = self._visible_notes()
@@ -1295,10 +1346,18 @@ class MusicData:
     # audio/ module that owns it rather than imported - models/ must not
     # depend on audio/. Keeping parts off these is what stops an instrument
     # colliding with the click, the spoken position word or the change cue.
-    PERCUSSION_CHANNEL = 9          # audio/metronome.py METRONOME_CHANNEL
+    #
+    # Named METRONOME_CLICK_CHANNEL, not PERCUSSION_CHANNEL (its old name,
+    # before wishlist #8): a REAL percussion part (is_percussion=True) is
+    # NOT routed here - it gets an ordinary channel like any other part,
+    # program-selected to the GM percussion bank instead (see
+    # get_playback_events_for_indices). This channel is reserved only
+    # because audio/metronome.py's click sound already owns it - the old
+    # name would now wrongly suggest real percussion notes land here too.
+    METRONOME_CLICK_CHANNEL = 9    # audio/metronome.py METRONOME_CHANNEL
     POSITION_ANNOUNCER_CHANNEL = 8  # audio/position_announcer.py
     PERFORMANCE_CUE_CHANNEL = 7     # audio/performance_cue.py
-    RESERVED_CHANNELS = {POSITION_ANNOUNCER_CHANNEL, PERCUSSION_CHANNEL, PERFORMANCE_CUE_CHANNEL}
+    RESERVED_CHANNELS = {POSITION_ANNOUNCER_CHANNEL, METRONOME_CLICK_CHANNEL, PERFORMANCE_CUE_CHANNEL}
     MAX_MIDI_CHANNELS = 16
 
     def get_channel_for_part(self, part_id: str) -> int:
@@ -1325,6 +1384,18 @@ class MusicData:
             if p.part_id == part_id:
                 return p.gmidi_program
         return 25
+
+    def is_percussion_part(self, part_id: str) -> bool:
+        """Wishlist #8: whether this part's notes are unpitched percussion
+        (a MusicXML percussion clef, or a MIDI channel-10 track) rather than
+        real GM instrument notes - see PartStructureInfo.is_percussion.
+        get_playback_events_for_indices reads this to route the part's
+        channel to the GM percussion bank instead of its (meaningless, for
+        percussion) gmidi_program."""
+        for p in self.parts_info:
+            if p.part_id == part_id:
+                return p.is_percussion
+        return False
 
     def apply_part_overrides(
         self, name_overrides: Dict[str, str], program_overrides: Dict[str, int]
@@ -1356,6 +1427,121 @@ class MusicData:
                 for n in s.notes:
                     if n.part_id in name_overrides:
                         n.part_name = name_overrides[n.part_id]
+
+    def _set_percussion_voice_names(self) -> None:
+        """Wishlist #8 follow-up: a percussion voice's label is its one
+        item's display name ("Closed Hi-Hat") instead of the generic
+        "Voice N" - the same voice_names override slot Guitar Pro's
+        synthetic Chords voice already uses to show "Chords" instead of
+        "Voice 1" (parsers/gp_reader.py). Each voice holds exactly one
+        item by construction (TimelineBuilder/MidiTimelineBuilder set
+        NoteData.voice to the item's own declared key - see there - so two
+        different items can never share one voice number), which is also
+        why both readers already set this same label directly at parse
+        time; this exists as (a) a safety net and (b) the refresh path
+        after an Instruments-dialog rename, called again at the end of
+        apply_percussion_overrides so a rename is picked up.
+        """
+        # _real_timeline_slices doesn't exist yet on the __post_init__ call
+        # (it's assigned right after this point) - timeline_slices is
+        # exactly it at that moment too, since metronome markers are only
+        # ever spliced in later, via set_metronome_enabled.
+        slices = getattr(self, "_real_timeline_slices", self.timeline_slices)
+        names_by_voice: Dict[Tuple[str, int, int], str] = {}
+        for s in slices:
+            for n in s.notes:
+                if n.percussion_source_key is None:
+                    continue
+                names_by_voice[(n.part_id, n.staff, n.voice)] = n.step_name
+        for part in self.parts_info:
+            for staff, voices in part.staves_voices.items():
+                for voice in voices:
+                    name = names_by_voice.get((part.part_id, staff, voice))
+                    if name:
+                        part.voice_names[(staff, voice)] = name
+
+    def get_percussion_items_for_part(
+        self, part_id: str
+    ) -> List[Tuple[Tuple[str, int], str, int]]:
+        """(item_key, current display name, current effective sounding key)
+        for every distinct percussion item in this part, in first-seen
+        order - the row list widgets/instrument_dialog.py builds for a
+        percussion part. item_key is exactly what
+        percussion_item_overrides/percussion_item_name_overrides are keyed
+        by, so a row's edits can be written straight back without any
+        further lookup."""
+        seen: Dict[Tuple[str, int], Tuple[str, int]] = {}
+        for s in self._real_timeline_slices:
+            for n in s.notes:
+                if n.part_id != part_id or n.percussion_source_key is None:
+                    continue
+                item_key = (n.part_id, n.percussion_source_key)
+                if item_key not in seen:
+                    seen[item_key] = (n.step_name, n.midi_pitch)
+        return [(key, name, sounding_key) for key, (name, sounding_key) in seen.items()]
+
+    def apply_percussion_overrides(self) -> None:
+        """Wishlist #8 follow-up: (re)applies percussion_item_overrides/
+        percussion_item_name_overrides/percussion_auto_correct_enabled to
+        every percussion note - called from apply_config() (restoring a
+        saved score) and after the Instruments dialog's OK.
+
+        Priority per item, highest first: an explicit
+        percussion_item_overrides entry > auto-correct (only when
+        percussion_auto_correct_enabled, and only for a MusicXML-sourced
+        note - a MIDI note's name is already derived FROM its key, so it can
+        never disagree with it) > the file's own original
+        percussion_source_key. Always re-derived from percussion_source_key,
+        never from the note's own possibly-already-overridden midi_pitch -
+        so toggling the checkbox off, or clearing an item override, is
+        lossless with no re-parse (the same role file_key_fifths plays for
+        apply_key_signature_override).
+
+        Auto-correct applies ONE shift per PART (models.gm_percussion_map.
+        detect_percussion_key_shift), not a per-item name guess - see that
+        function's docstring for why a short name like "Snare" can't be
+        reliably matched to a GM name on its own. Two passes: names first
+        (so a user rename is what shift-detection and any later re-open of
+        the dialog both see), then the shift is detected per part from the
+        now-current names, then sounds are resolved.
+        """
+        for s in self._real_timeline_slices:
+            for n in s.notes:
+                if n.percussion_source_key is None:
+                    continue
+                item_key = (n.part_id, n.percussion_source_key)
+                if item_key in self.percussion_item_name_overrides:
+                    n.step_name = self.percussion_item_name_overrides[item_key]
+
+        shift_by_part: Dict[str, Optional[int]] = {}
+        if self.percussion_auto_correct_enabled and not self.is_midi:
+            items_by_part: Dict[str, List[Tuple[str, int]]] = {}
+            for s in self._real_timeline_slices:
+                for n in s.notes:
+                    if n.percussion_source_key is None:
+                        continue
+                    items_by_part.setdefault(n.part_id, []).append(
+                        (n.step_name, n.percussion_source_key)
+                    )
+            shift_by_part = {
+                part_id: detect_percussion_key_shift(items) for part_id, items in items_by_part.items()
+            }
+
+        for s in self._real_timeline_slices:
+            for n in s.notes:
+                if n.percussion_source_key is None:
+                    continue
+                item_key = (n.part_id, n.percussion_source_key)
+                if item_key in self.percussion_item_overrides:
+                    n.midi_pitch = self.percussion_item_overrides[item_key]
+                    continue
+                shift = shift_by_part.get(n.part_id)
+                if shift is not None:
+                    n.midi_pitch = n.percussion_source_key - shift
+                else:
+                    n.midi_pitch = n.percussion_source_key
+
+        self._set_percussion_voice_names()
 
     def apply_key_signature_override(
         self, fifths: Optional[int], mode: Optional[str]
@@ -1404,13 +1590,20 @@ class MusicData:
         """Group selected notes by part for simultaneous multi-part playback.
 
         Each group is (channel, zero-indexed GM program, midi pitches,
-        duration_ms), so a chord spanning two parts sounds both instruments
-        rather than collapsing onto parts_info[0]'s (Ref 8). duration_ms is
-        PER PART - the max quarter_length among that part's own notes here,
-        not the slice-wide minimum - so no part is clamped to whichever
-        other part happens to have the shortest note at this instant
-        (Ref 9 AC2, Ref 13 AC2). The max, not the min, so a chord with
-        slightly inconsistent source data rings for its longest member.
+        duration_ms[, bank]), so a chord spanning two parts sounds both
+        instruments rather than collapsing onto parts_info[0]'s (Ref 8).
+        duration_ms is PER PART - the max quarter_length among that part's
+        own notes here, not the slice-wide minimum - so no part is clamped
+        to whichever other part happens to have the shortest note at this
+        instant (Ref 9 AC2, Ref 13 AC2). The max, not the min, so a chord
+        with slightly inconsistent source data rings for its longest member.
+
+        Wishlist #8: a percussion part's group carries a trailing bank=128
+        instead of its (meaningless, for percussion) gmidi_program - the
+        same "trailing optional field" shape duration_ms already uses, so
+        every existing 4-tuple caller (SynthEngine.play_chord's
+        `event[3] if len(event) > 3 else duration_ms`) needs no change; only
+        play_chord's bank read is new.
 
         index: read an explicit slice instead of the cursor (Sequencer).
         """
@@ -1446,9 +1639,14 @@ class MusicData:
         events = []
         for part_id in part_order:
             channel = self.get_channel_for_part(part_id)
-            program = max(0, self.get_gmidi_program_for_part(part_id) - 1)
             duration_ms = self._quarters_to_ms(quarter_length_by_part[part_id], index)
-            events.append((channel, program, notes_by_part[part_id], duration_ms))
+            if self.is_percussion_part(part_id):
+                events.append(
+                    (channel, GM_PERCUSSION_PROGRAM, notes_by_part[part_id], duration_ms, GM_PERCUSSION_BANK)
+                )
+            else:
+                program = max(0, self.get_gmidi_program_for_part(part_id) - 1)
+                events.append((channel, program, notes_by_part[part_id], duration_ms))
         return events
 
     def get_current_duration_ms(self) -> int:

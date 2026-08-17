@@ -13,6 +13,7 @@ from parsers.timeline_builder import (
     CHORDS_PART_NAME,
     LYRICS_PART_ID,
     LYRICS_PART_NAME,
+    _percussion_instrument_map,
     has_harmony_elements,
     has_lyric_elements,
 )
@@ -224,6 +225,12 @@ class MusicXMLReader:
                 p_name = p_name_elem.text.strip() if p_name_elem is not None and p_name_elem.text else "Classical Guitar"
                 part_names[p_id] = p_name
 
+            # Region 2 follow-up: shared with TimelineBuilder's own
+            # per-note resolution (same map, same source-part-list read) so
+            # the two can't disagree on a percussion item's name/key - see
+            # _percussion_instrument_map's own docstring.
+            percussion_instruments = _percussion_instrument_map(root)
+
             for part_elem in root.findall("part"):
                 p_id = part_elem.attrib.get("id", "")
                 p_info = PartStructureInfo(part_id=p_id, name=part_names.get(p_id, "Classical Guitar"))
@@ -236,6 +243,7 @@ class MusicXMLReader:
 
                 staves_clefs: Dict[int, str] = {}
                 staves_voices: Dict[int, List[int]] = {}
+                is_percussion = False
 
                 for c in part_elem.findall(".//attributes/clef"):
                     staff_num = int(c.attrib.get("number", "1"))
@@ -248,15 +256,56 @@ class MusicXMLReader:
                         staves_clefs[staff_num] = "Treble stave"
                     elif sign == "F":
                         staves_clefs[staff_num] = "Bass stave"
+                    elif sign == "percussion":
+                        staves_clefs[staff_num] = "Percussion stave"
+                        is_percussion = True
                     else:
                         staves_clefs[staff_num] = f"{sign} stave"
 
                 if 1 not in staves_clefs:
                     staves_clefs[1] = "Treble stave"
 
+                # Wishlist #8: gmidi_program is meaningless for a percussion
+                # part (see PartStructureInfo.is_percussion) - MusicData
+                # routes its playback to the GM percussion bank instead of
+                # ever reading gmidi_program.
+                p_info.is_percussion = is_percussion
+
                 for note in part_elem.findall(".//note"):
                     staff_id = int(note.find("staff").text.strip()) if note.find("staff") is not None else 1
-                    voice_id = int(note.find("voice").text.strip()) if note.find("voice") is not None else 1
+
+                    # Region 2 follow-up (user: "the pitch defines the
+                    # instrument - that is the defining feature"): a
+                    # percussion note's Region 2 "voice" is its own item's
+                    # declared key, not the real notated <voice> several
+                    # different percussion items may share (Hit It.mxl's
+                    # hi-hat and snare are both real voice 1) - this is what
+                    # splits them into their own independently
+                    # mute/soloable rows, reusing the existing part/staff/
+                    # voice tree untouched (TimelineBuilder makes the exact
+                    # same substitution for NoteData.voice - see there).
+                    unpitched_el = note.find("unpitched")
+                    if unpitched_el is not None:
+                        instr_el = note.find("instrument")
+                        instr_id = instr_el.attrib.get("id") if instr_el is not None else None
+                        item_name, item_key = percussion_instruments.get(instr_id, (None, None))
+                        if item_key is None:
+                            continue
+                        voice_id = item_key
+                        p_info.voice_names[(staff_id, voice_id)] = item_name
+                    elif is_percussion:
+                        # A rest (or any other non-<unpitched> note) inside
+                        # a percussion part has no item identity of its own
+                        # to become a voice - unlike a pitched part, where a
+                        # rest's real <voice> still matters (a whole passage
+                        # of one voice can legitimately be nothing but
+                        # rests), skip it rather than fabricating a bogus
+                        # extra voice row from its raw notated <voice>
+                        # (reported: Hit It.mxl's kick voice ends in a
+                        # <rest>, which produced a stray "Voice 2" row).
+                        continue
+                    else:
+                        voice_id = int(note.find("voice").text.strip()) if note.find("voice") is not None else 1
 
                     if staff_id not in staves_voices:
                         staves_voices[staff_id] = []

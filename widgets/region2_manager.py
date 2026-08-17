@@ -139,6 +139,16 @@ class Region2HierarchyModel:
                 part.display_name = new_name
                 return
 
+    def rename_voice(self, part_id: str, staff_id: int, voice_id: int, new_label: str) -> None:
+        """Wishlist #8 follow-up: reflects a percussion item rename onto a
+        voice row's label in place - the same "not a build_from_score
+        rebuild" reasoning as rename_part above (a rebuild resets every
+        mute/solo toggle and expand state)."""
+        node_id = f"voice_{part_id}_{staff_id}_{voice_id}"
+        node = self._node_lookup.get(node_id)
+        if node is not None:
+            node.display_name = new_label
+
     def reorder_roots(self, part_id_order: List[str]) -> None:
         """Options > Reorder Parts... - reorders self.roots (the part-level
         nodes) to match part_id_order, leaving every node's full subtree

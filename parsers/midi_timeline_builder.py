@@ -10,11 +10,12 @@ import bisect
 from typing import Dict, List, Optional, Tuple
 
 from models.event_slice import EventSlice
+from models.gm_percussion_map import gm_percussion_name
 from models.note_data import NoteData
 from models.duration_units import is_simple_duration_match, quarter_length_to_display_name
 from models.parts_structure import PartStructureInfo
 from models.tempo_change import TempoChange
-from parsers.midi_source import MidiSource, read_midi_source
+from parsers.midi_source import PERCUSSION_CHANNEL, MidiSource, read_midi_source
 from parsers.timeline_builder import TimelineBuilder
 
 # Enharmonic spelling is a simplification, not full scale-degree spelling:
@@ -141,6 +142,12 @@ class MidiTimelineBuilder:
         for track in source.tracks:
             part_name = part_names.get(track.part_id, track.name or track.part_id)
             voice_by_channel = {ch: i + 1 for i, ch in enumerate(track.channels_used)}
+            # Wishlist #8: derived straight from the track's own channel
+            # usage, not parts_info - MidiReader's is_percussion flag agrees
+            # (same check), but the timeline must build correctly even via
+            # the no-reader MusicData(file_path=...) path timeline tests use,
+            # which has no parts_info at all (see _part_names above).
+            is_percussion = track.channels_used == [PERCUSSION_CHANNEL]
 
             for ev in track.note_events:
                 raw_m = locate_raw(ev.start_tick)
@@ -163,7 +170,18 @@ class MidiTimelineBuilder:
                     continue
                 ts_duration = round(quarter_len / beat_unit_quarter_len, 2)
                 fifths = fifths_at(ev.start_tick)
-                step_name, octave = _spell_pitch(ev.pitch, fifths)
+                if is_percussion:
+                    # Wishlist #8: a percussion note's key number IS the
+                    # sound to play (GM percussion key map), not a pitch to
+                    # spell against a key signature - file_key_fifths stays
+                    # None so apply_key_signature_override's re-spell loop
+                    # (which skips any note with file_key_fifths is None)
+                    # leaves these notes alone, the same way it already
+                    # leaves MusicXML notes alone.
+                    step_name, octave, note_file_key_fifths = gm_percussion_name(ev.pitch), None, None
+                else:
+                    step_name, octave = _spell_pitch(ev.pitch, fifths)
+                    note_file_key_fifths = fifths
                 # Tolerance of 1%: loose enough to still call a
                 # programmatically-quantized file's durations by name
                 # (test1.MID/test2.mid), tight enough to reject a note a
@@ -186,9 +204,16 @@ class MidiTimelineBuilder:
                     part_id=track.part_id,
                     part_name=part_name,
                     staff=1,
-                    voice=voice_by_channel.get(ev.channel, 1),
+                    # Region 2 follow-up: a percussion note's voice is its
+                    # own note number, not the channel-derived voice every
+                    # other track uses - MIDI's percussion channel is
+                    # always singular, so voice_by_channel would otherwise
+                    # collapse every distinct drum/cymbal onto voice 1. Same
+                    # substitution TimelineBuilder makes for MusicXML.
+                    voice=ev.pitch if is_percussion else voice_by_channel.get(ev.channel, 1),
                     duration_name_us=duration_name_us,
-                    file_key_fifths=fifths,
+                    file_key_fifths=note_file_key_fifths,
+                    percussion_source_key=ev.pitch if is_percussion else None,
                 )
 
                 key = (m_num, round(offset_q, 4))

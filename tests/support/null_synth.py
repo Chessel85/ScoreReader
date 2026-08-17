@@ -22,8 +22,8 @@ class NullSynth:
         self.volume_changes: List[tuple] = []
         self.pan_changes: List[tuple] = []
 
-    def set_program(self, channel: int, program: int) -> None:
-        self.program_changes.append((channel, program))
+    def set_program(self, channel: int, program: int, bank: int = 0) -> None:
+        self.program_changes.append((channel, program, bank))
 
     def set_channel_volume(self, channel: int, value: int) -> None:
         self.volume_changes.append((channel, value))
@@ -69,11 +69,12 @@ class NullSynth:
         for event in events:
             channel, program, midi_notes = event[0], event[1], event[2]
             group_duration_ms = event[3] if len(event) > 3 else duration_ms
+            bank = event[4] if len(event) > 4 else 0
             if not midi_notes:
                 continue
 
             if program is not None:
-                self.set_program(channel, program)
+                self.set_program(channel, program, bank)
 
             self.played.append(
                 {
@@ -81,6 +82,7 @@ class NullSynth:
                     "duration_ms": group_duration_ms,
                     "channel": channel,
                     "program": program,
+                    "bank": bank,
                 }
             )
 

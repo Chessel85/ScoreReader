@@ -54,11 +54,19 @@ def test_credits_key_signature(midi_pachelbel):
     assert data.credits["Key Signature"] == "D major / B minor"
 
 
-def test_percussion_track_excluded_from_parts_info(midi_blue_peter):
+def test_percussion_track_included_as_a_percussion_part(midi_blue_peter):
+    """Wishlist #8: BluePeter.mid's drum track (reported: came out as
+    silence) now appears as its own part, flagged is_percussion=True so
+    playback routes it to the GM percussion bank instead of reading its
+    (meaningless) gmidi_program."""
     data = MidiReader(midi_blue_peter).load()
-    assert len(data.parts_info) == 8
+    assert len(data.parts_info) == 9
     # GM program 72 (0-indexed 71) = Clarinet, the first real track.
     assert data.parts_info[0].gmidi_program == 72
+    assert data.parts_info[0].is_percussion is False
+    percussion_parts = [p for p in data.parts_info if p.is_percussion]
+    assert len(percussion_parts) == 1
+    assert percussion_parts[0].name == "Drum Kit"
 
 
 def test_staves_voices_shape_matches_channel_count(midi_bach_bourree):

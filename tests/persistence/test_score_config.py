@@ -93,6 +93,43 @@ def test_load_for_a_file_saved_before_solo_existed():
     assert loaded.voices_soloed == set()
 
 
+def test_percussion_fields_round_trip():
+    """Wishlist #8 follow-up: per-item overrides and the auto-correct
+    checkbox, keyed by (part_id, source_key) - same round-trip guarantee as
+    every other override dict above."""
+    config = ScoreConfig(
+        percussion_item_overrides={("P1", 43): 42, ("P1", 39): 38},
+        percussion_item_name_overrides={("P1", 43): "Hi-Hat (renamed)"},
+        percussion_auto_correct_enabled=True,
+    )
+    score_config.save("Hit It.mxl", config)
+
+    loaded = score_config.load_for("Hit It.mxl")
+    assert loaded.percussion_item_overrides == {("P1", 43): 42, ("P1", 39): 38}
+    assert loaded.percussion_item_name_overrides == {("P1", 43): "Hi-Hat (renamed)"}
+    assert loaded.percussion_auto_correct_enabled is True
+
+
+def test_load_for_a_file_saved_before_percussion_overrides_existed():
+    """Same backward-compatibility guarantee as the other override dicts:
+    missing percussion_item_overrides/percussion_item_name_overrides/
+    percussion_auto_correct_enabled keys default to empty/False rather than
+    erroring."""
+    path = score_config.path_for("Chessel Duet.mxl")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        '{"schema_version": 2, "voices_muted": [], "metronome_enabled": false, '
+        '"voice_display_attributes": {}, "attribute_order": []}',
+        encoding="utf-8",
+    )
+
+    loaded = score_config.load_for("Chessel Duet.mxl")
+
+    assert loaded.percussion_item_overrides == {}
+    assert loaded.percussion_item_name_overrides == {}
+    assert loaded.percussion_auto_correct_enabled is False
+
+
 def test_load_for_a_file_saved_before_position_announcer_existed():
     """Same backward-compatibility guarantee (Ref 28 added this key after
     metronome_enabled already existed): missing "position_announcer_enabled"

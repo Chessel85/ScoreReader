@@ -3,10 +3,11 @@ from pathlib import Path
 from typing import Dict, List
 
 from models.gm_instruments import gm_instrument_name
+from models.gm_percussion_map import gm_percussion_name
 from models.key_signatures import FIFTHS_MAP
 from models.music_data import MusicData
 from models.parts_structure import PartStructureInfo
-from parsers.midi_source import MidiSource, read_midi_source
+from parsers.midi_source import PERCUSSION_CHANNEL, MidiSource, read_midi_source
 
 
 class MidiReader:
@@ -86,14 +87,26 @@ class MidiReader:
         for track in source.tracks:
             track_number = int(track.part_id[1:]) + 1 if track.part_id[1:].isdigit() else 1
 
+            # Wishlist #8: a track using ONLY the GM percussion channel is a
+            # drum track - its Program Change events (if any) select a kit
+            # variant, not a GM instrument, so they're not read as a naming
+            # fallback the way a pitched track's are, and gmidi_program is
+            # left unused (MusicData routes its channel to the GM percussion
+            # bank instead - see PartStructureInfo.is_percussion). No real
+            # multi-channel MIDI file mixing percussion and pitched channels
+            # on one track has been seen; such a track would fall through to
+            # the pitched path below instead.
+            is_percussion = track.channels_used == [PERCUSSION_CHANNEL]
+
             program = 0
             has_program = False
-            for ch in track.channels_used:
-                changes = track.program_changes.get(ch)
-                if changes:
-                    program = changes[0][1]
-                    has_program = True
-                    break
+            if not is_percussion:
+                for ch in track.channels_used:
+                    changes = track.program_changes.get(ch)
+                    if changes:
+                        program = changes[0][1]
+                        has_program = True
+                        break
 
             # Reported: BluePeter.mid (an internet-sourced file) has no
             # track names at all, so every part showed as a bare "Track N" -
@@ -104,12 +117,28 @@ class MidiReader:
             # way to fix a wrong or missing name.
             if track.name:
                 name = track.name
+            elif is_percussion:
+                name = "Drum Kit"
             elif has_program:
                 name = gm_instrument_name(program + 1)
             else:
                 name = f"Track {track_number}"
 
-            voice_count = len(track.channels_used) or 1
+            if is_percussion:
+                # Region 2 follow-up: a distinct voice per note number
+                # actually used, not one voice per channel (there is only
+                # ever one percussion channel) - each drum/cymbal becomes
+                # its own independently mute/soloable Region 2 row, the
+                # same substitution MidiTimelineBuilder makes for
+                # NoteData.voice.
+                pitches = sorted({ev.pitch for ev in track.note_events})
+                staves_voices = {1: pitches}
+                voice_names = {(1, p): gm_percussion_name(p) for p in pitches}
+            else:
+                voice_count = len(track.channels_used) or 1
+                staves_voices = {1: list(range(1, voice_count + 1))}
+                voice_names = {}
+
             parts.append(
                 PartStructureInfo(
                     part_id=track.part_id,
@@ -119,7 +148,9 @@ class MidiReader:
                     # <midi-program> read already uses).
                     gmidi_program=program + 1,
                     staves_clefs={},
-                    staves_voices={1: list(range(1, voice_count + 1))},
+                    staves_voices=staves_voices,
+                    voice_names=voice_names,
+                    is_percussion=is_percussion,
                 )
             )
         return parts

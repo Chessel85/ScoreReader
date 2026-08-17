@@ -148,13 +148,28 @@ def test_real_freehand_recording_reverts_to_numeric_durations(midi_test3):
     assert all(n.duration_name_us is None for n in notes)
 
 
-def test_percussion_notes_never_appear(midi_blue_peter):
+def test_percussion_notes_appear_and_are_named_from_the_gm_percussion_map(midi_blue_peter):
+    """Wishlist #8: BluePeter.mid's drum track (reported: came out as
+    silence) now has real notes in the timeline, named via
+    models.gm_percussion_map instead of a pitch-class spelling, and never
+    re-spelled by a key-signature override (file_key_fifths stays None)."""
     data = MusicData(file_path=midi_blue_peter)
     for s in data.timeline_slices:
         assert all(n.part_id != "" for n in s.notes)
-    # 8 real parts, matching MidiReader's parts_info count.
+    # 9 parts: 8 pitched + 1 percussion, matching MidiReader's parts_info
+    # count (test_midi_reader.py's test_percussion_track_included_...).
     part_ids = {n.part_id for s in data.timeline_slices for n in s.notes}
-    assert len(part_ids) == 8
+    assert len(part_ids) == 9
+
+    percussion_notes = [
+        n
+        for s in data.timeline_slices
+        for n in s.notes
+        if n.midi_pitch is not None and 27 <= n.midi_pitch <= 87 and n.octave is None
+    ]
+    assert percussion_notes
+    assert any(n.step_name == "Low Floor Tom" for n in percussion_notes)
+    assert all(n.file_key_fifths is None for n in percussion_notes)
 
 
 def test_repeat_ending_hairpin_spans_are_always_empty_for_midi(midi_pachelbel):

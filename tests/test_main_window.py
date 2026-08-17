@@ -242,6 +242,7 @@ def test_left_at_the_first_event_plays_the_boundary_cue_and_does_not_move(
         "duration_ms": window.BOUNDARY_DURATION_MS,
         "channel": window.BOUNDARY_CHANNEL,
         "program": window.BOUNDARY_GM_PROGRAM,
+        "bank": 0,
     }
 
 
@@ -1194,9 +1195,23 @@ def _fake_instrument_dialog(monkeypatch, window, *, accept: bool, on_exec=None):
     """Same convention as _fake_mixer_dialog: build a real InstrumentDialog
     from the window's own current parts, fake exec() to run on_exec(dialog)
     and return Accepted/Rejected, and patch main_window.InstrumentDialog to
-    hand it back regardless of constructor args."""
+    hand it back regardless of constructor args. Mirrors
+    MainWindow._show_instrument_dialog's own row-building exactly (wishlist
+    #8 follow-up: percussion_part_ids/percussion_rows too), so a percussion
+    score's fake dialog behaves like the real one would."""
     rows = [(p.part_id, p.name, p.gmidi_program) for p in window._music_data.parts_info]
-    dialog = InstrumentDialog(window, rows=rows)
+    percussion_part_ids = [p.part_id for p in window._music_data.parts_info if p.is_percussion]
+    percussion_rows = {
+        part_id: window._music_data.get_percussion_items_for_part(part_id)
+        for part_id in percussion_part_ids
+    }
+    dialog = InstrumentDialog(
+        window,
+        rows=rows,
+        percussion_part_ids=percussion_part_ids,
+        percussion_rows=percussion_rows,
+        auto_correct_enabled=window._music_data.percussion_auto_correct_enabled,
+    )
 
     def fake_exec():
         if on_exec is not None:
@@ -1204,7 +1219,7 @@ def _fake_instrument_dialog(monkeypatch, window, *, accept: bool, on_exec=None):
         return QDialog.DialogCode.Accepted if accept else QDialog.DialogCode.Rejected
 
     monkeypatch.setattr(dialog, "exec", fake_exec)
-    monkeypatch.setattr("main_window.InstrumentDialog", lambda parent, rows: dialog)
+    monkeypatch.setattr("main_window.InstrumentDialog", lambda parent, rows, **kwargs: dialog)
     return dialog
 
 
@@ -1284,6 +1299,76 @@ def test_instrument_dialog_rename_does_not_reset_region_2_toggle_state(
 
     assert window.region_2.model_manager.roots[0].muted is True
     assert window.region_2.model_manager.roots[0].display_name == "Renamed"
+
+
+def test_instrument_dialog_percussion_auto_correct_updates_sound_and_voice_label(
+    window, qtbot, score_hit_it, monkeypatch
+):
+    """Wishlist #8 follow-up, end to end: ticking "Apply MusicXML offset for
+    percussion" on Hit It.mxl must (a) change what actually plays for a
+    percussion note, and (b) update Region 2's voice label - without
+    resetting any existing mute state (same load_score_structure-avoidance
+    guarantee as a real part rename)."""
+    load_and_wait(window, qtbot, score_hit_it)
+    part_id = next(p.part_id for p in window._music_data.parts_info if p.name == "Drum Kit")
+
+    _show(window, qtbot)
+    _focus(window.region_2)
+    window.region_2.select_node(window.region_2.model_manager.roots[0].node_id)
+    qtbot.keyClick(window.region_2, Qt.Key.Key_F8)  # mute Drum Kit
+    assert window.region_2.model_manager.roots[0].muted is True
+
+    def edit(dialog):
+        dialog.auto_correct_checkbox.setChecked(True)
+
+    _fake_instrument_dialog(monkeypatch, window, accept=True, on_exec=edit)
+    window._show_instrument_dialog()
+
+    assert window._music_data.percussion_auto_correct_enabled is True
+    items = window._music_data.get_percussion_items_for_part(part_id)
+    hihat_key = next(key for key, name, _ in items if name == "Closed Hi-Hat")
+    _, _, sounding_key = next(i for i in items if i[0] == hihat_key)
+    assert sounding_key == 42, "Closed Hi-Hat now sounds like GM's real 42, not the file's declared 43"
+
+    voice_node = next(
+        n for n in window.region_2.model_manager._node_lookup.values()
+        if n.part_id == part_id and n.node_type == "voice" and n.voice_id == hihat_key[1]
+    )
+    assert voice_node.display_name == "Closed Hi-Hat"
+
+    assert window.region_2.model_manager.roots[0].muted is True, "the earlier mute must survive"
+
+
+def test_instrument_dialog_percussion_item_rename_and_reload_persists(
+    window, qtbot, score_hit_it, monkeypatch
+):
+    """Ref 27-style persistence: a percussion item rename/sound override
+    must survive a reload, same guarantee every other override already
+    has."""
+    load_and_wait(window, qtbot, score_hit_it)
+    part_id = next(p.part_id for p in window._music_data.parts_info if p.name == "Drum Kit")
+    item_key = next(
+        key for key, name, _ in window._music_data.get_percussion_items_for_part(part_id)
+        if name == "Closed Hi-Hat"
+    )
+
+    def edit(dialog):
+        dialog.row_list.setCurrentRow(
+            next(
+                i for i in range(dialog.row_list.count())
+                if dialog.row_list.item(i).text() == "Closed Hi-Hat"
+            )
+        )
+        dialog.name_edit.setText("Renamed Hat")
+
+    _fake_instrument_dialog(monkeypatch, window, accept=True, on_exec=edit)
+    window._show_instrument_dialog()
+
+    assert window._music_data.percussion_item_name_overrides[item_key] == "Renamed Hat"
+
+    load_and_wait(window, qtbot, score_hit_it)
+    items = window._music_data.get_percussion_items_for_part(part_id)
+    assert any(name == "Renamed Hat" for _, name, _ in items)
 
 
 def _fake_key_signature_dialog(monkeypatch, window, *, accept: bool, on_exec=None):

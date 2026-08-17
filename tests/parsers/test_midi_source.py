@@ -37,17 +37,21 @@ def test_part_ids_assigned_in_order_over_usable_tracks_only(midi_test2):
     assert [t.part_id for t in source.tracks] == ["P0", "P1", "P2"]
 
 
-def test_percussion_channel_excluded_entirely(midi_blue_peter):
-    """BluePeter.mid has a real channel-10 (0-indexed 9) percussion track -
-    it must not appear as a usable track, and no surviving track's note
-    events may use that channel."""
+def test_percussion_channel_included_as_its_own_track(midi_blue_peter):
+    """Wishlist #8: BluePeter.mid's real channel-10 (0-indexed 9) percussion
+    track used to be dropped entirely (reported: its drum track came out as
+    silence) - it must now survive as a usable track like any other, with
+    every one of its note events still on the percussion channel."""
     source = read_midi_source(midi_blue_peter)
-    for track in source.tracks:
-        assert PERCUSSION_CHANNEL not in track.channels_used
-        assert all(ev.channel != PERCUSSION_CHANNEL for ev in track.note_events)
-    # 10 raw tracks: 1 empty conductor track + 1 pure-percussion track
-    # excluded, 8 real instrument tracks remain.
-    assert len(source.tracks) == 8
+    percussion_tracks = [
+        t for t in source.tracks if t.channels_used == [PERCUSSION_CHANNEL]
+    ]
+    assert len(percussion_tracks) == 1
+    assert percussion_tracks[0].note_events
+    assert all(ev.channel == PERCUSSION_CHANNEL for ev in percussion_tracks[0].note_events)
+    # 10 raw tracks: 1 empty conductor track excluded, 9 usable tracks
+    # remain (8 pitched + 1 percussion).
+    assert len(source.tracks) == 9
 
 
 def test_note_on_note_off_pairs_produce_positive_duration_events(midi_bach_bourree):

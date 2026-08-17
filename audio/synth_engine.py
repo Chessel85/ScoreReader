@@ -159,7 +159,7 @@ class SynthEngine:
         self._fs.cc(METRONOME_CHANNEL, 10, PAN_FULL_RIGHT)
         self._fs.cc(PERFORMANCE_CUE_CHANNEL, 10, PAN_CENTER)
 
-    def set_program(self, channel: int, program: int):
+    def set_program(self, channel: int, program: int, bank: int = 0):
         """Pin the channel to the main GM SoundFont explicitly via
         program_select, not the plain program_change MIDI message. The
         click/announcer/cue SoundFont (_load_click_soundfont) is loaded
@@ -170,10 +170,15 @@ class SynthEngine:
         silently resolved to the click font's spoken-word samples instead
         of the real GM piano preset (reported bug, live-tested: piano parts
         producing no sound at all, since those samples only cover MIDI
-        pitches 60-69)."""
+        pitches 60-69).
+
+        bank: 128 for a percussion part (wishlist #8, models.gm_percussion_map
+        .GM_PERCUSSION_BANK) - verified against soundfonts/Airfont_380_final
+        .sf2's own preset headers, which really do carry a bank 128/program 0
+        "Hyper Kit". Every other caller leaves this at the default 0."""
         if self._fs is None or self._sfid is None:
             return
-        self._fs.program_select(channel & 0x0F, self._sfid, 0, max(0, min(127, program)))
+        self._fs.program_select(channel & 0x0F, self._sfid, max(0, bank), max(0, min(127, program)))
 
     # MIDI continuous-controller numbers for the two mixer parameters.
     VOLUME_CC = 7
@@ -344,12 +349,13 @@ class SynthEngine:
         for event in events:
             channel, program, midi_notes = event[0], event[1], event[2]
             group_duration_ms = event[3] if len(event) > 3 else duration_ms
+            bank = event[4] if len(event) > 4 else 0
             if not midi_notes:
                 continue
 
             ch = channel & 0x0F
             if program is not None:
-                self.set_program(ch, program)
+                self.set_program(ch, program, bank)
 
             group_notes: List[Tuple[int, int]] = []
             for note in midi_notes:

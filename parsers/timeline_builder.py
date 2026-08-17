@@ -50,6 +50,36 @@ def has_lyric_elements(root: Optional[ET.Element]) -> bool:
     return root is not None and root.find(".//note/lyric") is not None
 
 
+def _percussion_instrument_map(root: Optional[ET.Element]) -> Dict[str, Tuple[str, Optional[int]]]:
+    """Wishlist #8: <score-instrument id> -> (spoken name, GM percussion
+    note number), read once from <part-list> for every score-part. An
+    <unpitched> note's own <instrument id> ref resolves through this map
+    rather than its <display-step>/<display-octave> (staff position only,
+    not a real pitch/sound - see Hit It.mxl). The note number comes from
+    the SAME id's <midi-instrument><midi-unpitched> sibling, never guessed
+    from the id string itself (nothing in the MusicXML spec ties them
+    together, even though a real MuseScore export usually does).
+    """
+    instrument_map: Dict[str, Tuple[str, Optional[int]]] = {}
+    if root is None:
+        return instrument_map
+    for score_part in root.findall(".//part-list/score-part"):
+        midi_keys: Dict[str, int] = {}
+        for midi_instr in score_part.findall("midi-instrument"):
+            instr_id = midi_instr.attrib.get("id")
+            unpitched_elem = midi_instr.find("midi-unpitched")
+            if instr_id and unpitched_elem is not None and unpitched_elem.text:
+                midi_keys[instr_id] = int(unpitched_elem.text.strip())
+        for score_instr in score_part.findall("score-instrument"):
+            instr_id = score_instr.attrib.get("id")
+            if not instr_id:
+                continue
+            name_elem = score_instr.find("instrument-name")
+            name = name_elem.text.strip() if name_elem is not None and name_elem.text else instr_id
+            instrument_map[instr_id] = (name, midi_keys.get(instr_id))
+    return instrument_map
+
+
 def _pitch_name(step: str, alter_elem: Optional[ET.Element]) -> str:
     """MusicXML <root-step>/<root-alter> (or <bass-step>/<bass-alter>) as a
     music21 pitch name string ("F#", "B--") - music21's harmony.ChordSymbol
@@ -300,6 +330,7 @@ class TimelineBuilder:
 
         default_part_name = self.parts_info[0].name if self.parts_info else "Classical Guitar"
         part_names = self._part_names(root, default_part_name)
+        percussion_instruments = _percussion_instrument_map(root)
 
         first_measure_number, needs_reindex, pickup_filled_quarters = self._detect_pickup(root)
         scan = self._scan_first_part(root, needs_reindex, pickup_filled_quarters)
@@ -470,26 +501,65 @@ class TimelineBuilder:
                         pluck = None
                         strum = None
                         lyric_text = None
+                        percussion_source_key = None
                     else:
                         pitch_el = elem.find("pitch")
-                        if pitch_el is None:
+                        unpitched_el = elem.find("unpitched") if pitch_el is None else None
+                        if pitch_el is None and unpitched_el is None:
                             continue
-
-                        step = pitch_el.find("step").text.strip() if pitch_el.find("step") is not None else "C"
-                        octave = int(pitch_el.find("octave").text.strip()) if pitch_el.find("octave") is not None else 4
-                        alter_el = pitch_el.find("alter")
-                        alter = int(alter_el.text.strip()) if (alter_el is not None and alter_el.text) else 0
-
-                        acc_words = {1: " sharp", -1: " flat", 2: " double sharp", -2: " double flat", 0: ""}
-                        step_name = f"{step}{acc_words.get(alter, '')}"
-
-                        step_offsets = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
-                        midi_pitch = (octave + 1) * 12 + step_offsets.get(step, 0) + alter
 
                         fret = None
                         string_num = None
                         fingering = None
                         pluck = None
+                        percussion_source_key = None
+
+                        if unpitched_el is not None:
+                            # Wishlist #8: a percussion note's real
+                            # sound/name comes from its <instrument id> ref
+                            # into percussion_instruments (the score-part's
+                            # own <score-instrument>/<midi-instrument>
+                            # children) - never from <display-step>/
+                            # <display-octave>, which is only where the
+                            # notehead is drawn on the percussion staff, not
+                            # a real pitch (confirmed against Hit It.mxl).
+                            instr_el = elem.find("instrument")
+                            instr_id = instr_el.attrib.get("id") if instr_el is not None else None
+                            instr_name, instr_key = percussion_instruments.get(instr_id, (None, None))
+                            step_name = instr_name if instr_name is not None else "Percussion"
+                            octave = None
+                            midi_pitch = instr_key
+                            percussion_source_key = instr_key
+                            # Region 2 follow-up (user: "the pitch defines
+                            # the instrument - that is the defining
+                            # feature"): each distinct percussion item gets
+                            # its OWN voice number - its own declared key,
+                            # not the real notated <voice> several
+                            # instruments may share (Hit It.mxl's hi-hat and
+                            # snare are both real MusicXML voice 1). This is
+                            # what splits them into independently
+                            # mute/soloable Region 2 rows for free, reusing
+                            # the existing part/staff/voice machinery
+                            # untouched rather than adding a new tree level
+                            # - the same "fabricate a voice_id" trick GP's
+                            # synthetic Chords voice (GP_CHORD_VOICE_ID)
+                            # already uses. Falls back to the real notated
+                            # voice only if the instrument id didn't
+                            # resolve.
+                            if instr_key is not None:
+                                voice = instr_key
+                        else:
+                            step = pitch_el.find("step").text.strip() if pitch_el.find("step") is not None else "C"
+                            octave = int(pitch_el.find("octave").text.strip()) if pitch_el.find("octave") is not None else 4
+                            alter_el = pitch_el.find("alter")
+                            alter = int(alter_el.text.strip()) if (alter_el is not None and alter_el.text) else 0
+
+                            acc_words = {1: " sharp", -1: " flat", 2: " double sharp", -2: " double flat", 0: ""}
+                            step_name = f"{step}{acc_words.get(alter, '')}"
+
+                            step_offsets = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
+                            midi_pitch = (octave + 1) * 12 + step_offsets.get(step, 0) + alter
+
                         tech_el = elem.find("notations/technical")
                         if tech_el is not None:
                             f_el = tech_el.find("fret")
@@ -612,6 +682,7 @@ class TimelineBuilder:
                         fingering=fingering,
                         pluck=pluck,
                         duration_name_us=duration_name_us,
+                        percussion_source_key=percussion_source_key,
                     )
 
                     key = (m_num, round(offset_q, 4))

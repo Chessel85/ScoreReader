@@ -3,6 +3,7 @@ from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtCore import QStringListModel, Qt, QTimer
 from PySide6.QtWidgets import (
+    QCheckBox,
     QCompleter,
     QComboBox,
     QDialog,
@@ -17,6 +18,17 @@ from PySide6.QtWidgets import (
 )
 
 from models.gm_instruments import GM_INSTRUMENT_NAMES, GM_PROGRAM_BY_NAME, gm_instrument_name
+from models.gm_percussion_map import (
+    GM_PERCUSSION_SOUND_NAMES,
+    gm_percussion_key_for_name,
+    gm_percussion_name,
+)
+
+# A percussion item's row list entry: (item_key, current display name,
+# current effective sounding key) - exactly MusicData.get_percussion_items_
+# for_part's own return shape, so main_window.py can pass it straight
+# through with no reshaping.
+PercussionItemRow = Tuple[Tuple[str, int], str, int]
 
 
 class InstrumentDialog(QDialog):
@@ -50,25 +62,67 @@ class InstrumentDialog(QDialog):
     from becoming a bogus new item; an unresolved edit is simply ignored at
     commit time (see _commit_current_row) rather than corrupting the
     part's program.
+
+    Wishlist #8 follow-up: the SAME list/name-field/combo layout also
+    carries one row per PERCUSSION ITEM (e.g. "Closed Hi-Hat") right after
+    its owning percussion part's own row - selecting one swaps the combo's
+    contents to GM's percussion sound names instead of the 128 GM
+    instruments, and edits go through overrides()' extra two dicts instead
+    of the part-level ones. A percussion part's OWN row keeps just its name
+    field - there's no single "instrument" concept for a whole kit, so its
+    combo is disabled rather than the layout changing shape. One dialog-
+    level checkbox, "Apply MusicXML offset for percussion", is the auto-
+    correct toggle (MusicData.percussion_auto_correct_enabled) - shown only
+    when the score has at least one percussion part, since it does nothing
+    otherwise.
     """
 
-    def __init__(self, parent=None, rows: Optional[List[Tuple[str, str, int]]] = None):
+    ROW_PART = "part"
+    ROW_ITEM = "item"
+
+    def __init__(
+        self,
+        parent=None,
+        rows: Optional[List[Tuple[str, str, int]]] = None,
+        percussion_part_ids: Optional[List[str]] = None,
+        percussion_rows: Optional[Dict[str, List[PercussionItemRow]]] = None,
+        auto_correct_enabled: bool = False,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Instruments")
 
-        # part_id -> (name, gmidi_program), the working copy every commit
-        # writes into and overrides() diffs against the untouched original.
-        self._values: Dict[str, Tuple[str, int]] = {
+        self._percussion_part_ids = set(percussion_part_ids or [])
+        percussion_rows = percussion_rows or {}
+
+        # part_id -> (name, gmidi_program) - unused/ignored for a
+        # percussion part (its row never shows the instrument combo).
+        self._part_values: Dict[str, Tuple[str, int]] = {
             part_id: (name, program) for part_id, name, program in (rows or [])
         }
-        self._original_values: Dict[str, Tuple[str, int]] = dict(self._values)
-        self._current_part_id: Optional[str] = None
+        self._original_part_values: Dict[str, Tuple[str, int]] = dict(self._part_values)
+
+        # (part_id, source_key) -> (name, sounding_key).
+        self._item_values: Dict[Tuple[str, int], Tuple[str, int]] = {
+            item_key: (name, key)
+            for items in percussion_rows.values()
+            for item_key, name, key in items
+        }
+        self._original_item_values: Dict[Tuple[str, int], Tuple[str, int]] = dict(self._item_values)
+
+        # ("part", part_id) or ("item", part_id, source_key) - the row
+        # list's UserRole, so _on_row_changed knows which kind it's showing.
+        self._current_row_id: Optional[tuple] = None
 
         self.row_list = QListWidget(self)
         for part_id, name, _ in (rows or []):
             item = QListWidgetItem(name)
-            item.setData(Qt.ItemDataRole.UserRole, part_id)
+            item.setData(Qt.ItemDataRole.UserRole, (self.ROW_PART, part_id))
             self.row_list.addItem(item)
+            if part_id in self._percussion_part_ids:
+                for item_key, item_name, _ in percussion_rows.get(part_id, []):
+                    row = QListWidgetItem(item_name)
+                    row.setData(Qt.ItemDataRole.UserRole, (self.ROW_ITEM, item_key))
+                    self.row_list.addItem(row)
         self.row_list.currentRowChanged.connect(self._on_row_changed)
 
         self.name_edit = QLineEdit(self)
@@ -76,16 +130,24 @@ class InstrumentDialog(QDialog):
         self.instrument_combo = QComboBox(self)
         self.instrument_combo.setEditable(True)
         self.instrument_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        self.instrument_combo.addItems(GM_INSTRUMENT_NAMES)
-        completer = QCompleter(QStringListModel(GM_INSTRUMENT_NAMES, self), self)
+        completer = QCompleter(self)
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         completer.setFilterMode(Qt.MatchFlag.MatchContains)
         completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         self.instrument_combo.setCompleter(completer)
+        # Which list the combo currently holds - "pitched" (128 GM
+        # instruments) or "percussion" (GM percussion sounds) - so
+        # _commit_current_row resolves the typed/selected text against the
+        # right name->key table without re-deriving it from the row id.
+        self._combo_mode: Optional[str] = None
 
         form = QFormLayout()
         form.addRow("&Name:", self.name_edit)
         form.addRow("&Instrument:", self.instrument_combo)
+
+        self.auto_correct_checkbox = QCheckBox("Apply MusicXML offset for percussion", self)
+        self.auto_correct_checkbox.setChecked(auto_correct_enabled)
+        self._auto_correct_available = bool(percussion_rows)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self
@@ -104,6 +166,8 @@ class InstrumentDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.addLayout(top_row)
+        if self._auto_correct_available:
+            layout.addWidget(self.auto_correct_checkbox)
         layout.addWidget(buttons)
 
         if self.row_list.count() > 0:
@@ -111,6 +175,24 @@ class InstrumentDialog(QDialog):
         else:
             self.name_edit.setEnabled(False)
             self.instrument_combo.setEnabled(False)
+
+    def _set_combo_mode(self, mode: str) -> None:
+        """mode: "pitched", "percussion", or "none" (a percussion part's own
+        row, which has no single instrument to pick). Rebuilding the item
+        list only when the mode actually changes avoids losing the
+        completer's popup state on every row switch within the same mode."""
+        if mode == self._combo_mode:
+            return
+        self._combo_mode = mode
+        self.instrument_combo.blockSignals(True)
+        self.instrument_combo.clear()
+        if mode == "pitched":
+            self.instrument_combo.addItems(GM_INSTRUMENT_NAMES)
+            self.instrument_combo.completer().setModel(QStringListModel(GM_INSTRUMENT_NAMES, self))
+        elif mode == "percussion":
+            self.instrument_combo.addItems(GM_PERCUSSION_SOUND_NAMES)
+            self.instrument_combo.completer().setModel(QStringListModel(GM_PERCUSSION_SOUND_NAMES, self))
+        self.instrument_combo.blockSignals(False)
 
     def _on_row_changed(self, row: int) -> None:
         # Commit whatever the OUTGOING row's fields currently show before
@@ -120,51 +202,99 @@ class InstrumentDialog(QDialog):
         self._commit_current_row()
 
         item = self.row_list.item(row) if row >= 0 else None
-        part_id = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
-        self._current_part_id = part_id
-        if part_id is None:
+        row_id = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        self._current_row_id = row_id
+        if row_id is None:
             return
 
-        name, program = self._values.get(part_id, ("", 25))
-        self.name_edit.setText(name)
-        # blockSignals isn't needed here - setCurrentText alone never fires
-        # anything this dialog reads at commit time (see _commit_current_row,
-        # which reads currentText()/findText() only when actually asked to,
-        # not via a valueChanged-style signal).
-        self.instrument_combo.setCurrentText(gm_instrument_name(program))
+        if row_id[0] == self.ROW_PART:
+            part_id = row_id[1]
+            name, program = self._part_values.get(part_id, ("", 25))
+            self.name_edit.setText(name)
+            if part_id in self._percussion_part_ids:
+                # A whole kit has no single "instrument" - each of its
+                # items (below, as their own rows) has its own sound.
+                self._set_combo_mode("none")
+                self.instrument_combo.setEnabled(False)
+                self.instrument_combo.setCurrentText("")
+            else:
+                self._set_combo_mode("pitched")
+                self.instrument_combo.setEnabled(True)
+                self.instrument_combo.setCurrentText(gm_instrument_name(program))
+        else:
+            item_key = row_id[1]
+            name, sounding_key = self._item_values.get(item_key, ("", 0))
+            self.name_edit.setText(name)
+            self._set_combo_mode("percussion")
+            self.instrument_combo.setEnabled(True)
+            # blockSignals isn't needed here - setCurrentText alone never
+            # fires anything this dialog reads at commit time (see
+            # _commit_current_row, which reads currentText()/findText()
+            # only when actually asked to, not via a valueChanged-style
+            # signal).
+            self.instrument_combo.setCurrentText(gm_percussion_name(sounding_key))
 
     def _commit_current_row(self) -> None:
-        if self._current_part_id is None:
+        if self._current_row_id is None:
             return
-        name = self.name_edit.text().strip()
-        if not name:
-            name, _ = self._values.get(self._current_part_id, ("", 25))
-        program = GM_PROGRAM_BY_NAME.get(self.instrument_combo.currentText())
-        if program is None:
-            # Unresolved free text (no exact/completer match yet) - keep
-            # whatever program this part already had rather than losing it.
-            _, program = self._values.get(self._current_part_id, ("", 25))
-        self._values[self._current_part_id] = (name, program)
+        if self._current_row_id[0] == self.ROW_PART:
+            part_id = self._current_row_id[1]
+            name = self.name_edit.text().strip()
+            if not name:
+                name, _ = self._part_values.get(part_id, ("", 25))
+            _, program = self._part_values.get(part_id, ("", 25))
+            if self.instrument_combo.isEnabled():
+                program = GM_PROGRAM_BY_NAME.get(self.instrument_combo.currentText(), program)
+            self._part_values[part_id] = (name, program)
+        else:
+            item_key = self._current_row_id[1]
+            name = self.name_edit.text().strip()
+            if not name:
+                name, _ = self._item_values.get(item_key, ("", 0))
+            _, sounding_key = self._item_values.get(item_key, ("", 0))
+            resolved = gm_percussion_key_for_name(self.instrument_combo.currentText())
+            if resolved is not None:
+                sounding_key = resolved
+            self._item_values[item_key] = (name, sounding_key)
 
-    def overrides(self) -> Tuple[Dict[str, str], Dict[str, int]]:
-        """(name_overrides, program_overrides) - only parts whose value
-        actually changed from what the dialog opened with, matching the
-        "explicit overrides only" shape MusicData.apply_part_overrides and
-        ScoreConfig both expect. Call after exec() returns Accepted.
+    def overrides(self) -> Tuple[Dict[str, str], Dict[str, int], Dict[Tuple[str, int], str], Dict[Tuple[str, int], int], bool]:
+        """(part_name_overrides, part_program_overrides,
+        percussion_item_name_overrides, percussion_item_overrides,
+        auto_correct_enabled) - only entries whose value actually changed
+        from what the dialog opened with, matching the "explicit overrides
+        only" shape MusicData.apply_part_overrides/apply_percussion_overrides
+        and ScoreConfig all expect. Call after exec() returns Accepted.
 
         Commits the currently-displayed row first - whichever row was on
         screen when OK was pressed was never "switched away from", so
         _on_row_changed's own commit-on-switch never ran for it."""
         self._commit_current_row()
+
         name_overrides: Dict[str, str] = {}
         program_overrides: Dict[str, int] = {}
-        for part_id, (name, program) in self._values.items():
-            original_name, original_program = self._original_values.get(part_id, (name, program))
+        for part_id, (name, program) in self._part_values.items():
+            original_name, original_program = self._original_part_values.get(part_id, (name, program))
             if name != original_name:
                 name_overrides[part_id] = name
             if program != original_program:
                 program_overrides[part_id] = program
-        return name_overrides, program_overrides
+
+        item_name_overrides: Dict[Tuple[str, int], str] = {}
+        item_sound_overrides: Dict[Tuple[str, int], int] = {}
+        for item_key, (name, sounding_key) in self._item_values.items():
+            original_name, original_key = self._original_item_values.get(item_key, (name, sounding_key))
+            if name != original_name:
+                item_name_overrides[item_key] = name
+            if sounding_key != original_key:
+                item_sound_overrides[item_key] = sounding_key
+
+        return (
+            name_overrides,
+            program_overrides,
+            item_name_overrides,
+            item_sound_overrides,
+            self.auto_correct_checkbox.isChecked(),
+        )
 
     def showEvent(self, event):
         super().showEvent(event)

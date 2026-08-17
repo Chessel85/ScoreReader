@@ -218,6 +218,19 @@ class Region2ListWidget(RegionFocusCycleMixin, QTreeWidget):
                     item.setText(0, node_status_label(part))
                 return
 
+    def rename_voice(self, part_id: str, staff_id: int, voice_id: int, new_label: str) -> None:
+        """Wishlist #8 follow-up: updates one voice row's label in place
+        after a percussion item is renamed via the Instruments dialog - see
+        Region2HierarchyModel.rename_voice / rename_part above."""
+        self.model_manager.rename_voice(part_id, staff_id, voice_id, new_label)
+        node_id = f"voice_{part_id}_{staff_id}_{voice_id}"
+        node = self.model_manager.node(node_id)
+        if node is None:
+            return
+        item = self._item_by_node_id.get(node_id)
+        if item is not None:
+            item.setText(0, node_status_label(node))
+
     def reorder_parts(self, part_id_order: list) -> None:
         """Options > Reorder Parts... - reflects a live part reorder onto
         the already-built tree in place, same "not a load_score_structure

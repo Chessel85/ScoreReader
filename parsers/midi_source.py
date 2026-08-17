@@ -56,10 +56,10 @@ class MidiSource:
     key_signature_changes: List[Tuple[int, int]] = field(default_factory=list)
     # (tick, microseconds_per_quarter_note)
     tempo_changes: List[Tuple[int, int]] = field(default_factory=list)
-    # Usable note-carrying tracks only - conductor-only (zero notes) and
-    # pure-percussion tracks already excluded, part_id assigned in file
-    # order over exactly this filtered list so MidiReader and
-    # MidiTimelineBuilder agree on numbering without cross-talk.
+    # Usable note-carrying tracks only - conductor-only (zero notes) tracks
+    # already excluded (percussion tracks are included, wishlist #8), part_id
+    # assigned in file order over exactly this filtered list so MidiReader
+    # and MidiTimelineBuilder agree on numbering without cross-talk.
     tracks: List[MidiTrackData] = field(default_factory=list)
 
 
@@ -205,8 +205,12 @@ def read_midi_source(file_path: str) -> MidiSource:
         note_events: List[MidiNoteEvent] = []
         channels_with_notes: set = set()
         for on_tick, channel, pitch, velocity in sorted(note_ons, key=lambda e: e[0]):
-            if channel == PERCUSSION_CHANNEL:
-                continue
+            # Wishlist #8: percussion (channel 10/index 9) notes are no
+            # longer dropped here - MidiTimelineBuilder/MidiReader detect a
+            # percussion-only track via channels_used == {PERCUSSION_CHANNEL}
+            # and name/route its notes accordingly instead of this reader
+            # silently discarding the whole track (BluePeter.mid, reported:
+            # its drum track came out as silence).
             key_ = (channel, pitch)
             offs = offs_by_key.get(key_, [])
             cursor = off_cursor.get(key_, 0)
@@ -223,7 +227,7 @@ def read_midi_source(file_path: str) -> MidiSource:
             channels_with_notes.add(channel)
 
         if not note_events:
-            continue  # conductor-only track, or a track that was pure percussion
+            continue  # conductor-only track
 
         channels_used = sorted(channels_with_notes)
         filtered_programs = {

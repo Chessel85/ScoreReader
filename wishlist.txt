@@ -1,6 +1,5 @@
 * when metronome is on, but moving up and down a chord, do not sound the metronome click.
 * A mute option so midi is not played.
-* Solo option for parts, staves and voices. including an unsolo all but does not include the metronomes 
 * score report should include key signature , time signature and tempo changes.
 * There are more performance indicators that need catering for.  speed up and slow down instructions over a period of time.  Fret position indicators whether just a one off or over a duration.  Related are barre instructions.  Perhaps chord indocators above the stave should fall into this category also.
 * Quick attribute look up.  Use control + number row to make screen reader announce that number attribute from the attribute list e.g. Pressing control + 2 announces octave.  Can the app push text to the screen reader?
@@ -11,54 +10,3 @@ Perhaps have add and remove buttons in the reorder dialogue, or perhaps a find n
 * Want an audio indicator of crossing a barline. Or does the metronome already do that?
 * Want to know about codas.  
 * There might be some tiny clicks in my headphones when Recall Score starts.  This might be indicative of something bad.  Can I make Reaper reaSynth go silent again when RS closes and restarts?
-
-midi test files:
-claude resume midi
-claude: Good call — a real ground-truth suite beats guessing at edge cases. Here's a suggested set, in files/midi/,     
-ordered by complexity. I'd weight it toward reusing pieces you already have ground truth for, since that lets me diff   
-the MIDI-derived timeline against the already-correct MusicXML-derived one instead of eyeballing correctness.           
-                                                                                                                        
-Tier 0 — have it (test1.MID): bare Format 0, single track, no metadata at all, clean quantization. Baseline for         
-"everything's missing, don't crash."                                                                                    
-                                                                                                                        
-Tier 1 — instrument/track basics (Reaper)                                                                               
-- One track, with an explicit Program Change set to a real GM instrument (e.g. nylon guitar 25) — confirms gmidi_program
- mapping and that we shouldn't just always default to 0.                                                                
-- Two tracks, two different instruments, each on its own MIDI channel — confirms one-track-per-PartStructureInfo, and   
-that Reaper's track names actually survive into the Track Name meta-event (or don't — good to know either way).         
-- Same two-track piece exported as Format 1 specifically (test1 was Format 0) — confirms the multi-track-synchronous    
-case music21 is expected to handle, since I've only verified Format 0 so far.                                           
-                                                                                                                        
-Tier 2 — ground truth re-export (MuseScore)                                                                             
-- Re-export bach-bourree-tab and/or Chessel Duet from MuseScore as MIDI, unchanged. Highest value fixture in the set: I 
-can parse both the existing .xml and the new .mid, diff the resulting note/rhythm timelines, and know precisely where   
-MIDI import diverges from the real notated truth — rather than guessing whether an off-by-something is a bug.           
-- Confirms in passing whether MuseScore's export includes Key Signature / Tempo meta-events (Reaper's didn't) — real    
-title/composer text too, since bach-bourree-tab has both.                                                               
-                                                                                                                        
-Tier 3 — the genuinely hard cases                                                                                       
-- Pickup bar — a short first measure with no implicit="yes" flag to lean on (that's MusicXML-only), so this tests the   
-fallback heuristic: infer a pickup from the first measure summing to less than a full bar, same as the existing MusicXML
- branch.                                                                                                                
-- Mid-piece time signature change (e.g. 4/4 → 3/4), MuseScore export — this is the trickiest one: MIDI has no measure   
-boundaries at all, so measure numbers have to be computed by walking the tempo/time-sig meta-events against a running   
-tick clock, and a signature change mid-stream changes measure length from that point on.                                
-- Mid-piece key signature change — tests that enharmonic spelling tracks the change rather than using one key for the   
-whole piece.                                                                                                            
-- Chords / polyphony within one track (e.g. a piano piece with block chords) — confirms Chord grouping behaves like     
-MusicXML's <chord> tag end to end.                                                                                      
-- Ties across a barline — informs whether a tie round-trips as one long note or two separate equal notes through MIDI   
-export, since that's ambiguous in the raw format and depends on the exporter.                                           
-                                                                                                                        
-Tier 4 — things we're deliberately punting on, for one confirming fixture each                                          
-- A track on channel 10 (percussion) alongside normal tracks — not to import it, just to confirm the importer           
-skips/ignores it cleanly rather than misreading drum note numbers as pitches or crashing.                               
-- A Type 2 file, if MuseScore/Reaper can even produce one — mostly to confirm music21 rejects or degrades gracefully,   
-since we've scoped this out.                                                                                            
-                                                                                                                        
-That's roughly 10-12 files. Whenever you've got a batch ready, drop them in files/midi/ with names that hint at what    
-they're for (matching the bach-bourree-tab/Chessel Duet style already in files/) and I'll run the same inspection pass  
-on each before we write any real parsing code.                                                                          
-Baked for 2m 1s                                                                                                         
-auto mode on (shift+tab to cycle)                                                                                       
-$

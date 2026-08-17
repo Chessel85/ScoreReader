@@ -15,10 +15,10 @@ from typing import Optional
 from PySide6.QtCore import QStandardPaths
 
 from models.mixer_settings import MixerSettings
-from models.score_config_data import ScoreConfig, StaffKey, VoiceKey
+from models.score_config_data import PercussionItemKey, ScoreConfig, StaffKey, VoiceKey
 
 __all__ = [
-    "ScoreConfig", "StaffKey", "VoiceKey",
+    "ScoreConfig", "StaffKey", "VoiceKey", "PercussionItemKey",
     "config_dir", "path_for", "load_for", "save", "delete_for",
 ]
 
@@ -41,6 +41,16 @@ def _encode_staff_key(key: StaffKey) -> str:
 def _decode_staff_key(encoded: str) -> StaffKey:
     part_id, staff = encoded.split("|")
     return (part_id, int(staff))
+
+
+def _encode_percussion_item_key(key: PercussionItemKey) -> str:
+    part_id, source_key = key
+    return f"{part_id}|{source_key}"
+
+
+def _decode_percussion_item_key(encoded: str) -> PercussionItemKey:
+    part_id, source_key = encoded.split("|")
+    return (part_id, int(source_key))
 
 
 def config_dir() -> Path:
@@ -86,6 +96,15 @@ def load_for(file_path: str) -> Optional[ScoreConfig]:
             },
             key_signature_override_fifths=data.get("key_signature_override_fifths"),
             key_signature_override_mode=data.get("key_signature_override_mode"),
+            percussion_item_overrides={
+                _decode_percussion_item_key(k): int(v)
+                for k, v in (data.get("percussion_item_overrides") or {}).items()
+            },
+            percussion_item_name_overrides={
+                _decode_percussion_item_key(k): str(v)
+                for k, v in (data.get("percussion_item_name_overrides") or {}).items()
+            },
+            percussion_auto_correct_enabled=data.get("percussion_auto_correct_enabled", False),
         )
     except FileNotFoundError:
         return None
@@ -116,6 +135,13 @@ def save(file_path: str, config: ScoreConfig) -> None:
         "part_program_overrides": dict(config.part_program_overrides),
         "key_signature_override_fifths": config.key_signature_override_fifths,
         "key_signature_override_mode": config.key_signature_override_mode,
+        "percussion_item_overrides": {
+            _encode_percussion_item_key(k): v for k, v in config.percussion_item_overrides.items()
+        },
+        "percussion_item_name_overrides": {
+            _encode_percussion_item_key(k): v for k, v in config.percussion_item_name_overrides.items()
+        },
+        "percussion_auto_correct_enabled": config.percussion_auto_correct_enabled,
     }
     try:
         os.makedirs(path.parent, exist_ok=True)
