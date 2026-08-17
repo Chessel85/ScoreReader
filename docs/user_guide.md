@@ -33,7 +33,7 @@ same sections apply to you too.
 This document is one long page. Use your screen reader's heading
 navigation (for example, the `H` key in NVDA) to jump between the
 numbered sections and subsections below, or search the page directly for
-a keystroke or menu name. §13 is a single reference table of every
+a keystroke or menu name. §14 is a single reference table of every
 keyboard shortcut in the app - worth bookmarking or returning to
 directly rather than reading top to bottom.
 
@@ -53,8 +53,8 @@ administrator permission during setup - this is expected.
 Once installed, Recall Score appears in your Start Menu and in
 Add/Remove Programs like any other Windows application, with a normal
 uninstaller. Uninstalling does **not** delete any preferences you've
-saved for individual scores (§11) - those live separately under your own
-Windows user profile and are covered in §14.3 if you ever want to clear
+saved for individual scores (§12) - those live separately under your own
+Windows user profile and are covered in §15.3 if you ever want to clear
 them by hand.
 
 ### 2.2 Opening a Score File
@@ -70,21 +70,22 @@ staves, and so on.
 
 Recall Score opens **MusicXML** files - `.xml`, `.musicxml`, and the
 compressed `.mxl` format that many notation programs (including
-MuseScore) export by default - and **Standard MIDI Files** - `.mid` and
-`.midi`.
+MuseScore) export by default - **Standard MIDI Files** - `.mid` and
+`.midi` - and **Guitar Pro** files - `.gp`. A Guitar Pro file's parts show
+up in Region 2 as tab staves rather than the usual clef labels (§3.3).
 
 MIDI files carry far less information than a real MusicXML score: no
 part/instrument names beyond whatever the file itself declares (Region 2
 shows one row per track rather than the usual part/stave/voice detail,
 since a MIDI track has no real staff or voice concept), and often no - or
-wrong - key signature. Use **Edit > Instruments...** and
-**Edit > Key Signature...** (§12.2) to correct either.
+wrong - key signature. Edit > Instruments... and Edit > Key Signature...
+(§13.2) correct either.
 
 Recall Score can also import chords and lyrics directly from an Ultimate
-Guitar tab page - see §16. If a MusicXML file already carries its own
-chord symbols and/or lyrics (for example a lead-sheet-style score exported
-from MuseScore), those are picked up automatically as extra **Chords** and
-**Lyrics** parts too - see §16.6.
+Guitar tab page - see §10. If a MusicXML file already carries its own
+chord symbols and/or lyrics (for example a lead-sheet-style score
+exported from MuseScore), those are picked up automatically as extra
+**Chords** and **Lyrics** parts too - see §10.6.
 
 ### 2.4 A Five-Minute First Walkthrough
 
@@ -99,11 +100,12 @@ A short first run-through, once you have a MusicXML file to open:
 4. **Listen to a chord's individual notes.** If you land on a chord
    (several notes at once), press `Down Arrow` to hear each note in it
    one at a time, `Up Arrow` to go back up.
-5. **Try filtering.** Press `Tab` twice to reach Region 2 (Parts,
-   Staves and Voices). Press `Down Arrow` to a part or stave, then `O` to
-   switch it off. Press `N` to jump back to the Note region and move
-   around again - notice that part is now silent and no longer listed.
-   Press `O` again on that same row in Region 2 to bring it back.
+5. **Try muting a part.** Press `Tab` twice to reach Region 2 (Parts,
+   Staves and Voices), which opens fully collapsed. Press `Right Arrow`
+   on a part to expand it, `Down Arrow` onto a stave or voice, then `F8`
+   to mute it. Pressing `N` returns to the Note region - that part is now
+   silent and no longer listed. `F8` again on the same row in Region 2
+   restores it.
 6. **Check your position at any time.** Press `F6` to move to the status
    bar and hear the current measure, beat, key and time signature; `F6`
    again returns you to whichever region you were last on.
@@ -119,8 +121,8 @@ The main window is arranged in two rows, plus a status bar below them:
 the top row holds two regions, the bottom row holds three.
 
 - **Region 1 (top-left): Score Information** - the piece's metadata.
-- **Region 2 (top-right): Parts, Staves and Voices** - what's switched
-  on or off.
+- **Region 2 (top-right): Parts, Staves and Voices** - what's muted or
+  soloed.
 - **Region 3 (bottom-left): Note Timeline** - the notes at your current
   position; this is where you navigate through the music.
 - **Region 4 (bottom-middle): Note Attributes** - full detail on
@@ -147,15 +149,29 @@ see the status bar in §3.7.
 
 ### 3.3 Region 2: Parts, Staves and Voices
 
-A flat, navigable list representing the score's structure: each Part
+A navigable tree mirroring the structure of the opened file: each Part
 (for example "Classical Guitar") can contain one or more Staves, each
-Stave one or more Voices. Every row reads its name together with its
-current state, for example `Classical Guitar - on` or `Treble stave -
-on`. Use `O` to toggle the focused row - see §6 for how filtering works.
+Stave one or more Voices. Every row starts collapsed; `Right Arrow` on a
+part or stave reveals its children, `Left Arrow` collapses it again. A
+row's name is followed by "muted", "soloed", or "muted soloed" whenever
+that state applies to the row itself - a bare name means neither. `F8`
+mutes or unmutes the focused row; `F9` solos or unsolos it - §6 covers
+how muting and soloing combine across the hierarchy.
 
-For a MIDI file, this list shows one row per track only - MIDI has no
-real stave or voice concept, so there's nothing further to navigate
-underneath a track.
+A percussion part's "voices" are its individual drum sounds (for example
+"Closed Hi-Hat", "Snare") rather than notated voices, so one drum in a
+kit can be muted or soloed without affecting the others; §7.9 covers
+renaming a drum sound or changing what it plays back as. A Guitar Pro
+file's stave is labelled "Tab stave" rather than a clef name, and a
+track carrying real chord names or strum markings gains an extra
+**Chords** voice, shown with the chord name, beat position and stroke
+direction by default - the same treatment a MusicXML score's embedded
+chord symbols get (§10.6).
+
+For a MIDI file, or an imported song's Chords/Lyrics rows (§10), the tree
+stops at the part level: MIDI has no real stave or voice concept, and a
+Chords or Lyrics row has no notated structure underneath it either, so
+there's nothing further to expand.
 
 ### 3.4 Region 3: Note Timeline
 
@@ -253,6 +269,14 @@ to the previous bar's first active event if you're already sitting on
 it. If the piece has a pickup bar, it's numbered 0 and comes before bar
 1.
 
+Bar numbers come straight from the file's own notation for a MusicXML or
+Guitar Pro score. A MIDI file has no real bar markers - measure
+boundaries are reconstructed from its tempo and time-signature timing, so
+a missing or incorrect time signature can shift them - and an Ultimate
+Guitar import fabricates exactly one bar per chord change rather than
+reading any real rhythm (§10.5). Treat bar numbers from either of those
+two sources as a close approximation, not a musically exact fact.
+
 ### 5.3 Jumping to the Start and End of the Piece (Home / End)
 
 `Home` moves to the very first active note (the pickup bar, if there is
@@ -294,39 +318,53 @@ playback while already sitting on the very last note. It's a deliberate,
 unobtrusive "you've reached the edge" cue, not an error message - your
 position never changes when you hear it.
 
-## 6. Choosing What You Hear and See
+## 6. Muting and Soloing Parts, Staves and Voices
 
 ### 6.1 The Part / Stave / Voice Hierarchy
 
-Region 2 (§3.3) mirrors the structure of the file you've opened: each
-Part can contain one or more Staves, and each Stave one or more Voices.
-A guitar-and-piano duet, for example, typically shows two Parts, with
-the piano Part split into two Staves (treble and bass) each with its own
+Region 2 (§3.3) mirrors the structure of the opened file: each Part can
+contain one or more Staves, and each Stave one or more Voices. A
+guitar-and-piano duet, for example, typically shows two Parts, with the
+piano Part split into two Staves (treble and bass), each with its own
 Voices.
 
-### 6.2 Turning a Part, Stave or Voice On or Off
+### 6.2 Expanding and Collapsing a Row
 
-With focus on a row in Region 2, press `O` to toggle it between on and
-off. Switching a Part or Stave off hides everything nested underneath it
-from both the Note region and playback - but each child keeps its own
-individual on/off state in the background, so turning the parent back on
-restores exactly what you had before, not a blanket "everything on"
+`Right Arrow` on a part or stave with an expand indicator reveals its
+children; `Left Arrow` collapses it again. Every row starts collapsed on
+each score load - collapsing a row also forgets whatever was open
+underneath it, so a re-expanded row always opens fresh.
+
+### 6.3 Muting and Soloing a Row
+
+With focus on a row in Region 2, `F8` mutes or unmutes it; `F9` solos or
+unsolos it. Muting a Part or Stave silences everything nested underneath
+it, in both the Note region and playback - but each child keeps its own
+independent mute state in the background, so unmuting the parent
+restores exactly what was set before, not a blanket "everything on"
 reset.
 
-### 6.3 How Filtering Affects Navigation and Playback
+Soloing a row overrides muting everywhere else: with anything soloed
+anywhere in the tree, only the soloed row(s) and what's nested under them
+sound, regardless of any other mute state - muting is set aside, not
+cleared. With nothing soloed, muting works as described above. `Alt+F8`
+clears every mute in the score without touching solo state; `Alt+F9`
+clears every solo without touching mute state.
 
-Filtering changes what you hear and see at each position in the
-timeline - it never changes which positions exist to move between. Your
-current place in the timeline, and Region 3's selection, stay exactly
-where they were before and after any toggle in Region 2.
+### 6.4 How Muting and Soloing Affect Navigation and Playback
+
+Muting and soloing change what sounds and what's listed at each timeline
+position - never which positions exist to move between. The current
+timeline position, and Region 3's selection, stay exactly where they
+were before and after any change in Region 2.
 
 ## 7. Listening to the Score
 
-### 7.1 Automatic Playback While You Navigate
+### 7.1 Automatic Playback During Navigation
 
 Every move within the Note region - stepping with `Left`/`Right Arrow`,
-moving within a chord with `Up`/`Down Arrow`, or switching a part on or
-off in Region 2 - immediately plays whatever is now current, using each
+moving within a chord with `Up`/`Down Arrow`, or muting or soloing a part
+in Region 2 - immediately plays whatever is now current, using each
 part's own instrument sound from the file. A chord spanning two parts
 (say, piano and guitar) sounds both instruments together, not just one.
 
@@ -396,22 +434,46 @@ is remembered separately.
 
 ### 7.8 Adjusting Volume and Pan (the Mixer)
 
-**Edit > Mixer...**, or `Ctrl+Shift+X`, opens a dialog listing every
+**Playback > Mixer...**, or `Ctrl+Shift+X`, opens a dialog listing every
 instrument in the score, plus the metronome and the position announcer.
 Select an entry, then use the **Volume** (0-100%) and **Pan** (-100% left
 to +100% right) fields to adjust it - type an exact value, or use
 `Home`/`End` to jump straight to that field's highest/lowest value and
 `Insert` to reset it to a sensible starting point (centre for Pan, 50%
-for Volume). Volume is scaled to roughly match what you'd expect to hear:
-100% is the instrument's normal loudness, 50% sounds about half as loud,
-and 0% is silent.
+for Volume). Volume is scaled to roughly match natural loudness: 100% is
+the instrument's normal level, 50% sounds about half as loud, and 0% is
+silent. Muting an instrument entirely is a separate control, in Region 2
+(§6.3), not part of this dialog.
 
-Changes take effect immediately as you make them, so you can compare
+Changes take effect immediately, so different settings can be compared
 before committing to them. **Preview Alt+W** plays a short phrase (the
-current bar and the next) using your changes so far, without moving your
-place in the score - press it again to stop early. **OK** keeps your
-changes and saves them with the score (see §11.1); **Cancel** puts
-everything back exactly as it was before you opened the dialog.
+current bar and the next) using whatever's been changed so far, without
+moving the current timeline position - press it again to stop early.
+**OK** keeps the changes and saves them with the score (see §12.1);
+**Cancel** puts everything back exactly as it was before the dialog
+opened.
+
+### 7.9 Renaming a Part or Changing Its Instrument
+
+**Edit > Instruments...** (`Ctrl+Shift+I`) lists every part in the score.
+Selecting one shows its name in an editable field and its GM instrument
+in a searchable combo box (typing a few letters of an instrument's name
+jumps to it) - changing either and selecting OK applies both to the
+score. Especially useful for a MIDI file, where a track may have no
+name, or an unhelpful one, and defaults to Acoustic Grand Piano when it
+declares no instrument of its own.
+
+A percussion part's own row has no single instrument to choose, since a
+kit is several sounds at once - only its name can be changed there.
+Underneath it, one row per drum sound (for example "Closed Hi-Hat")
+allows that sound's own name and its GM percussion sound to be changed
+independently. When the score has at least one percussion part, a
+checkbox, "Apply MusicXML offset for percussion", also appears: some
+notation programs export a percussion part's key numbers one step away
+from the correct General MIDI sound, and checking it detects a
+consistent shift from whichever items already match a real GM sound name
+and applies the same correction across the whole part, including items
+with no exact match of their own.
 
 ## 8. Performance Markings: Repeats, Endings and Dynamics
 
@@ -502,7 +564,9 @@ chosen to show.
 Depending on what the source file contains, additional details may be
 available: dynamics markings (forte, piano, and so on), articulation
 (staccato, accent, trill, and similar), fingering, string and fret
-numbers, and plucking-hand markings for guitar. An attribute only
+numbers, and plucking-hand markings for guitar. A Guitar Pro file
+provides string and fret the same way a MusicXML tab score does. An
+attribute only
 appears on a note when it's **both** switched on for that voice **and**
 actually present on that specific note - if a key is simply missing from
 one note's row, that's expected, not a fault.
@@ -533,9 +597,131 @@ attributes relevant there. Use **Move Up** (`Alt+U`) and **Move Down**
 applies everywhere - both Region 3's note labels and Region 4's rows
 follow it - it isn't a separate ordering per voice.
 
-## 10. Terminology: UK and US Music Vocabulary
+## 10. Chords and Lyrics
 
-### 10.1 What Changes When You Switch
+### 10.1 What This Feature Is For
+
+Alongside notated scores (§2.3), Recall Score can import a song's chords
+and lyrics directly from a chord-tab page on Ultimate Guitar
+(ultimate-guitar.com) - the kind of page that shows chord names
+positioned above the lyric words they go with, rather than full sheet
+music. This is a different, simpler kind of material than a MusicXML or
+MIDI score: there's no notated rhythm or real bar structure, just chord
+changes and the words that go with them.
+
+A MusicXML file can carry the same kind of information too - chord
+symbols and/or lyric text written directly into the score alongside its
+real notated notes. Recall Score picks these up automatically, with no
+importing step needed - see §10.6.
+
+### 10.2 Importing a Song
+
+Choose **File > Import from Ultimate Guitar...**. A dialog asks for the
+page's web address - paste the full URL of an Ultimate Guitar chords page
+(for example `https://tabs.ultimate-guitar.com/tab/<artist>/<song>-chords-<id>`)
+and select **OK**. Only "Chords"-type tab pages are supported - a Guitar
+Pro tab, plain tab, bass tab or ukulele-chords page on the same site will
+be rejected with an explanation. The import runs in the background, the
+same way opening a file does, so the rest of the app stays responsive
+while it fetches the page.
+
+Once imported, Region 1 shows the song's title, artist, key, tuning,
+difficulty and tempo the same way any other score does, plus (when the
+page provides one) a **Strumming Pattern** field describing the song's
+strum rhythm as a sequence of downstrokes, upstrokes and muted strums.
+
+### 10.3 Chords and Lyrics as Two Parts
+
+An imported song shows up in Region 2 as two parts, **Chords** and
+**Lyrics**, each a single flat row with nothing further to expand
+underneath - the same simplified display a MIDI track gets (§3.3), since
+neither has real staves or voices. Mute either with `F8` exactly like any
+other part.
+
+Moving through the Note region works the same as any other score: each
+step forward is one chord change. The Chords row names the chord (for
+example "Fmaj7") and plays it - as a real strummed pattern when the song
+has strumming data, arpeggiated up or down per the pattern rather than
+every note firing at once, otherwise as a plain chord. The Lyrics row
+shows the words sung during that chord, or "No lyrics" for instrumental
+passages such as an intro with nothing sung yet.
+
+Most chord names are shown exactly as written ("Fmaj7", "C7", "Dsus4", a
+bare "G" for G major) since a screen reader already reads those clearly.
+A minor chord is the one exception: rather than show it as a bare "Am" or
+"Am7" - which a screen reader reads as the letter "m", not the word
+"minor" - Recall Score spells it out as "A minor" or "A minor 7". This
+applies everywhere a chord name is shown, including the embedded-MusicXML
+chords in §10.6.
+
+Because Region 3's currently-selected row is always the first one shown,
+whichever part is listed first in Region 2 is the one announced by
+default on every move. To hear the lyric first and the chord name
+second, or vice versa, use **Options > Reorder Parts...**: a dialog
+listing Chords and Lyrics with **Move Up** (`Alt+U`) and **Move Down**
+(`Alt+D`) buttons, plus OK and Cancel. Moving Lyrics above Chords and
+selecting OK swaps which one is read first from then on, without
+affecting anything already muted or soloed in Region 2. This dialog
+works the same way for any multi-part score, not just an Ultimate Guitar
+import.
+
+### 10.4 Saving and Reopening an Import
+
+An imported song only exists for the current session until you save it.
+**File > Save Ultimate Guitar Import As...** writes it to a file on disk
+(a `.ug` file) that you can reopen later with the ordinary **File >
+Open...** dialog or from **File > Recent Files** - both treat it exactly
+like any other score file from then on, including remembering its own
+settings (§12.1).
+
+### 10.5 Things to Be Aware Of
+
+Because a chord-tab page has no real notated bar structure, Recall Score
+treats every chord change as one bar - this is a simplification for
+navigation purposes, not a claim about the song's actual notated rhythm.
+Occasionally a lyric line's timing in the source page is imprecise (the
+original contributor's own spacing), which can very occasionally show a
+lyric fragment split slightly oddly - this reflects the source page, not
+a fault in the import.
+
+### 10.6 Chords and Lyrics Embedded in an Ordinary MusicXML Score
+
+Some MusicXML files carry chord symbols and/or lyric text written directly
+into the score alongside its real notated notes - typically a
+lead-sheet-style piece exported from a program like MuseScore, with chord
+names printed above the staff and words printed underneath it. Opening
+such a file with **File > Open...** shows this content automatically, with
+no separate import step: Region 2 gains a **Chords** part, a **Lyrics**
+part, or both, alongside the score's own instrument parts - each shown as
+a single flat row with nothing further to expand underneath (§10.3), the
+same as an Ultimate Guitar import's Chords/Lyrics parts, since neither has
+any real staves or voices of its own. The score's own real instrument
+keeps its normal part/stave/voice detail untouched.
+
+Unlike an Ultimate Guitar import (§10.3), these two parts line up with the
+score's own real notated timing rather than one fabricated bar per chord
+change - a chord symbol or lyric shows up at exactly the beat it was
+written against, right alongside the notated note sounding at that same
+moment. Mute either part with `F8` exactly like any other part, and use
+**Options > Reorder Parts...** (§10.3) to have the lyric announced before
+the chord name, or the other way round. A bar with a chord symbol but no note underneath it, or a note with
+no lyric under it, simply has no Chords or Lyrics entry there - there's no
+"No lyrics" placeholder the way an Ultimate Guitar import uses for a
+wordless bar, since with real notated timing there's no ambiguity about
+whether something is missing.
+
+If the score also marks individual notes with an up- or down-stroke
+indicator (some notation programs let you add this to guide a strummed
+accompaniment), the Chords row shows it too - for example "A minor, beat
+position 2.0, strum down stroke" - since a stroke direction is something
+the chord accompaniment does, not something the notated melody note does.
+A bar can show more than one Chords row when it has more than one marked
+stroke in it, one per stroke, each still following the score's own real
+timing.
+
+## 11. Terminology: UK and US Music Vocabulary
+
+### 11.1 What Changes Between UK and US Wording
 
 Recall Score can speak either UK or US musical terminology: **bar**
 versus **measure**, and the **crotchet/quaver/semiquaver** family versus
@@ -547,7 +733,7 @@ One family is deliberately left out of this toggle: stave/staff naming
 (Region 2's clef labels, and Region 4's "stave" attribute) always reads
 the same way regardless of which terminology language is selected.
 
-### 10.2 Switching Terminology Language
+### 11.2 Switching Terminology Language
 
 **Options > Terminology Language** offers UK and US as two mutually
 exclusive choices - exactly one is always selected at a time. This is a
@@ -555,33 +741,38 @@ single preference that applies across the whole application, not tied to
 any individual score, so opening a different file mid-session never
 changes which wording you're hearing.
 
-## 11. Your Settings Are Remembered
+## 12. Settings Are Remembered
 
-### 11.1 What's Saved Per Score
+### 12.1 What's Saved Per Score
 
 For each individual score file, Recall Score remembers, and restores the
-next time you open that same file:
+next time that file is opened:
 
-- Which parts, staves and voices are switched on or off.
+- Which parts, staves and voices are muted or soloed.
 - Whether the metronome is switched on.
 - Whether the position announcer is switched on.
 - Which note attributes are shown for each voice (§9.2).
 - The order those attributes are read in (§9.4).
 - Volume and pan set for each instrument, the metronome and the position
   announcer, via the Mixer (§7.8).
+- Renamed parts, instrument-sound overrides, and any percussion sound
+  renames, reassignments or offset correction (§7.9).
+- A key signature override, if one was set (Edit > Key Signature...,
+  §13.2).
+- A custom part order, if one was set (Options > Reorder Parts...).
 
 Files are matched by their own filename, so moving a file to a different
 folder doesn't lose its saved settings. If a saved setting no longer
 matches the file - for example a part that's since been renamed or
 removed - it's simply left out rather than causing an error or a dialog.
 
-### 11.2 What's Saved Across All Scores
+### 12.2 What's Saved Across All Scores
 
-Your UK/US terminology choice (§10) is the one preference that applies to
+Your UK/US terminology choice (§11) is the one preference that applies to
 every score, not just one - it stays as you last set it no matter which
 file you open next.
 
-### 11.3 Clearing Saved Preferences for a Score
+### 12.3 Clearing Saved Preferences for a Score
 
 **Edit > Clear Preferences for `<filename>`** deletes just that one
 file's saved settings, so it reverts to defaults the next time it's
@@ -589,32 +780,31 @@ opened. This menu item is disabled when no file is currently loaded.
 
 **Edit > Open Local Folder** opens the folder on disk where these saved
 settings actually live, in case you ever want to inspect or back them up
-directly (see also §14.3).
+directly (see also §15.3).
 
-## 12. Menu Reference
+## 13. Menu Reference
 
-### 12.1 File Menu
+### 13.1 File Menu
 
 | Item | Shortcut | What it does |
 | :--- | :--- | :--- |
-| Open... | Ctrl+O | Opens a MusicXML or MIDI file, or a previously saved Ultimate Guitar import (§16.4). |
+| Open... | Ctrl+O | Opens a MusicXML, MIDI or Guitar Pro file, or a previously saved Ultimate Guitar import (§10.4). |
 | Recent Files | - | Submenu listing the last 8 files you've opened, most recent first, for quick reopening. |
-| Import from Ultimate Guitar... | - | Imports chords and lyrics from an Ultimate Guitar tab page URL (§16). |
-| Save Ultimate Guitar Import As... | - | Saves the currently loaded Ultimate Guitar import to a file so it can be reopened later (§16.4). Only meaningful when an Ultimate Guitar import is currently loaded. |
+| Import from Ultimate Guitar... | - | Imports chords and lyrics from an Ultimate Guitar tab page URL (§10). |
+| Save Ultimate Guitar Import As... | - | Saves the currently loaded Ultimate Guitar import to a file so it can be reopened later (§10.4). Only meaningful when an Ultimate Guitar import is currently loaded. |
 | Exit | - | Closes Recall Score. |
 
-### 12.2 Edit Menu
+### 13.2 Edit Menu
 
 | Item | Shortcut | What it does |
 | :--- | :--- | :--- |
 | Open Local Folder | - | Opens the folder where saved per-score preferences are stored. |
 | Clear Preferences for `<filename>` | - | Deletes the currently loaded file's saved settings. Disabled when no file is loaded. |
 | Performance Report... | - | Opens a read-only summary of the whole piece (§8.4). |
-| Mixer... | Ctrl+Shift+X | Opens the volume/pan mixer for every instrument, the metronome and the position announcer (§7.8). |
-| Instruments... | Ctrl+Shift+I | Renames a part, or changes what instrument it plays back as, for the currently loaded score. Especially useful for MIDI files, where a track may have no name or an unhelpful one. |
+| Instruments... | Ctrl+Shift+I | Renames a part, changes its instrument, or edits individual percussion sounds (§7.9). |
 | Key Signature... | Ctrl+Shift+K | Overrides the whole piece's key signature - a single choice from a list of all major and minor keys, or "use the file's own key". Mainly for MIDI files, which often carry no key signature at all. |
 
-### 12.3 Navigation Menu
+### 13.3 Navigation Menu
 
 | Item | Shortcut | What it does |
 | :--- | :--- | :--- |
@@ -627,24 +817,38 @@ directly (see also §14.3).
 | Move to Attributes | A | Jumps focus to the Note Attributes region from anywhere. |
 | Move to Performance | P | Jumps focus to the Performance region from anywhere. |
 
-### 12.4 Options Menu
+### 13.4 Playback Menu
+
+| Item | Shortcut | What it does |
+| :--- | :--- | :--- |
+| Play/Stop | Space | Starts playback from the current position, resumes from pause, or stops it (§7.2). |
+| Pause/Resume | Ctrl+Space | Pauses playback; resume with Space (§7.2). |
+| Preview | Enter | Plays a short phrase around the current position, from the Note region (§7.3). |
+| Mute | F8 | Mutes or unmutes the focused row in the Parts region (§6.3). |
+| Solo | F9 | Solos or unsolos the focused row in the Parts region (§6.3). |
+| Unmute All | Alt+F8 | Clears every mute in the score (§6.3). |
+| Unsolo All | Alt+F9 | Clears every solo in the score (§6.3). |
+| Mixer... | Ctrl+Shift+X | Opens the volume/pan mixer for every instrument, the metronome and the position announcer (§7.8). |
+
+### 13.5 Options Menu
 
 | Item | Shortcut | What it does |
 | :--- | :--- | :--- |
 | Tempo Offset... | Ctrl+T | Sets an exact playback tempo offset, including decimal values (§7.5). |
-| Terminology Language | - | Submenu to choose UK or US wording (§10.2). |
+| Terminology Language | - | Submenu to choose UK or US wording (§11.2). |
 | Toggle Metronome | Ctrl+M | Turns the beat click on or off (§7.6). |
 | Toggle Position Announcer | Ctrl+P | Turns the spoken beat-position announcer on or off (§7.7). |
 | Reorder Attributes... | - | Changes the order note attributes are read in for the current Region 2 scope (§9.4). |
-| Reorder Parts... | - | Changes the order parts are listed in Region 2, and in turn the order their notes are listed in Region 3 (§16.3). |
+| Reorder Parts... | - | Changes the order parts are listed in Region 2, and in turn the order their notes are listed in Region 3 (§10.3). |
 
-### 12.5 Help Menu
+### 13.6 Help Menu
 
 | Item | Shortcut | What it does |
 | :--- | :--- | :--- |
+| User Guide... | - | Opens this guide. |
 | About Recall Score... | - | Shows the application name, version number and a short description. |
 
-## 13. Keyboard Shortcut Reference
+## 14. Keyboard Shortcut Reference
 
 | Action | Keystroke |
 | :--- | :--- |
@@ -663,7 +867,11 @@ directly (see also §14.3).
 | Move between notes within a chord *(Note region only)* | Up Arrow / Down Arrow |
 | Reselect every note at the current position *(Note region only)* | Ctrl+A |
 | Open the Go to Measure dialog | Ctrl+G |
-| Toggle the focused Part, Stave or Voice on/off *(Parts List region only)* | O |
+| Expand / collapse the focused row *(Parts List region only)* | Right Arrow / Left Arrow |
+| Mute / unmute the focused row *(Parts List region only)* | F8 |
+| Solo / unsolo the focused row *(Parts List region only)* | F9 |
+| Clear every mute in the score *(Parts List region only)* | Alt+F8 |
+| Clear every solo in the score *(Parts List region only)* | Alt+F9 |
 | Play / stop playback from the current position (also resumes from pause) | Space |
 | Pause playback (resume with Space) | Ctrl+Space |
 | Play a two-bar phrase around the current position *(Note region, no bar number pending)* | Enter |
@@ -684,9 +892,9 @@ directly (see also §14.3).
 | Open a note attribute's context menu *(Note Attributes region only)* | right-click, or Menu key / Shift+F10 |
 | Open a score file | Ctrl+O |
 
-## 14. Troubleshooting
+## 15. Troubleshooting
 
-### 14.1 No Sound
+### 15.1 No Sound
 
 Recall Score plays sound through a bundled audio engine and instrument
 library that need to start up successfully when the application
@@ -696,7 +904,7 @@ you navigate and use every region normally - it simply won't produce any
 sound, without announcing that fact on screen. As a first check, confirm
 your system's normal audio output is working outside Recall Score too.
 
-### 14.2 A File Won't Open
+### 15.2 A File Won't Open
 
 If a file fails to load, nothing changes on screen. Check the log file
 at `%LOCALAPPDATA%\Recall Score\recall_score.log` for details of what
@@ -704,145 +912,22 @@ went wrong. The most common cause is a file that isn't valid MusicXML,
 or isn't one of the supported extensions (§2.3): `.xml`, `.musicxml` or
 `.mxl`.
 
-### 14.3 Where Settings Are Stored on Disk
+### 15.3 Where Settings Are Stored on Disk
 
 **Edit > Open Local Folder** opens the storage location directly. Both
-your per-score settings (§11.1) and your shared UK/US preference (§11.2)
+your per-score settings (§12.1) and your shared UK/US preference (§12.2)
 live under your own Windows user profile, entirely separate from where
 Recall Score itself is installed - reinstalling or moving the
 application doesn't affect them.
 
-## 15. Getting Help and Reporting Problems
+## 16. Getting Help and Reporting Problems
 
 If you run into a problem, **Help > About Recall Score...** shows the
 exact version you're running - worth including if you report an issue.
-Check §14 (Troubleshooting) first; if that doesn't resolve it, please
+Check §15 (Troubleshooting) first; if that doesn't resolve it, please
 raise an issue on the project's GitHub page:
 
 <https://github.com/Chessel85/ScoreReader/issues>
 
 Include what you were doing, the version number, and - if the app was
-involved - the contents of `recall_score.log` (§14.2).
-
-## 16. Chords and Lyrics
-
-### 16.1 What This Feature Is For
-
-Alongside notated scores (§2.3), Recall Score can import a song's chords
-and lyrics directly from a chord-tab page on Ultimate Guitar
-(ultimate-guitar.com) - the kind of page that shows chord names
-positioned above the lyric words they go with, rather than full sheet
-music. This is a different, simpler kind of material than a MusicXML or
-MIDI score: there's no notated rhythm or real bar structure, just chord
-changes and the words that go with them.
-
-A MusicXML file can carry the same kind of information too - chord
-symbols and/or lyric text written directly into the score alongside its
-real notated notes. Recall Score picks these up automatically, with no
-importing step needed - see §16.6.
-
-### 16.2 Importing a Song
-
-Choose **File > Import from Ultimate Guitar...**. A dialog asks for the
-page's web address - paste the full URL of an Ultimate Guitar chords page
-(for example `https://tabs.ultimate-guitar.com/tab/<artist>/<song>-chords-<id>`)
-and select **OK**. Only "Chords"-type tab pages are supported - a Guitar
-Pro tab, plain tab, bass tab or ukulele-chords page on the same site will
-be rejected with an explanation. The import runs in the background, the
-same way opening a file does, so the rest of the app stays responsive
-while it fetches the page.
-
-Once imported, Region 1 shows the song's title, artist, key, tuning,
-difficulty and tempo the same way any other score does, plus (when the
-page provides one) a **Strumming Pattern** field describing the song's
-strum rhythm as a sequence of downstrokes, upstrokes and muted strums.
-
-### 16.3 Chords and Lyrics as Two Parts
-
-An imported song shows up in Region 2 as two parts, **Chords** and
-**Lyrics**, each a single flat row with nothing further to expand
-underneath - the same simplified display a MIDI track gets (§3.3), since
-neither has real staves or voices. Switch either off with `O` exactly as
-you would any other part.
-
-Moving through the Note region works the same as any other score: each
-step forward is one chord change. The Chords row names the chord (for
-example "Fmaj7") and plays it - as a real strummed pattern when the song
-has strumming data, arpeggiated up or down per the pattern rather than
-every note firing at once, otherwise as a plain chord. The Lyrics row
-shows the words sung during that chord, or "No lyrics" for instrumental
-passages such as an intro with nothing sung yet.
-
-Most chord names are shown exactly as written ("Fmaj7", "C7", "Dsus4", a
-bare "G" for G major) since a screen reader already reads those clearly.
-A minor chord is the one exception: rather than show it as a bare "Am" or
-"Am7" - which a screen reader reads as the letter "m", not the word
-"minor" - Recall Score spells it out as "A minor" or "A minor 7". This
-applies everywhere a chord name is shown, including the embedded-MusicXML
-chords in §16.6.
-
-Because Region 3's currently-selected row is always the first one shown,
-whichever part is listed first in Region 2 is the one your screen reader
-announces by default on every move. If you'd rather hear the lyric first
-and the chord name second (or vice versa), use **Options > Reorder
-Parts...**: a dialog listing Chords and Lyrics with **Move Up** (`Alt+U`)
-and **Move Down** (`Alt+D`) buttons, plus OK and Cancel. Moving Lyrics
-above Chords and selecting OK swaps which one is read first from then on,
-without affecting anything already switched on or off in Region 2. This
-dialog works the same way for any multi-part score, not just an Ultimate
-Guitar import.
-
-### 16.4 Saving and Reopening an Import
-
-An imported song only exists for the current session until you save it.
-**File > Save Ultimate Guitar Import As...** writes it to a file on disk
-(a `.ug` file) that you can reopen later with the ordinary **File >
-Open...** dialog or from **File > Recent Files** - both treat it exactly
-like any other score file from then on, including remembering its own
-settings (§11.1).
-
-### 16.5 Things to Be Aware Of
-
-Because a chord-tab page has no real notated bar structure, Recall Score
-treats every chord change as one bar - this is a simplification for
-navigation purposes, not a claim about the song's actual notated rhythm.
-Occasionally a lyric line's timing in the source page is imprecise (the
-original contributor's own spacing), which can very occasionally show a
-lyric fragment split slightly oddly - this reflects the source page, not
-a fault in the import.
-
-### 16.6 Chords and Lyrics Embedded in an Ordinary MusicXML Score
-
-Some MusicXML files carry chord symbols and/or lyric text written directly
-into the score alongside its real notated notes - typically a
-lead-sheet-style piece exported from a program like MuseScore, with chord
-names printed above the staff and words printed underneath it. Opening
-such a file with **File > Open...** shows this content automatically, with
-no separate import step: Region 2 gains a **Chords** part, a **Lyrics**
-part, or both, alongside the score's own instrument parts - each shown as
-a single flat row with nothing further to expand underneath (§16.3), the
-same as an Ultimate Guitar import's Chords/Lyrics parts, since neither has
-any real staves or voices of its own. The score's own real instrument
-keeps its normal part/stave/voice detail untouched.
-
-Unlike an Ultimate Guitar import (§16.3), these two parts line up with the
-score's own real notated timing rather than one fabricated bar per chord
-change - a chord symbol or lyric shows up at exactly the beat it was
-written against, right alongside the notated note sounding at that same
-moment. Switch either part off with `O` exactly as you would any other
-part, and use **Options > Reorder Parts...** (§16.3) if you'd rather your
-screen reader announce the lyric before the chord name, or the other way
-round. A bar with a chord symbol but no note underneath it, or a note with
-no lyric under it, simply has no Chords or Lyrics entry there - there's no
-"No lyrics" placeholder the way an Ultimate Guitar import uses for a
-wordless bar, since with real notated timing there's no ambiguity about
-whether something is missing.
-
-If the score also marks individual notes with an up- or down-stroke
-indicator (some notation programs let you add this to guide a strummed
-accompaniment), the Chords row shows it too - for example "A minor, beat
-position 2.0, strum down stroke" - since a stroke direction is something
-the chord accompaniment does, not something the notated melody note does.
-A bar can show more than one Chords row when it has more than one marked
-stroke in it, one per stroke, each still following the score's own real
-timing.
+involved - the contents of `recall_score.log` (§15.2).
