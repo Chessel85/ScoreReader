@@ -4,11 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Notifications
 
-When tasks are complete, notify me, use quick description of task that is done where it says 'claude code task is done', using:
-- powershell.exe -ExecutionPolicy Bypass -c "(New-Object -ComObject SAPI.SpVoice).Speak('Claude Code Task Done')"
-
-If being prompted for a question and needing user response:
-- powershell.exe -ExecutionPolicy Bypass -c "(New-Object -ComObject SAPI.SpVoice).Speak('Claude needs your attention!')"
+Handled automatically by Stop/Notification hooks in `~/.claude/settings.json` (SAPI text-to-speech) — fires on every session end/permission prompt/question without needing this instruction followed manually. No action needed here.
 
 ## Project
 
