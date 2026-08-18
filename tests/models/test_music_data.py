@@ -1774,3 +1774,66 @@ def test_collapsed_part_ids_does_not_collapse_a_midi_percussion_part():
     )
 
     assert md.collapsed_part_ids == {"P1"}
+
+
+# --- Preview: bar boundaries and real-time spans -------------------------
+
+def test_bar_bounds_are_the_bar_line_either_side_of_a_slice(timeline, minimal_score):
+    """Preview's loop repeats on the bar line, so every slice in a bar has
+    to resolve to the same pair regardless of which beat it sits on."""
+    md = timeline(minimal_score)
+
+    assert md.bar_bounds_quarters(0) == (0.0, 4.0)
+    assert md.bar_bounds_quarters(2) == (0.0, 4.0)
+
+
+def test_bar_bounds_follow_a_mid_score_time_signature_change(timeline, ts_change_score):
+    """The 6/8 bar is three quarters long, not four - taken from the
+    slice's own time_sig rather than the score's opening one (A6)."""
+    md = timeline(ts_change_score)
+
+    assert md.bar_bounds_quarters(4) == (4.0, 7.0)
+    assert md.bar_bounds_quarters(8) == (7.0, 11.0)
+
+
+def test_bar_bounds_of_a_pickup_bar_end_on_the_real_bar_line(timeline):
+    """Ref 17: a pickup's notional bar starts before the piece does. The
+    END is what Preview's loop needs, and it is the real bar line."""
+    md = timeline("files/bach-bourree-tab/score.xml")
+
+    start, end = md.bar_bounds_quarters(0)
+    assert md.timeline_slices[0].measure == 0
+    assert start < 0
+    assert end == 1.0
+
+
+def test_bar_bounds_out_of_range_is_none(timeline, minimal_score):
+    md = timeline(minimal_score)
+
+    assert md.bar_bounds_quarters(99) is None
+
+
+def test_span_ms_measures_real_time_to_an_elapsed_quarters_point(timeline, minimal_score):
+    """One 4/4 bar at the default 120bpm is two seconds."""
+    md = timeline(minimal_score)
+
+    assert md.span_ms_to_quarters(0, 4.0) == 2000
+    assert md.span_ms_to_quarters(0, 0.0) == 0
+
+
+def test_span_ms_honours_a_tempo_change_inside_the_span(timeline, tempo_change_score):
+    """quarter=100 for bar 1 (2400ms), quarter=200 for bar 2 (1200ms) - a
+    single division by one tempo would give neither (Ref 12)."""
+    md = timeline(tempo_change_score)
+
+    assert md.span_ms_to_quarters(0, 4.0) == 2400
+    assert md.span_ms_to_quarters(0, 8.0) == 3600
+
+
+def test_span_ms_follows_the_playback_tempo_offset(timeline, minimal_score):
+    """F/S/D (Ref 12) has to move the loop point too, or a repeat would
+    drift against the notes it is repeating."""
+    md = timeline(minimal_score)
+    md.set_playback_tempo_offset(120)  # 120 -> 240bpm, so half the time
+
+    assert md.span_ms_to_quarters(0, 4.0) == 1000

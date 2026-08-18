@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QLabel, QTableWidget, QWidg
 from audio.metronome import METRONOME_OFFBEAT_NOTE
 from main_window import MainWindow, detect_default_uk_terms
 from models import mixer_settings
+from models.preview_settings import PreviewSettings
 from widgets.about_dialog import AboutDialog
 from widgets.attribute_order_dialog import AttributeOrderDialog
 from widgets.goto_measure_dialog import GotoMeasureDialog
@@ -28,6 +29,19 @@ def window(qtbot, null_synth):
     w = MainWindow(synth=null_synth, uk_terms=False)
     qtbot.addWidget(w)
     return w
+
+
+def no_lead_in(window, **overrides):
+    """Preview with no count-in and no looping.
+
+    The shipped default is a one-bar lead-in (models/preview_settings.py),
+    which is right for practice but means Enter no longer sounds anything
+    until the count-in finishes. Tests asserting what Preview PLAYS opt out
+    of it; the lead-in has its own tests below.
+    """
+    settings = PreviewSettings(lead_in_bars=0, lead_in_beats=0, **overrides)
+    window.playback.set_preview_settings(settings)
+    return settings
 
 
 def load_and_wait(window, qtbot, file_path: str):
@@ -1171,6 +1185,7 @@ def test_mixer_dialog_preview_plays_without_moving_the_main_cursor(
     (Ref 11) - update_cursor=False, so the main timeline cursor and Region 3
     selection are untouched by opening the Mixer and previewing from it."""
     load_and_wait(window, qtbot, minimal_score)
+    no_lead_in(window)
     cursor_before = window._music_data.active_event_index
     window.synth.played.clear()
 
@@ -1552,6 +1567,7 @@ def test_audition_phrase_plays_from_beat_1_without_moving_the_cursor(
     window, qtbot, null_synth, many_measures_score
 ):
     load_and_wait(window, qtbot, many_measures_score)
+    no_lead_in(window)
     null_synth.played.clear()
 
     window.audition_phrase()
@@ -1565,6 +1581,7 @@ def test_enter_keypress_with_no_pending_digits_starts_phrase_audition(
     window, qtbot, null_synth, many_measures_score
 ):
     load_and_wait(window, qtbot, many_measures_score)
+    no_lead_in(window)
     null_synth.played.clear()
 
     qtbot.keyClick(window.region_3, Qt.Key.Key_Return)
@@ -1577,6 +1594,7 @@ def test_phrase_audition_stops_at_the_end_of_the_next_measure(
     window, qtbot, null_synth, many_measures_score
 ):
     load_and_wait(window, qtbot, many_measures_score)
+    no_lead_in(window)
     window._music_data.tempo_bpm = 60000  # 1 beat = 1ms
     null_synth.played.clear()
 
@@ -1591,6 +1609,7 @@ def test_a_second_enter_while_a_phrase_is_playing_stops_it(
     window, qtbot, null_synth, many_measures_score
 ):
     load_and_wait(window, qtbot, many_measures_score)
+    no_lead_in(window)
     window.audition_phrase()
     assert window.sequencer.is_playing is True
 
@@ -1604,6 +1623,7 @@ def test_phrase_audition_from_the_last_measure_plays_to_the_end_of_the_piece(
     window, qtbot, null_synth, many_measures_score
 ):
     load_and_wait(window, qtbot, many_measures_score)
+    no_lead_in(window)
     assert window._music_data.jump_to_measure(12) is True
     null_synth.played.clear()
 
@@ -1614,6 +1634,64 @@ def test_phrase_audition_from_the_last_measure_plays_to_the_end_of_the_piece(
     assert window.sequencer.is_playing is True, "only one note left - still ringing out"
 
     qtbot.waitUntil(lambda: window.sequencer.is_playing is False, timeout=2000)
+
+
+def test_preview_lead_in_counts_through_a_whole_bar_before_a_pickup_plays(
+    window, qtbot, null_synth, score_bourree
+):
+    """Reported from real practice use, then corrected: previewing from
+    inside score_bourree's anacrusis (a one-beat pickup in 4/4, its one real
+    note notated at beat 4 - see tests/conftest.py's score_bourree) must
+    play the requested lead-in bar in FULL ("1, 2, 3, 4"), then keep
+    counting through the beats needed to complete the anacrusis into a
+    whole bar ("1, 2, 3") before the pickup note itself sounds - never
+    landing the count-in on the pickup's own notated beat straight away."""
+    load_and_wait(window, qtbot, score_bourree)
+    window.playback.set_preview_settings(PreviewSettings(lead_in_bars=1, lead_in_beats=0))
+    assert window._music_data.active_event_index == 0  # already inside the pickup
+
+    window.audition_phrase()
+
+    run = window.playback._preview
+    assert run is not None and run.is_pickup is True
+    counts = [action[1] for _, action in run.events if action[0] == "count"]
+    assert counts == [1.0, 2.0, 3.0, 4.0, 1.0, 2.0, 3.0], (
+        "one full lead-in bar, then the 3 beats needed to complete the pickup's own bar"
+    )
+
+    # The pickup starts right after that 7th click, with no further gap -
+    # its one beat of real content exactly fills what the count-in left.
+    beat_ms = 60000.0 / window._music_data.effective_tempo_bpm(0)
+    play_offset = next(offset for offset, action in run.events if action[0] == "play")
+    last_count_offset = max(offset for offset, action in run.events if action[0] == "count")
+    assert play_offset == pytest.approx(last_count_offset + beat_ms, abs=1)
+
+
+def test_preview_lead_in_pads_a_fractional_pickup_with_a_silent_remainder(
+    window, qtbot, null_synth, score_bourree
+):
+    """A pickup that starts mid-beat can't have its remainder clicked -
+    audio/metronome.py's click_event_for_beat only fires on whole beats -
+    so after the whole completing beats are counted, the leftover fraction
+    of a beat is a silent wait before the note itself, not another click."""
+    load_and_wait(window, qtbot, score_bourree)
+    window.playback.set_preview_settings(PreviewSettings(lead_in_bars=1, lead_in_beats=0))
+    md = window._music_data
+    md.timeline_slices[0].beat_position = 2.5  # a 1.5-beat pickup in 4/4
+    md.tempo_bpm = 120
+
+    window.audition_phrase()
+
+    run = window.playback._preview
+    counts = [action[1] for _, action in run.events if action[0] == "count"]
+    assert counts == [1.0, 2.0, 3.0, 4.0, 1.0], "one whole completing beat (2.5 - 1 = 1.5, floor 1)"
+
+    # 4 lead-in beats + the full 1.5-beat gap (1 clicked, 0.5 silent) to
+    # reach the real note - the fractional part can't be a click, but it
+    # still has to elapse before the note sounds.
+    beat_ms = 60000.0 / 120.0
+    play_offset = next(offset for offset, action in run.events if action[0] == "play")
+    assert play_offset == pytest.approx((4 + 1.5) * beat_ms, abs=1)
 
 
 # --- E7: chord audition retrigger on Shift+Space (Ref 13) ----------------
@@ -1696,11 +1774,12 @@ def test_playback_status_field_updates_for_phrase_audition_without_moving_positi
     window, qtbot, null_synth, many_measures_score
 ):
     load_and_wait(window, qtbot, many_measures_score)
+    no_lead_in(window)
     position_before = window.status_bar._fields[0].text()
 
     window.audition_phrase()
 
-    assert window.status_bar._fields[4].text() == "Playback: Playing"
+    assert window.status_bar._fields[4].text() == "Playback: Preview"
     assert window.status_bar._fields[0].text() == position_before
 
     window.audition_phrase()  # re-press stops it

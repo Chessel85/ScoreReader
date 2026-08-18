@@ -2,6 +2,7 @@
 """settings_path() is redirected into a per-test tmp_path by conftest's
 autouse _isolate_persistence fixture, so these never touch the real
 developer machine's %LOCALAPPDATA%."""
+from models.preview_settings import PreviewSettings
 from persistence import app_settings
 from persistence.app_settings import AppSettings
 
@@ -57,3 +58,43 @@ def test_load_with_corrupt_file_falls_back_to_defaults():
 
     settings = app_settings.load()
     assert settings.uk_terms is None
+
+
+# --- Preview settings (global, not per score) ----------------------------
+
+def test_preview_settings_default_when_nothing_has_been_saved():
+    assert app_settings.load().preview == PreviewSettings()
+
+
+def test_set_preview_settings_round_trips():
+    app_settings.set_preview_settings(
+        PreviewSettings(lead_in_bars=2, lead_in_click=False, preview_bars=4, loop=True)
+    )
+
+    saved = app_settings.load().preview
+    assert saved.lead_in_bars == 2
+    assert saved.lead_in_click is False
+    assert saved.preview_bars == 4
+    assert saved.loop is True
+
+
+def test_set_preview_settings_leaves_the_other_preferences_alone():
+    """Load-mutate-save, for the same reason add_recent_file has to be: a
+    fresh AppSettings literal here would wipe the dialect and the recent
+    files list."""
+    app_settings.save(AppSettings(uk_terms=True, recent_files=["a.xml"]))
+
+    app_settings.set_preview_settings(PreviewSettings(loop=True))
+
+    settings = app_settings.load()
+    assert settings.uk_terms is True
+    assert settings.recent_files == ["a.xml"]
+    assert settings.preview.loop is True
+
+
+def test_saving_other_preferences_leaves_preview_settings_alone():
+    app_settings.set_preview_settings(PreviewSettings(preview_bars=8))
+
+    app_settings.add_recent_file("b.xml")
+
+    assert app_settings.load().preview.preview_bars == 8

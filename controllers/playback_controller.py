@@ -1,8 +1,10 @@
 # controllers/playback_controller.py
-from typing import List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, List, Optional, Tuple
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 
+from audio.lead_in import build_lead_in_schedule
 from audio.metronome import METRONOME_CHANNEL, click_event_for_beat
 from audio.performance_cue import PERFORMANCE_CUE_CHANNEL
 from audio.position_announcer import POSITION_ANNOUNCER_CHANNEL, announcement_event_for_beat
@@ -10,6 +12,45 @@ from audio.sequencer import Sequencer
 from audio.strum_schedule import sound_events
 from models import mixer_settings
 from models.mixer_settings import MixerSettings
+from models.preview_settings import PreviewSettings
+
+
+@dataclass
+class _PreviewRun:
+    """One Preview session: the resolved span, the settings snapshot taken
+    when it started, and the schedule of the iteration currently running.
+
+    The session outlives the Sequencer run inside it - it also covers the
+    lead-in before any note sounds and the wait to the bar line before a
+    loop repeats, neither of which the Sequencer knows about. That is why
+    Enter's "stop what's running" test is is_preview_active and not
+    sequencer.is_playing.
+    """
+
+    settings: PreviewSettings
+    start_index: int
+    end_index: int
+    end_quarters: float
+    # True when start_index falls in a pickup bar (Ref 17): a count-in ahead
+    # of it must keep counting past the requested lead-in to also complete
+    # the pickup's own bar - see _start_preview_iteration.
+    is_pickup: bool
+    # Silence between the bar line and the first note, for a previewed bar
+    # that opens with a rest - kept so a repeat stays in time rather than
+    # sliding forward by that gap. 0 for a pickup (its real content starts
+    # at the piece's own start, not after some silence) - used as-is for a
+    # LOOP repeat with no lead-in of its own; a lead-in ahead of a pickup
+    # computes its own play_gap_ms instead (_start_preview_iteration).
+    offset_ms: int
+    # Bar line to bar line: what one loop iteration lasts.
+    iteration_ms: int
+    # (offset_ms within the iteration, action) in time order, walked by one
+    # chained single-shot timer - the same "reschedule a step at a time so
+    # cancelling is one stop()" shape as audio/sequencer.py.
+    events: List[Tuple[int, Tuple[Any, ...]]] = field(default_factory=list)
+    event_index: int = 0
+    elapsed_ms: int = 0
+    playing: bool = False
 
 
 class PlaybackController(QObject):
@@ -42,7 +83,7 @@ class PlaybackController(QObject):
     BOUNDARY_MIDI_PITCH = 37  # C#2 - low
     BOUNDARY_DURATION_MS = 100  # roughly a semiquaver; independent of score tempo
 
-    def __init__(self, session, parent=None):
+    def __init__(self, session, timer=None, parent=None):
         super().__init__(parent)
         self.session = session
         # One Sequencer per loaded score - it holds a reference to that
@@ -55,6 +96,16 @@ class PlaybackController(QObject):
         # below) - None outside of an open dialog.
         self._mixer_edit_original: Optional[MixerSettings] = None
         self._mixer_edit_working: Optional[MixerSettings] = None
+        # Preview (Enter/Playback > Preview): lead-in, length and looping.
+        # Global settings, pushed in by MainWindow from AppSettings on
+        # startup and again whenever the dialog is accepted.
+        self.preview_settings = PreviewSettings()
+        self._preview: Optional[_PreviewRun] = None
+        # timer: injectable like Sequencer's, so tests can drive the
+        # count-in and the loop without waiting on the clock.
+        self._preview_timer = timer if timer is not None else QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.timeout.connect(self._on_preview_timer)
 
     @property
     def music_data(self):
@@ -80,6 +131,7 @@ class PlaybackController(QObject):
         build that score's own Sequencer, and push the score's own saved
         mixer state (music_data.mixer - already populated by apply_config()
         before this runs, see main_window.py's _on_score_loaded)."""
+        self.cancel_preview()
         if self.sequencer is not None:
             self.sequencer.stop()
         self.sequencer = Sequencer(music_data, self.synth, parent=self)
@@ -251,6 +303,12 @@ class PlaybackController(QObject):
         Left/Right give."""
         if not self.music_data or self.sequencer is None:
             return
+        if self._preview is not None:
+            # A preview may be mid-count-in with nothing sounding yet, which
+            # is_playing cannot see - without this, Space would start a
+            # second, overlapping run underneath the count-in.
+            self.stop()
+            return
         if self.sequencer.is_paused:
             self.sequencer.resume()
             self.playback_state_changed.emit()
@@ -277,53 +335,281 @@ class PlaybackController(QObject):
         """Shared by Space and Enter, which both stop whatever is running
         before starting anything new. Only a cursor-tracking run syncs
         active_event_index and the regions back afterwards - a phrase
-        audition never moved them - but the status field always updates."""
+        audition never moved them - but the status field always updates.
+
+        Cancelling the preview session first is what makes Enter (or Space)
+        stop a count-in that has not sounded a note yet."""
+        self.cancel_preview()
         if self.sequencer is None:
             return
         was_tracking_cursor = self.sequencer.update_cursor
         self.sequencer.stop()
-        if was_tracking_cursor and self.music_data:
+        # current_index is None on a Sequencer that has never been played
+        # from - which stopping a preview during its count-in reaches, since
+        # nothing has started the Sequencer yet. Syncing the cursor to it
+        # would set active_event_index to None and break every later read.
+        if was_tracking_cursor and self.music_data and self.sequencer.current_index is not None:
             self.music_data.active_event_index = self.sequencer.current_index
             self.cursor_moved.emit(False)
         else:
             self.playback_state_changed.emit()
 
     def audition_phrase(self) -> None:
-        """Enter with no pending digits (Ref 11): play from beat 1 of this
-        measure through the end of the next. Enter again while anything is
-        playing stops it rather than starting an overlapping run."""
+        """Enter with no pending digits (Ref 11): preview from beat 1 of
+        this measure, after the count-in and for as many bars as
+        preview_settings asks for, repeating if it says to. Enter again
+        while a preview is running stops it - including during the count-in
+        and between loop repeats - rather than starting an overlapping run.
+        """
         if not self.music_data or self.sequencer is None:
             return
-        if self.sequencer.is_playing or self.sequencer.is_paused:
+        if self._preview is not None or self.sequencer.is_playing or self.sequencer.is_paused:
             self.stop()
             return
 
-        current = self.music_data.get_current_slice()
-        if current is None:
+        run = self._build_preview_run()
+        if run is None:
             return
-        start_index = self.music_data.first_visible_event_index_of_measure(current.measure)
-        if start_index is None:
-            return
+        self._preview = run
+        self._start_preview_iteration(with_lead_in=run.settings.has_lead_in())
 
-        end_index = self.phrase_end_index(current.measure, start_index)
-        self.sequencer.play_from(start_index, end_index=end_index, update_cursor=False)
-        self.playback_state_changed.emit()
-
-    def phrase_end_index(self, current_measure: int, start_index: int) -> int:
-        """Through the end of the NEXT measure, or the last sounding event
-        if this is already the final measure - bounded so a phrase can't run
-        on into trailing rest-only padding."""
+    def phrase_end_index(self, current_measure: int, start_index: int, bars: int = 2) -> int:
+        """Through the end of the (bars-1)th measure after this one, or the
+        last sounding event if the piece ends first - bounded so a preview
+        can't run on into trailing rest-only padding, and so a preview
+        length reaching past the end of the piece simply ends there."""
         last_sounding = self.music_data.last_sounding_event_index()
         end_index = last_sounding if last_sounding is not None else self.music_data.last_event_index()
 
         measures = self.music_data.measure_numbers()
         pos = measures.index(current_measure)
-        if pos + 2 < len(measures):
-            measure_after_next = measures[pos + 2]
-            candidate_end = self.music_data.first_event_index_of_measure(measure_after_next) - 1
+        bars = max(1, int(bars))
+        if pos + bars < len(measures):
+            measure_after_last = measures[pos + bars]
+            candidate_end = self.music_data.first_event_index_of_measure(measure_after_last) - 1
             if candidate_end >= start_index:
                 end_index = min(end_index, candidate_end)
         return end_index
+
+    # --- preview session ---------------------------------------------
+
+    @property
+    def is_preview_active(self) -> bool:
+        """True from the first tick of the count-in until the preview stops
+        - the check callers need instead of sequencer.is_playing, which is
+        False during the lead-in and between loop repeats."""
+        return self._preview is not None
+
+    def set_preview_settings(self, settings: PreviewSettings) -> None:
+        """Applied to the NEXT preview: a running session keeps its own
+        snapshot, so accepting the dialog can't change what a loop is doing
+        half way through."""
+        self.preview_settings = settings.copy()
+
+    def _build_preview_run(self) -> Optional["_PreviewRun"]:
+        """Resolve where the preview starts and ends, in both index and
+        real-time terms. Returns None when there is nothing to play."""
+        current = self.music_data.get_current_slice()
+        if current is None:
+            return None
+        start_index = self.music_data.first_visible_event_index_of_measure(current.measure)
+        if start_index is None:
+            return None
+
+        settings = self.preview_settings.copy()
+        end_index = self.phrase_end_index(current.measure, start_index, settings.preview_bars)
+
+        # The loop repeats on the BAR LINE after the last previewed bar, not
+        # when the last note stops ringing: a bar ending in rests would
+        # otherwise restart early and out of time, which is useless to play
+        # along to. bar_bounds_quarters derives that from the slice itself
+        # (see MusicData). A preview length running past the end of the
+        # piece is already clamped by phrase_end_index, so the last bar of
+        # the piece becomes the end of the loop.
+        start_slice = self.music_data.timeline_slices[start_index]
+        start_bar = self.music_data.bar_bounds_quarters(start_index)
+        end_bar = self.music_data.bar_bounds_quarters(end_index)
+        # A pickup bar's (Ref 17) NOTIONAL start is before the piece begins,
+        # so its unclamped bar start comes back negative - the signal both
+        # is_pickup and the clamp below key off.
+        is_pickup = bool(start_bar and start_bar[0] < 0)
+        # Clamped at 0 for a pickup bar, whose NOTIONAL start is before the
+        # piece begins - looping it must repeat the pickup notes, not the
+        # empty beats the pickup replaces.
+        bar_start_quarters = max(0.0, start_bar[0]) if start_bar else start_slice.quarters_from_start
+        end_quarters = end_bar[1] if end_bar else start_slice.quarters_from_start
+
+        lead_quarters = max(0.0, start_slice.quarters_from_start - bar_start_quarters)
+        offset_ms = int(round(
+            lead_quarters * 60000.0 / float(self.music_data.effective_tempo_bpm(start_index))
+        ))
+        span_ms = self.music_data.span_ms_to_quarters(start_index, end_quarters)
+
+        return _PreviewRun(
+            settings=settings,
+            start_index=start_index,
+            end_index=end_index,
+            end_quarters=end_quarters,
+            is_pickup=is_pickup,
+            offset_ms=offset_ms,
+            iteration_ms=offset_ms + span_ms,
+        )
+
+    def _start_preview_iteration(self, with_lead_in: bool) -> None:
+        """Build one iteration's event schedule - count-in clicks, the
+        moment the notes start, and (looping only) the bar line where the
+        next repeat begins - then walk it with the chained timer."""
+        run = self._preview
+        if run is None or not self.music_data:
+            return
+
+        start_slice = self.music_data.timeline_slices[run.start_index]
+        ts_num, ts_den = start_slice.time_sig
+        # Re-derived per iteration, so an F/S/D tempo change during a loop
+        # takes effect from the next repeat rather than never.
+        bpm = self.music_data.effective_tempo_bpm(run.start_index)
+
+        events: List[Tuple[int, Tuple[Any, ...]]] = []
+        lead_in_ms = 0
+        # The silent gap between the last count-in click and the note
+        # itself. Ordinarily that is just run.offset_ms (the bar-line-to-
+        # first-note gap, 0 for a pickup - see _build_preview_run). A pickup
+        # gets a different value here: see the pickup padding below.
+        play_gap_ms = run.offset_ms
+        if with_lead_in:
+            # Back to the count-in phase, which the status field reports as
+            # Lead-in rather than Preview - true on a loop repeat too.
+            run.playing = False
+            lead_in_beats = run.settings.lead_in_beats
+            if run.is_pickup:
+                # Reported from real practice use: a pickup's own notated
+                # beat position (e.g. beat 4 of a 4/4 bar) is not where the
+                # requested lead-in should end - counting only "1, 2, 3, 4"
+                # and landing exactly on the pickup's own beat leaves the
+                # anacrusis itself uncounted. The user's ask: play the
+                # requested lead-in in full, THEN keep counting through
+                # whatever beats are needed to complete the anacrusis into a
+                # whole bar, so the pickup sounds exactly where a real beat
+                # 1 would follow - e.g. one bar of lead-in ahead of a
+                # one-beat pickup in 4/4 counts "1, 2, 3, 4, 1, 2, 3", not
+                # "4, 1, 2, 3". The count-in's own anchor (start_beat_position,
+                # below) already lands the LAST click one beat before the
+                # pickup's real notated position, so padding total_beats
+                # with the pickup's own missing whole beats is all that is
+                # needed - build_lead_in_schedule's backward-counting keeps
+                # every click correctly numbered.
+                #
+                # A pickup that starts mid-beat (e.g. a beat 2.5 anacrusis -
+                # 1.5 beats of real content in 4/4) leaves a fractional
+                # leftover after the last WHOLE beat is counted - clicks
+                # only ever land on whole beats (audio/metronome.py's
+                # click_event_for_beat), so that remainder is a silent wait
+                # after the count-in rather than another click.
+                gap_beats = max(0.0, start_slice.beat_position - 1.0)
+                whole_gap_beats = int(gap_beats + 1e-6)
+                fractional_beats = max(0.0, gap_beats - whole_gap_beats)
+                lead_in_beats += whole_gap_beats
+                beat_ms = (4.0 / float(ts_den or 4)) * 60000.0 / bpm
+                play_gap_ms = int(round(fractional_beats * beat_ms))
+            clicks, lead_in_ms = build_lead_in_schedule(
+                run.settings.lead_in_bars,
+                lead_in_beats,
+                ts_num,
+                ts_den,
+                bpm,
+                start_beat_position=start_slice.beat_position,
+            )
+            events.extend((offset, ("count", beat)) for offset, beat in clicks)
+
+        events.append((lead_in_ms + play_gap_ms, ("play",)))
+        if run.settings.loop and run.iteration_ms > run.offset_ms:
+            events.append((lead_in_ms + run.iteration_ms, ("loop",)))
+
+        run.events = sorted(events, key=lambda event: event[0])
+        run.event_index = 0
+        run.elapsed_ms = 0
+        if with_lead_in:
+            # Nothing sounds for a whole count-in, so the status field is
+            # the only sign Enter was heard at all - update it now rather
+            # than at the first note.
+            self.playback_state_changed.emit()
+        self._advance_preview()
+
+    def _advance_preview(self) -> None:
+        """Fire every event due at the current position, then arm the timer
+        for the next one. Events due at 0 fire synchronously, so a preview
+        with no lead-in still starts sounding within the keypress that asked
+        for it, exactly as it did before this feature existed."""
+        run = self._preview
+        if run is None:
+            return
+        while run.event_index < len(run.events):
+            due_ms, action = run.events[run.event_index]
+            if due_ms > run.elapsed_ms:
+                self._preview_timer.start(due_ms - run.elapsed_ms)
+                return
+            run.event_index += 1
+            self._fire_preview_event(action)
+            # A loop repeat rebuilds run.events and re-arms the timer from
+            # scratch, and a stop drops the session entirely - either way
+            # this walk is finished with the schedule it was reading.
+            if self._preview is not run or run.event_index == 0:
+                return
+        # Nothing further scheduled: a non-looping preview is now just the
+        # Sequencer running to its own end, which ends the session (see
+        # _on_sequencer_finished).
+
+    def _on_preview_timer(self) -> None:
+        run = self._preview
+        if run is None:
+            return
+        run.elapsed_ms = run.events[run.event_index][0]
+        self._advance_preview()
+
+    def _fire_preview_event(self, action: Tuple[Any, ...]) -> None:
+        run = self._preview
+        if run is None or not self.music_data:
+            return
+        kind = action[0]
+        if kind == "count":
+            self._sound_count_in_beat(action[1], run.settings.lead_in_click)
+        elif kind == "play":
+            run.playing = True
+            if self.sequencer is not None:
+                self.sequencer.play_from(
+                    run.start_index, end_index=run.end_index, update_cursor=False
+                )
+            self.playback_state_changed.emit()
+        elif kind == "loop":
+            self._start_preview_iteration(
+                with_lead_in=run.settings.loop_includes_lead_in and run.settings.has_lead_in()
+            )
+
+    def _sound_count_in_beat(self, beat_position: float, click_enabled: bool) -> None:
+        """One beat of the count-in. The click follows the preview's own
+        setting rather than the Ctrl+M metronome toggle (a count-in is
+        wanted whether or not the piece itself is being clicked), while the
+        spoken beat number follows Ctrl+P - the user's decision: with the
+        announcer on, hearing "three, four" is the clearest signal of where
+        the downbeat lands. Muting (wishlist #7) silences both without
+        changing the timing."""
+        if self._muted:
+            return
+        if click_enabled:
+            click = click_event_for_beat(beat_position)
+            if click is not None:
+                self.synth.play_click(*click)
+        if self.music_data and self.music_data.position_announcer_enabled:
+            announcement = announcement_event_for_beat(beat_position)
+            if announcement is not None:
+                self.synth.play_word(*announcement)
+
+    def cancel_preview(self) -> None:
+        """Drop the session and its pending schedule. Silencing and stopping
+        the Sequencer stays with the callers that need it - stop() and
+        attach_score both do that themselves."""
+        self._preview_timer.stop()
+        self._preview = None
 
     def _on_sequencer_step(self, index: int) -> None:
         """Ref 10 AC4: a cursor-tracking run moves active_event_index and
@@ -341,7 +627,13 @@ class PlaybackController(QObject):
         that happens (AC5's "stopping reverts" applies to reaching the end
         too - the user's decision), so a cursor-tracking run must sync the
         regions to that reverted position exactly as stop() does, rather
-        than leaving them on the last note."""
+        than leaving them on the last note.
+
+        A one-shot preview ends here too. A LOOPING one does not: its own
+        timer is still counting down to the bar line, and the Sequencer
+        finishing simply means the last note of this repeat has rung out."""
+        if self._preview is not None and not self._preview.settings.loop:
+            self.cancel_preview()
         if self.sequencer.update_cursor and self.music_data:
             self.music_data.active_event_index = self.sequencer.current_index
             self.cursor_moved.emit(False)
@@ -459,7 +751,18 @@ class PlaybackController(QObject):
 
     def playback_status_text(self) -> str:
         """Playing/Paused/Stopped from the Sequencer - deliberately not a
-        MusicData concern, describing UI state rather than the score."""
+        MusicData concern, describing UI state rather than the score.
+
+        A preview reports its own phase first: during the count-in nothing
+        is sounding yet and the Sequencer would say "Stopped", which reads
+        as "Enter did nothing". Looping is called out because it is the one
+        state that will not end on its own."""
+        if self._preview is not None:
+            if not self._preview.playing:
+                return "Playback: Lead-in"
+            if self._preview.settings.loop:
+                return "Playback: Preview (looping)"
+            return "Playback: Preview"
         if self.sequencer is not None and self.sequencer.is_paused:
             return "Playback: Paused"
         if self.sequencer is not None and self.sequencer.is_playing:

@@ -1666,6 +1666,58 @@ class MusicData:
         ms = (quarter_length * 60000.0) / float(self.effective_tempo_bpm(index))
         return max(100, int(ms))
 
+    def bar_bounds_quarters(self, index: int) -> Optional[Tuple[float, float]]:
+        """(start, end) of the bar containing this slice, in elapsed
+        quarters from the start of the piece - what Preview's loop needs to
+        restart exactly on the bar line rather than when the last note stops
+        ringing (a bar ending in rests would otherwise repeat early and out
+        of time).
+
+        Derived from the slice itself rather than from a per-measure table
+        the four timeline builders would each have to publish: beat_position
+        is ts-relative (Ref 18), so the distance back to the bar line is
+        (beat_position - 1) beats of 4/ts_den quarters each. A pickup bar
+        (Ref 17) gives its NOTIONAL bar, whose end is the real bar line -
+        which is the endpoint that matters here.
+        """
+        if not (0 <= index < len(self.timeline_slices)):
+            return None
+        current = self.timeline_slices[index]
+        ts_num, ts_den = current.time_sig
+        beat_quarters = 4.0 / float(ts_den or 4)
+        start = current.quarters_from_start - (current.beat_position - 1.0) * beat_quarters
+        return start, start + float(ts_num or 4) * beat_quarters
+
+    def span_ms_to_quarters(self, start_index: int, end_quarters: float) -> int:
+        """Real milliseconds from the slice at start_index to an elapsed-
+        quarters point later in the piece.
+
+        Walks the slices in between rather than dividing once, so a tempo
+        change inside the span is honoured - the same "the tempo in force
+        beforehand governs the time taken to get there" rule as
+        Sequencer._delay_ms_to, which this mirrors.
+        """
+        if not (0 <= start_index < len(self.timeline_slices)):
+            return 0
+        total_ms = 0.0
+        index = start_index
+        position = self.timeline_slices[start_index].quarters_from_start
+        while index + 1 < len(self.timeline_slices):
+            next_quarters = self.timeline_slices[index + 1].quarters_from_start
+            if next_quarters >= end_quarters:
+                break
+            if next_quarters > position:
+                total_ms += (next_quarters - position) * 60000.0 / float(
+                    self.effective_tempo_bpm(index)
+                )
+                position = next_quarters
+            index += 1
+        if end_quarters > position:
+            total_ms += (end_quarters - position) * 60000.0 / float(
+                self.effective_tempo_bpm(index)
+            )
+        return max(0, int(round(total_ms)))
+
     def get_playback_events_at_index(self, index: int) -> List[Tuple[int, Optional[int], List[int], int]]:
         """All visible notes at timeline index `index`, grouped by part
         (Ref 8) - the Sequencer (E4) equivalent of

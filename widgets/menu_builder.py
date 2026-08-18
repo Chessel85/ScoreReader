@@ -40,6 +40,7 @@ class Actions:
     play_stop: Optional[QAction] = None
     pause_resume: Optional[QAction] = None
     preview: Optional[QAction] = None
+    preview_settings: Optional[QAction] = None
     mute: Optional[QAction] = None
     solo: Optional[QAction] = None
     unmute_all: Optional[QAction] = None
@@ -276,6 +277,15 @@ class MenuBuilder:
             status_tip="Note region: Enter previews the current phrase",
         )
         playback_menu.addAction(a.preview)
+
+        # Mnemonic on T: P, u, v, M, S, A and l are already taken in this
+        # menu. Ctrl+Shift+V alongside the other dialogs' Ctrl+Shift+I/K/X.
+        a.preview_settings = self._action(
+            "Preview Se&ttings...", self.slots._show_preview_settings_dialog,
+            "Ctrl+Shift+V",
+            status_tip="Set the preview lead-in, length and looping",
+        )
+        playback_menu.addAction(a.preview_settings)
 
         playback_menu.addSeparator()
 

@@ -1,3 +1,5 @@
+* Playback and preview should obey repeats and codas.  but moving with cursor keys should not.
+* The application title bar should put Recall Score ahead of the filename 
 * when metronome is on, but moving up and down a chord, do not sound the metronome click.
 * A mute option so midi is not played.
 * score report should include key signature , time signature and tempo changes.

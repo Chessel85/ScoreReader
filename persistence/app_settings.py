@@ -7,6 +7,8 @@ from typing import List, Optional
 
 from PySide6.QtCore import QStandardPaths
 
+from models.preview_settings import PreviewSettings
+
 # File > Recent Files - most-recent-first, capped at this many entries.
 MAX_RECENT_FILES = 8
 
@@ -14,14 +16,20 @@ MAX_RECENT_FILES = 8
 @dataclass
 class AppSettings:
     """App-wide preferences that are the same regardless of which score is
-    loaded - today the UK/US terminology dialect (F4/D-6) and the Recent
-    Files list. Deliberately separate from ScoreConfig
-    (persistence/score_config.py), which is per-file. uk_terms=None means
-    no preference has been saved yet, so the caller should fall back to its
-    own default (OS-locale detection)."""
+    loaded - the UK/US terminology dialect (F4/D-6), the Recent Files list
+    and the Preview settings (lead-in/length/loop). Deliberately separate
+    from ScoreConfig (persistence/score_config.py), which is per-file.
+    uk_terms=None means no preference has been saved yet, so the caller
+    should fall back to its own default (OS-locale detection).
+
+    preview is global rather than per-score on the user's own decision: a
+    count-in length is a practice habit that should follow them from piece
+    to piece. Defaults live on PreviewSettings itself, so a settings file
+    written before this field existed simply gets them."""
 
     uk_terms: Optional[bool] = None
     recent_files: List[str] = field(default_factory=list)
+    preview: PreviewSettings = field(default_factory=PreviewSettings)
 
 
 def settings_path() -> Path:
@@ -39,6 +47,7 @@ def load() -> AppSettings:
         return AppSettings(
             uk_terms=data.get("uk_terms"),
             recent_files=data.get("recent_files", []),
+            preview=PreviewSettings.from_dict(data.get("preview")),
         )
     except FileNotFoundError:
         return AppSettings()
@@ -69,3 +78,12 @@ def add_recent_file(file_path: str) -> None:
     recents.insert(0, file_path)
     settings.recent_files = recents[:MAX_RECENT_FILES]
     save(settings)
+
+
+def set_preview_settings(settings: PreviewSettings) -> None:
+    """Records the Preview settings, load-mutate-save for exactly the same
+    reason as add_recent_file above: constructing a fresh AppSettings here
+    would silently wipe uk_terms and the Recent Files list."""
+    current = load()
+    current.preview = settings.copy()
+    save(current)

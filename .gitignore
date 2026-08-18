@@ -38,3 +38,7 @@ Product Definition Document.html
 /dist/
 /dist_installer/
 packaging/version_info.txt
+
+# Audio walkthrough recordings - large media files, distributed via
+# GitHub Releases assets instead of committed to the repo.
+/demoes/

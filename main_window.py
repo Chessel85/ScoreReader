@@ -36,6 +36,7 @@ from widgets.menu_builder import MenuBuilder, goto_measure_action_text
 from widgets.mixer_dialog import MixerDialog
 from widgets.part_order_dialog import PartOrderDialog
 from widgets.performance_report_dialog import PerformanceReportDialog
+from widgets.preview_settings_dialog import PreviewSettingsDialog
 from widgets.region2_list_widget import Region2ListWidget
 from widgets.region2_manager import node_breadcrumb
 from widgets.region4_table_widget import Region4TableWidget
@@ -227,6 +228,10 @@ class MainWindow(QMainWindow):
         regions = [self.region_1, self.region_2, self.region_3, self.region_4, self.region_5]
 
         self.playback = PlaybackController(self.session, parent=self)
+        # Preview lead-in/length/looping is a global preference (all
+        # scores), so it is loaded once here rather than per file load -
+        # unlike the mixer, which travels with the score's own config.
+        self.playback.set_preview_settings(app_settings.load().preview)
         self.navigation = NavigationController(self.session, parent=self)
         self.focus = FocusController(self, regions, self.status_bar)
         self.presenter = RegionPresenter(
@@ -251,6 +256,7 @@ class MainWindow(QMainWindow):
         self.play_stop_action = actions.play_stop
         self.pause_resume_action = actions.pause_resume
         self.preview_action = actions.preview
+        self.preview_settings_action = actions.preview_settings
         self.mute_action = actions.mute
         self.solo_action = actions.solo
         self.unmute_all_action = actions.unmute_all
@@ -787,6 +793,26 @@ class MainWindow(QMainWindow):
         if previous_focus is not None:
             previous_focus.setFocus()
 
+    def _show_preview_settings_dialog(self):
+        """Playback > Preview Settings... (Ctrl+Shift+V) - the count-in
+        before Preview starts, how many bars it runs, and whether it loops.
+
+        Saved GLOBALLY (app_settings, like the UK/US dialect) rather than
+        per score, the user's own decision: a lead-in length is a practice
+        habit, not a property of one piece. Pushed to the controller as
+        well as saved, so it applies to the very next Enter without a
+        reload."""
+        previous_focus = self.focusWidget()
+        dialog = PreviewSettingsDialog(
+            self, settings=self.playback.preview_settings, uk_terms=self._uk_terms
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            settings = dialog.preview_settings()
+            self.playback.set_preview_settings(settings)
+            app_settings.set_preview_settings(settings)
+        if previous_focus is not None:
+            previous_focus.setFocus()
+
     def _show_performance_report_dialog(self):
         """Ref 29: read-only, no live signal wiring - build from current
         data, exec, restore previous focus."""
@@ -816,7 +842,12 @@ class MainWindow(QMainWindow):
             self.playback.commit_mixer_edit()
         else:
             self.playback.cancel_mixer_edit()
-        if self.sequencer is not None and (self.sequencer.is_playing or self.sequencer.is_paused):
+        # is_preview_active as well as is_playing: the dialog's own Preview
+        # button (Alt+W) can leave a count-in or a loop running, neither of
+        # which the Sequencer's own flags can see.
+        if self.playback.is_preview_active or (
+            self.sequencer is not None and (self.sequencer.is_playing or self.sequencer.is_paused)
+        ):
             self.playback.stop()
         if previous_focus is not None:
             previous_focus.setFocus()
@@ -942,6 +973,10 @@ class MainWindow(QMainWindow):
         self._save_current_score_config()
         self.focus.disconnect_tracking()
         self.session.wait_for_load()
+        # Directly, not via playback.stop(), for the same reason the
+        # Sequencer is stopped directly below: no signals into regions that
+        # are being torn down.
+        self.playback.cancel_preview()
         if self.playback.sequencer is not None:
             self.playback.sequencer.stop()
         self.synth.close()
