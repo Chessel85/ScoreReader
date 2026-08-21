@@ -12,6 +12,7 @@ from audio.metronome import METRONOME_OFFBEAT_NOTE
 from main_window import MainWindow, detect_default_uk_terms
 from models import mixer_settings
 from models.preview_settings import PreviewSettings
+from persistence import app_settings
 from widgets.about_dialog import AboutDialog
 from widgets.attribute_order_dialog import AttributeOrderDialog
 from widgets.goto_measure_dialog import GotoMeasureDialog
@@ -491,7 +492,7 @@ def test_status_bar_updates_on_load_and_navigation(window, qtbot, null_synth, ts
     assert [f.text() for f in fields] == [
         "Measure 1 beat 1", "Key: C major / A minor", "Time: 4/4",
         "Playback tempo: 120 quarter notes per minute (score default)", "Playback: Stopped",
-        "Metronome: Off", "Position Announcer: Off",
+        "Metronome: Off", "Position Announcer: Off", "Preview length: 2 measures",
     ]
 
     qtbot.keyClick(window.region_3, Qt.Key.Key_Right, Qt.KeyboardModifier.ControlModifier)
@@ -499,7 +500,7 @@ def test_status_bar_updates_on_load_and_navigation(window, qtbot, null_synth, ts
     assert [f.text() for f in fields] == [
         "Measure 2 beat 1", "Key: C major / A minor", "Time: 6/8",
         "Playback tempo: 120 quarter notes per minute (score default)", "Playback: Stopped",
-        "Metronome: Off", "Position Announcer: Off",
+        "Metronome: Off", "Position Announcer: Off", "Preview length: 2 measures",
     ]
 
 
@@ -1694,6 +1695,66 @@ def test_preview_lead_in_pads_a_fractional_pickup_with_a_silent_remainder(
     assert play_offset == pytest.approx((4 + 1.5) * beat_ms, abs=1)
 
 
+# --- Alt+PageUp/PageDown: adjust preview length -------------------------
+
+def test_alt_page_up_and_down_adjust_the_preview_length_by_one_bar(
+    window, qtbot, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    assert window.playback.preview_settings.preview_bars == 2
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_PageUp, Qt.KeyboardModifier.AltModifier)
+
+    assert window.playback.preview_settings.preview_bars == 3
+    assert window.status_bar._fields[7].text() == "Preview length: 3 measures"
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_PageDown, Qt.KeyboardModifier.AltModifier)
+    qtbot.keyClick(window.region_3, Qt.Key.Key_PageDown, Qt.KeyboardModifier.AltModifier)
+
+    assert window.playback.preview_settings.preview_bars == 1
+    assert window.status_bar._fields[7].text() == "Preview length: 1 measures"
+
+
+def test_alt_page_down_cannot_go_below_one_bar(window, qtbot, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+
+    for _ in range(5):
+        qtbot.keyClick(window.region_3, Qt.Key.Key_PageDown, Qt.KeyboardModifier.AltModifier)
+
+    assert window.playback.preview_settings.preview_bars == 1
+
+
+def test_alt_page_up_has_no_practical_upper_cap(window, qtbot, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+
+    for _ in range(50):
+        qtbot.keyClick(window.region_3, Qt.Key.Key_PageUp, Qt.KeyboardModifier.AltModifier)
+
+    assert window.playback.preview_settings.preview_bars == 52
+
+
+def test_bare_page_up_down_leaves_the_preview_length_untouched(window, qtbot, minimal_score):
+    """No Alt: that's QListWidget's own native paging, not this feature -
+    the same reasoning bare Left/Right vs Ctrl+Left/Right already has."""
+    load_and_wait(window, qtbot, minimal_score)
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_PageUp)
+    qtbot.keyClick(window.region_3, Qt.Key.Key_PageDown)
+
+    assert window.playback.preview_settings.preview_bars == 2
+
+
+def test_alt_page_up_persists_the_new_length_globally(window, qtbot, minimal_score):
+    """Same persistence as the Preview Settings dialog's OK - a bar count
+    set this way is a practice habit that should follow the user, not just
+    stay live for this session."""
+    load_and_wait(window, qtbot, minimal_score)
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_PageUp, Qt.KeyboardModifier.AltModifier)
+
+    assert app_settings.load().preview.preview_bars == 3
+
+
 # --- E7: chord audition retrigger on Shift+Space (Ref 13) ----------------
 
 def test_shift_space_plays_the_current_chord_with_no_navigation(
@@ -2781,6 +2842,40 @@ def test_ctrl_end_on_region_5_jumps_to_the_last_note_of_the_end_bar(
     current = window._music_data.get_current_slice()
     assert current.measure == 3
     assert current.notes[0].step_name == "E"
+
+
+def test_performance_cue_refires_when_arrowing_back_onto_a_beginning_repeat_target(
+    window, qtbot, null_synth, unmatched_backward_repeat_score
+):
+    """unmatched_backward_repeat_score's repeat has no forward counterpart,
+    so it defaults its start to measure 1 (user-requested follow-up) -
+    stepping from measure 2 back onto measure 1's first note is "arrowing
+    onto the first note in bar 1" and must re-ding even though Region 5's
+    row set (the same repeat span) hasn't changed."""
+    load_and_wait(window, qtbot, unmatched_backward_repeat_score)  # starts on measure 1, span already active
+    assert _region_5_labels(window) == ["Repeat start: measure 1", "Repeat end: measure 2"]
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Right)  # -> measure 2 (same active span, no refire)
+    null_synth.performance_cues.clear()
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Left)  # back onto measure 1 - the repeat's own target
+
+    assert len(null_synth.performance_cues) == 1
+
+
+def test_performance_cue_fires_when_playback_starts_from_a_beginning_repeat_target(
+    window, qtbot, null_synth, unmatched_backward_repeat_score
+):
+    """Starting playback from bar 1 note 1 without first moving the cursor
+    elsewhere must still ding - the user's other explicit trigger, alongside
+    arrowing back onto it."""
+    load_and_wait(window, qtbot, unmatched_backward_repeat_score)
+    null_synth.performance_cues.clear()
+
+    window.toggle_play_stop()  # Space: plays from the cursor, still measure 1 note 1
+
+    assert len(null_synth.performance_cues) == 1
+    window.toggle_play_stop()  # stop, so no timer keeps running into the next test
 
 
 def test_navigating_into_a_time_signature_change_updates_region_5_and_plays_the_cue(

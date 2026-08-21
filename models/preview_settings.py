@@ -26,7 +26,11 @@ from typing import Optional
 MAX_LEAD_IN_BARS = 8
 MAX_LEAD_IN_BEATS = 15
 MIN_PREVIEW_BARS = 1
-MAX_PREVIEW_BARS = 32
+# High enough to read as "no real cap" for Alt+PageUp (controllers/
+# playback_controller.py's adjust_preview_bars) - the user's explicit ask
+# was no upper limit, but _clamp and the dialog's QSpinBox both need a
+# finite bound; 999 bars is already the whole piece for any real score.
+MAX_PREVIEW_BARS = 999
 
 
 def _clamp(value: int, low: int, high: int) -> int:
@@ -64,6 +68,16 @@ class PreviewSettings:
 
     def has_lead_in(self) -> bool:
         return self.lead_in_bars > 0 or self.lead_in_beats > 0
+
+    def with_preview_bars(self, preview_bars: int) -> "PreviewSettings":
+        """A copy with just preview_bars changed - Alt+PageUp/PageDown in
+        the Note region (controllers/playback_controller.py.adjust_preview_
+        bars) reads/writes only this one field, clamped the same way a
+        typed dialog value is."""
+        settings = self.copy()
+        settings.preview_bars = preview_bars
+        settings.__post_init__()
+        return settings
 
     def copy(self) -> "PreviewSettings":
         """An independent snapshot. A preview session snapshots the settings

@@ -3,6 +3,7 @@ and persistence/app_settings.py stores globally."""
 from models.preview_settings import (
     MAX_LEAD_IN_BARS,
     MAX_PREVIEW_BARS,
+    MIN_PREVIEW_BARS,
     PreviewSettings,
 )
 
@@ -51,6 +52,23 @@ def test_a_settings_file_written_before_this_feature_gets_the_defaults():
     assert PreviewSettings.from_dict(None) == PreviewSettings()
     assert PreviewSettings.from_dict({}) == PreviewSettings()
     assert PreviewSettings.from_dict({"loop": True}) == PreviewSettings(loop=True)
+
+
+def test_with_preview_bars_returns_an_independent_copy_with_only_that_field_changed():
+    """Alt+PageUp/PageDown (controllers/playback_controller.py.adjust_
+    preview_bars) reads/writes only this one field."""
+    original = PreviewSettings(lead_in_bars=3, preview_bars=2, loop=True)
+
+    changed = original.with_preview_bars(5)
+
+    assert changed.preview_bars == 5
+    assert changed.lead_in_bars == 3
+    assert changed.loop is True
+    assert original.preview_bars == 2, "the original is untouched"
+
+
+def test_with_preview_bars_clamps_below_the_minimum():
+    assert PreviewSettings().with_preview_bars(0).preview_bars == MIN_PREVIEW_BARS
 
 
 def test_copy_is_independent_of_the_original():

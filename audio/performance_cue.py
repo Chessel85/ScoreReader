@@ -3,8 +3,10 @@
 Same plain-module shape as audio/metronome.py and audio/position_announcer.py.
 
 Unlike those two, this cue isn't tied to a beat position - it fires when
-MainWindow._refresh_region_5 sees the active row set change - so
-performance_cue_event() takes no argument and always returns the same event.
+RegionPresenter.refresh_region_5 sees the active row set change, plus one
+narrow exception (MusicData.is_at_beginning_repeat_target) where it re-fires
+on an unchanged row set - so performance_cue_event() takes no argument and
+always returns the same event.
 """
 from typing import Tuple
 

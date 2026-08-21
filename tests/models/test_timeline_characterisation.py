@@ -376,7 +376,37 @@ def test_performance_region_rows_hairpin_wording_omits_beat_on_the_downbeat(
     ]
 
 
-# --- S7: one-shot time-signature/tempo change alerts ------------------------
+# --- S7: one-shot key/time-signature/tempo change alerts --------------------
+
+def test_key_signature_change_fires_a_one_shot_row_at_the_transition(
+    timeline, key_change_score
+):
+    """key_change_score: C major (bar 1) -> D major (bar 2)."""
+    md = timeline(key_change_score)
+
+    assert md.get_performance_region_rows(0) == []  # bar 1: the opening key, no alert
+    assert [r.label for r in md.get_performance_region_rows(3)] == []  # still C major, last slice of bar 1
+
+    bar_2_index = md.first_event_index_of_measure(2)
+    assert [r.label for r in md.get_performance_region_rows(bar_2_index)] == [
+        "Key signature change: D major / B minor"
+    ]
+    # One-shot: the row is gone again one slice later, still inside bar 2.
+    assert md.get_performance_region_rows(bar_2_index + 1) == []
+
+
+def test_key_signature_change_alert_is_suppressed_while_an_override_is_active(
+    timeline, key_change_score
+):
+    """S6: an active key-signature override forces one constant display key
+    score-wide, so the file's own real change must not still fire a "the key
+    changed" alert underneath it."""
+    md = timeline(key_change_score)
+    md.apply_key_signature_override(-1, "major")
+
+    bar_2_index = md.first_event_index_of_measure(2)
+    assert md.get_performance_region_rows(bar_2_index) == []
+
 
 def test_time_signature_change_fires_a_one_shot_row_at_the_transition(
     timeline, ts_change_score

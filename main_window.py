@@ -545,6 +545,18 @@ class MainWindow(QMainWindow):
     def audition_phrase(self):
         self.playback.audition_phrase()
 
+    def increase_preview_bars(self):
+        """Alt+PageUp in the Note region. Persisted globally right away,
+        like Preview Settings' own OK - a bar count set this way is the
+        same practice habit, not a per-score value."""
+        self.playback.adjust_preview_bars(1)
+        app_settings.set_preview_settings(self.playback.preview_settings)
+
+    def decrease_preview_bars(self):
+        """Alt+PageDown counterpart of increase_preview_bars."""
+        self.playback.adjust_preview_bars(-1)
+        app_settings.set_preview_settings(self.playback.preview_settings)
+
     def toggle_mute_current_region2_row(self):
         self.region_2.toggle_mute_current()
 

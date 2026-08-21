@@ -35,6 +35,7 @@ class TimelineListWidget(RegionFocusCycleMixin, QListWidget):
         key = event.key()
         main_win = self._main_window()
         ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        alt = bool(event.modifiers() & Qt.KeyboardModifier.AltModifier)
         no_modifiers = event.modifiers() == Qt.KeyboardModifier.NoModifier
 
         if no_modifiers and Qt.Key.Key_0 <= key <= Qt.Key.Key_9:
@@ -55,6 +56,16 @@ class TimelineListWidget(RegionFocusCycleMixin, QListWidget):
             if self._pending_digits:
                 self._pending_digits = ""
                 main_win.on_pending_digits_changed(self._pending_digits)
+            return
+        elif key == Qt.Key.Key_PageUp and alt:
+            # Alt avoids QListWidget's own native PageUp (move the current
+            # row up a page) - bare PageUp/PageDown would collide with that
+            # the same way bare Up/Down would collide with chord-selection
+            # handling above, so this is deliberately not bound plain.
+            main_win.increase_preview_bars()
+            return
+        elif key == Qt.Key.Key_PageDown and alt:
+            main_win.decrease_preview_bars()
             return
 
         if self._pending_digits:

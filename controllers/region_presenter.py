@@ -141,16 +141,23 @@ class RegionPresenter(QObject):
 
         Skips the rebuild entirely (not just the cue) when the label set is
         unchanged, so Region 5's focus and selection survive navigation
-        within the same span, and the cue only fires on a real change."""
+        within the same span, and the cue only fires on a real change -
+        EXCEPT landing back on the first note of measure 1 when a repeat
+        sends the piece back there (MusicData.is_at_beginning_repeat_target,
+        user-requested): that always re-fires the cue, with no list rebuild,
+        since arrowing back into an already-displayed repeat span (or
+        starting playback from bar 1 without moving the cursor first) would
+        otherwise stay silent under the ordinary dedup above."""
         if not self.music_data:
             return
         rows = self.music_data.get_performance_region_rows()
         labels = [r.label for r in rows]
-        if labels == self.last_performance_row_labels:
-            return
-        self.region_5.refresh_list(rows)
-        self.session.synth.play_performance_cue(*performance_cue_event())
-        self.last_performance_row_labels = labels
+        if labels != self.last_performance_row_labels:
+            self.region_5.refresh_list(rows)
+            self.session.synth.play_performance_cue(*performance_cue_event())
+            self.last_performance_row_labels = labels
+        elif self.music_data.is_at_beginning_repeat_target():
+            self.session.synth.play_performance_cue(*performance_cue_event())
 
     def select_all_region_3(self) -> None:
         self.region_3.selectAll()

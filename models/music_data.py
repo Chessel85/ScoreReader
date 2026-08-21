@@ -1099,8 +1099,8 @@ class MusicData:
     def get_performance_region_rows(self, index: Optional[int] = None) -> List[PerformanceRegionRow]:
         """Ref 29: Region 5's rows - a start and an end line per span active
         at the given position (default: the cursor), plus (S7) a one-shot
-        row for a time-signature or immediate/point tempo change landing
-        exactly here.
+        row for a key-signature, time-signature, or immediate/point tempo
+        change landing exactly here.
 
         Repeat/ending containment is a measure-number range check (barlines
         fall at measure boundaries); hairpins compare quarters_from_start,
@@ -1180,13 +1180,30 @@ class MusicData:
         # "Previous" is the immediately preceding entry in whichever list
         # slice_ came from (self.timeline_slices), so this works whether or
         # not the metronome's synthetic beat markers are currently spliced
-        # in - a marker slice carries the same real time_sig/tempo as its
-        # own position, same as a real one. Never fires at index 0 (the
-        # score's OPENING time signature/tempo - already shown in Region 1
-        # and the status bar, alerting on it here on every load would just
-        # be noise).
+        # in - a marker slice carries the same real key/time_sig/tempo as
+        # its own position, same as a real one. Never fires at index 0 (the
+        # score's OPENING key/time signature/tempo - already shown in
+        # Region 1 and the status bar, alerting on it here on every load
+        # would just be noise). A score whose key never changes - the
+        # common case - therefore never gets a key-signature row at all;
+        # that silence is this same "no alert on the opening value, no
+        # alert on no-op repetition" rule, not a separate suppression.
         previous = self.timeline_slices[resolved_index - 1] if resolved_index > 0 else None
         if previous is not None:
+            # A key-signature override (S6) forces one constant display key
+            # score-wide, so the file's own per-slice key_fifths can no
+            # longer disagree with itself in effect - suppress the alert
+            # while one is active rather than comparing raw, overridden-away
+            # values.
+            if self.key_signature_override_fifths is None and previous.key_fifths != slice_.key_fifths:
+                key_name = key_signature_display_name(slice_.key_fifths, None)
+                rows.append(
+                    PerformanceRegionRow(
+                        label=f"Key signature change: {key_name}",
+                        jump_target_measure=slice_.measure,
+                        jump_target_quarters=slice_.quarters_from_start,
+                    )
+                )
             if previous.time_sig != slice_.time_sig:
                 ts_num, ts_den = slice_.time_sig
                 rows.append(
@@ -1208,6 +1225,27 @@ class MusicData:
                 )
 
         return rows
+
+    def is_at_beginning_repeat_target(self, index: Optional[int] = None) -> bool:
+        """True when the resolved slice is the first note of measure 1 AND a
+        repeat sends playback back there (a RepeatSpan with start_measure ==
+        1) - "there is a repeat that takes the user back to the beginning"
+        (the user's own framing, requested after Ref 29 shipped). Landing
+        here after already having been inside that same still-active span -
+        stepping back from bar 2, or starting playback from bar 1 without
+        first navigating away - would otherwise never re-fire Region 5's
+        change cue, since RegionPresenter.refresh_region_5's row-label diff
+        sees no difference from last time. This is a deliberate, narrow
+        carve-out for that one case, not a general "re-fire on every
+        repeat-start arrival" rule - an ordinary mid-score practice repeat
+        (e.g. bars 4-5) keeps the existing dedup untouched."""
+        resolved_index = self.active_event_index if index is None else index
+        if not (0 <= resolved_index < len(self.timeline_slices)):
+            return False
+        slice_ = self.timeline_slices[resolved_index]
+        if slice_.measure != 1 or slice_.beat_position != 1.0:
+            return False
+        return any(span.start_measure == 1 for span in self.repeat_spans)
 
     @staticmethod
     def _format_tempo_number(value: float) -> str:

@@ -8,11 +8,11 @@ from PySide6.QtCore import Qt
 from widgets.status_bar_widget import StatusBarWidget
 
 
-def test_status_bar_has_seven_fields(qtbot):
+def test_status_bar_has_eight_fields(qtbot):
     bar = StatusBarWidget()
     qtbot.addWidget(bar)
 
-    assert len(bar._fields) == 7
+    assert len(bar._fields) == 8
 
 
 def test_set_fields_updates_text_and_accessible_name(qtbot):
@@ -23,17 +23,20 @@ def test_set_fields_updates_text_and_accessible_name(qtbot):
         "Measure 3 beat 2.5", "Key: G major / E minor", "Time: 3/4",
         "Playback tempo: 120 quarter notes per minute (score default)",
         "Playback: Playing", "Metronome: On", "Position Announcer: On",
+        "Preview length: 4 bars",
     ])
 
     assert [f.text() for f in bar._fields] == [
         "Measure 3 beat 2.5", "Key: G major / E minor", "Time: 3/4",
         "Playback tempo: 120 quarter notes per minute (score default)",
         "Playback: Playing", "Metronome: On", "Position Announcer: On",
+        "Preview length: 4 bars",
     ]
     assert [f.accessibleName() for f in bar._fields] == [
         "Measure 3 beat 2.5", "Key: G major / E minor", "Time: 3/4",
         "Playback tempo: 120 quarter notes per minute (score default)",
         "Playback: Playing", "Metronome: On", "Position Announcer: On",
+        "Preview length: 4 bars",
     ]
 
 
@@ -43,6 +46,7 @@ def test_set_field_updates_only_the_given_field(qtbot):
     bar.set_fields([
         "Measure 1 beat 1", "Key: -", "Time: 4/4", "Playback tempo: -",
         "Playback: Stopped", "Metronome: Off", "Position Announcer: Off",
+        "Preview length: 2 bars",
     ])
 
     bar.set_field(4, "Playback: Playing")
@@ -61,7 +65,7 @@ def test_tab_moves_to_the_next_field_and_wraps(qtbot):
     assert calls == [1]
 
     calls.clear()
-    qtbot.keyClick(bar._fields[6], Qt.Key.Key_Tab)
+    qtbot.keyClick(bar._fields[7], Qt.Key.Key_Tab)
     assert calls == [0], "wraps from the last field back to the first"
 
 
@@ -76,4 +80,4 @@ def test_shift_tab_moves_to_the_previous_field_and_wraps(qtbot):
 
     calls.clear()
     qtbot.keyClick(bar._fields[0], Qt.Key.Key_Backtab)
-    assert calls == [6], "wraps from the first field back to the last"
+    assert calls == [7], "wraps from the first field back to the last"

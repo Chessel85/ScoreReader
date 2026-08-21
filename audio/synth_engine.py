@@ -104,7 +104,49 @@ class SynthEngine:
             # Optimise for low latency using WASAPI
             self._fs.setting("audio.period-size", 128)
             self._fs.setting("audio.periods", 2)
-            self._fs.start(driver="wasapi")
+
+            # Deliberately NOT self._fs.start(driver="wasapi"): pyfluidsynth's
+            # Synth.start() unconditionally also creates a native MIDI router
+            # AND a MIDI input driver listening on the system's default MIDI
+            # input device (whatever "midi.driver" resolves to - "winmidi" on
+            # Windows), feeding its raw note-on/note-off straight into THIS
+            # SAME synth. This app has no feature that reads external MIDI
+            # input - the sequencer and every audition path only ever call
+            # noteon/noteoff themselves - so nothing was ever meant to listen
+            # there.
+            #
+            # Reported: with a USB MIDI controller connected (a Native
+            # Instruments A49), notes played on it while Preview was running
+            # went silent whenever they matched a pitch Preview was also
+            # sounding, fixed by transposing an octave away. Root cause: the
+            # controller's raw MIDI landed on this same engine on whatever
+            # channel it transmits (typically channel 1), which coincides
+            # with the channel a part is assigned - and FluidSynth's
+            # noteoff(channel, key) releases EVERY voice matching that pair
+            # regardless of source (the identical gotcha documented in
+            # audio/position_announcer.py for the click/announcer channels).
+            # A note played live and a Preview note landing on the same
+            # (channel, key) meant Preview's own note-off silenced the still-
+            # held live note too.
+            #
+            # FIRST FIX ATTEMPT, REVERTED: creating it via start() and then
+            # immediately calling fluidsynth.delete_fluid_midi_driver()
+            # deadlocked the whole app at startup on this machine (confirmed
+            # with a standalone repro - new_fluid_midi_driver() itself
+            # returns fine, but tearing it down never returns, presumably
+            # the driver thread never acknowledging shutdown). So the driver
+            # is never created at all instead: this replicates only the
+            # audio-half of Synth.start() by calling new_fluid_audio_driver
+            # directly (the same call start() makes), and simply never calls
+            # new_fluid_midi_router/new_fluid_midi_driver. self._fs.router
+            # and .midi_driver stay at Synth.__init__'s own None default, so
+            # Synth.delete()'s teardown (`if self.midi_driver: ...`) is a
+            # harmless no-op on close - nothing to hang on there either.
+            driver = "wasapi"
+            device = self._fs.get_setting(f"audio.{driver}.device")
+            self._fs.setting("audio.driver", driver)
+            self._fs.setting(f"audio.{driver}.device", device)
+            self._fs.audio_driver = fluidsynth.new_fluid_audio_driver(self._fs.settings, self._fs.synth)
 
             # Resolve SoundFont path
             # TEST SWITCH (user-requested, wishlist #4 pan investigation):

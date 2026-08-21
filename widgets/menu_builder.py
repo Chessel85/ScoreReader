@@ -274,7 +274,10 @@ class MenuBuilder:
         # conflict a bound one would cause.
         a.preview = self._action(
             "Pre&view\tEnter", self.slots.audition_phrase,
-            status_tip="Note region: Enter previews the current phrase",
+            status_tip=(
+                "Note region: Enter previews the current phrase; "
+                "Alt+PageUp/PageDown changes the preview length by one bar"
+            ),
         )
         playback_menu.addAction(a.preview)
 

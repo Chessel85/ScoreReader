@@ -52,12 +52,13 @@ class _StatusField(QLabel):
 
 
 class StatusBarWidget(QStatusBar):
-    """C6/C7/E2/E5/E8/Ref 28: measure/beat position, key signature, time
+    """C6/C7/E2/E5/E8/Ref 28/29: measure/beat position, key signature, time
     signature, playback tempo, playback status (Playing/Paused/Stopped),
-    metronome on/off and position announcer on/off, each its own focusable
-    field. Tab/Shift+Tab cycle only among these seven fields and wrap,
-    rather than leaving the pane the way every region widget's Tab does -
-    F6/Shift+F6 (C7) have sole ownership of leaving the status bar.
+    metronome on/off, position announcer on/off and the current Preview
+    length, each its own focusable field. Tab/Shift+Tab cycle only among
+    these eight fields and wrap, rather than leaving the pane the way every
+    region widget's Tab does - F6/Shift+F6 (C7) have sole ownership of
+    leaving the status bar.
 
     Using the real QStatusBar (via QMainWindow.setStatusBar) is what makes
     NVDA's "report status bar" command (NVDA+End) work through Qt's native
@@ -73,7 +74,8 @@ class StatusBarWidget(QStatusBar):
     PLAYBACK_FIELD = 4
     METRONOME_FIELD = 5
     POSITION_ANNOUNCER_FIELD = 6
-    FIELD_COUNT = 7
+    PREVIEW_LENGTH_FIELD = 7
+    FIELD_COUNT = 8
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -83,6 +85,7 @@ class StatusBarWidget(QStatusBar):
         self.set_fields([
             "Measure - beat -", "Key: -", "Time: -", "Playback tempo: -",
             "Playback: Stopped", "Metronome: Off", "Position Announcer: Off",
+            "Preview length: 2 bars",
         ])
 
     def set_fields(self, texts: List[str]) -> None:

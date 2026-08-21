@@ -80,6 +80,17 @@ def tempo_change_score() -> str:
 
 
 @pytest.fixture
+def key_change_score() -> str:
+    """One part, two complete 4/4 bars: C major (M1) -> D major (M2).
+
+    Proves a mid-score key-signature change is tracked and fires a Region 5
+    one-shot alert (S7 follow-up), the same pattern ts_change_score/
+    tempo_change_score already establish for time signature and tempo.
+    """
+    return _require(FIXTURES_DIR / "key_change.musicxml")
+
+
+@pytest.fixture
 def chord_score() -> str:
     """One part, one complete 4/4 bar with a two-note chord on the second beat."""
     return _require(FIXTURES_DIR / "chord.musicxml")

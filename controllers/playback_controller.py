@@ -13,6 +13,7 @@ from audio.strum_schedule import sound_events
 from models import mixer_settings
 from models.mixer_settings import MixerSettings
 from models.preview_settings import PreviewSettings
+from models.vocabulary import bar_word
 
 
 @dataclass
@@ -406,6 +407,24 @@ class PlaybackController(QObject):
         half way through."""
         self.preview_settings = settings.copy()
 
+    def adjust_preview_bars(self, delta: int) -> None:
+        """Alt+PageUp/PageDown in the Note region: lengthen/shorten the
+        preview span by one bar per press (reported from real practice use
+        - the fixed length the Preview Settings dialog sets was awkward to
+        retune mid-session). Alt avoids the native PageUp/PageDown paging
+        QListWidget already gives Region 3 - the same reason Ctrl is used
+        for measure-at-a-time Left/Right there.
+
+        Applies to the NEXT preview, exactly like the dialog's OK - a
+        running preview keeps its own already-started snapshot. Clamped at
+        MIN_PREVIEW_BARS only; there is no practical upper bound the user
+        asked for (see MAX_PREVIEW_BARS's own comment for why a very high
+        one still exists internally)."""
+        self.preview_settings = self.preview_settings.with_preview_bars(
+            self.preview_settings.preview_bars + delta
+        )
+        self.status_text_changed.emit()
+
     def _build_preview_run(self) -> Optional["_PreviewRun"]:
         """Resolve where the preview starts and ends, in both index and
         real-time terms. Returns None when there is nothing to play."""
@@ -747,6 +766,7 @@ class PlaybackController(QObject):
             self.playback_status_text(),
             self.metronome_status_text(),
             self.position_announcer_status_text(),
+            self.preview_length_status_text(),
         ]
 
     def playback_status_text(self) -> str:
@@ -781,3 +801,12 @@ class PlaybackController(QObject):
         if self.music_data and self.music_data.position_announcer_enabled:
             return "Position Announcer: On"
         return "Position Announcer: Off"
+
+    def preview_length_status_text(self) -> str:
+        """Alt+PageUp/PageDown (adjust_preview_bars) has no visible control
+        to read the current value off, unlike a spin box in the dialog - so
+        the count is announced here the same way the metronome/announcer
+        toggles are, rather than only being discoverable by starting a
+        preview and counting bars."""
+        bar = bar_word(self.session.uk_terms) if self.session else "bar"
+        return f"Preview length: {self.preview_settings.preview_bars} {bar}s"
