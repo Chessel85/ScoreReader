@@ -4,6 +4,27 @@ from typing import List, Optional
 
 
 @dataclass
+class GraceNote:
+    """One grace note attached to the NoteData it leads into (see
+    NoteData.grace_notes) - never bucketed into its own EventSlice, since a
+    grace note has no <duration> of its own and would otherwise land at the
+    exact same (measure, offset) as the note it decorates, rendering as a
+    phantom chord tone (reported bug, MusicXML <grace> support).
+
+    slash=True is an acciaccatura (MusicXML <grace slash="yes"/>, a
+    "crushed" grace note played just before the beat); slash=False is an
+    appoggiatura (<grace/> with no slash, traditionally a longer grace note
+    that takes real time from the following main note). Both are realized
+    identically for now - a brief pre-note before the main note - see
+    audio/grace_note_schedule.py.
+    """
+
+    step_name: str
+    midi_pitch: Optional[int]
+    slash: bool
+
+
+@dataclass
 class NoteData:
     step_name: str
     measure: int
@@ -50,3 +71,9 @@ class NoteData:
     # override/auto-correction be losslessly reverted - the same role
     # file_key_fifths plays for a MIDI note's spelling.
     percussion_source_key: Optional[int] = None
+    # One or more grace notes performed immediately before this note (Ref
+    # MusicXML <grace> support). Attached here rather than given their own
+    # NoteData/EventSlice entry - see GraceNote's own docstring. None for
+    # every ordinary note; never set on a grace note itself (a grace note
+    # doesn't get a NoteData of its own at all).
+    grace_notes: Optional[List[GraceNote]] = None

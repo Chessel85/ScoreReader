@@ -780,6 +780,37 @@ def test_playback_events_route_a_percussion_part_to_the_gm_percussion_bank(timel
     assert len(channels) == 2, "the two percussion parts must not collide on one channel"
 
 
+def test_grace_note_events_are_separate_from_the_main_playback_group(timeline, grace_note_score):
+    """The grace note must not be stacked into get_playback_events_for_indices'
+    own pitch list (which would sound it simultaneously with the main note,
+    the original reported bug) - it comes back from the dedicated
+    get_grace_note_events_for_indices instead, grouped by part the same way,
+    but with no duration_ms (a grace note has no notated length)."""
+    md = timeline(grace_note_score, parts_info=[
+        PartStructureInfo(part_id="P1", name="Test Part", gmidi_program=1),
+    ])
+
+    events = md.get_playback_events_for_indices([0])
+    assert len(events) == 1
+    channel, program, midi_notes, duration_ms = events[0]
+    assert midi_notes == [69], "only the main note A4 - the grace note must not be stacked in"
+
+    grace_events = md.get_grace_note_events_for_indices([0])
+    assert len(grace_events) == 1
+    grace_channel, grace_program, grace_notes = grace_events[0]
+    assert grace_notes == [71], "the grace note B4"
+    assert grace_channel == channel and grace_program == program
+
+
+def test_grace_note_events_empty_for_an_ordinary_note(timeline, minimal_score):
+    """The common case: nothing selected carries a grace note, so callers
+    can treat an empty list as "fall straight through to plain play_chord"."""
+    md = timeline(minimal_score)
+
+    assert md.get_grace_note_events_for_indices([0]) == []
+    assert md.get_grace_note_events_at_index(0) == []
+
+
 def _hit_it_parts_info():
     """Real staff/voice shape for files/Hit It.mxl's two percussion parts -
     each distinct item is its own "voice", numbered by its own declared key

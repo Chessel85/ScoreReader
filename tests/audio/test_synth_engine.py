@@ -33,6 +33,7 @@ def _engine():
     engine._active_notes = []
     engine._group_off_timers = []
     engine._pending_strum_timers = []
+    engine._pending_grace_timers = []
     engine._active_click = None
     engine._active_announcement = None
     engine._active_performance_cue = None

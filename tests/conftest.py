@@ -104,6 +104,20 @@ def string_fret_score() -> str:
 
 
 @pytest.fixture
+def grace_note_score() -> str:
+    """One complete 4/4 bar: a single acciaccatura (<grace slash="yes"/>)
+    B4 leading into a quarter A4, then C4/D4/E4 filling out the bar."""
+    return _require(FIXTURES_DIR / "grace_note.musicxml")
+
+
+@pytest.fixture
+def grace_note_group_score() -> str:
+    """One complete 4/4 bar: two consecutive grace notes (B4, C5) leading
+    into a half-note A4, then D4/E4 filling out the bar."""
+    return _require(FIXTURES_DIR / "grace_note_group.musicxml")
+
+
+@pytest.fixture
 def dynamics_articulation_fingering_score() -> str:
     """Piano (2 staves) + Guitar (1 staff), one complete 4/4 bar each: a
     forte direction before a two-note chord, staccato and trill on separate

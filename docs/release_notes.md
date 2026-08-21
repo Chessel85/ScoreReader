@@ -1,5 +1,16 @@
 # Recall Score Release Notes
 
+
+## 2026.1.21
+
+* 
+grace notes and similar ornaments are now sounded and marked up in the noet region 
+
+## 2026.1.20
+
+* When playing or previewing, repeats, endings and codas are respected.  Movement with cursor keys along the timeline do not.
+* Codas tested with made up scores and not real world examples.
+
 ## 2026.1.19
 
 * Added playing attached MIDI devices directly within application including instrument selection, volume and pan.

@@ -762,7 +762,15 @@ class MusicData:
             # No <type> in the source XML (rare) - fall back to the raw
             # time-signature-relative number rather than guessing a name.
             dur_str = str(int(note.ts_duration)) if note.ts_duration.is_integer() else str(note.ts_duration)
-        pairs = {"step": note.step_name}
+        step_str = note.step_name
+        if note.grace_notes:
+            # Ref MusicXML <grace> support: "B grace A" rather than a
+            # separate phantom chord tone (reported bug - see
+            # parsers/timeline_builder.py's pending_grace). Shared by both
+            # Region 3 and Region 4 since both read this same "step" pair.
+            grace_str = ", ".join(g.step_name for g in note.grace_notes)
+            step_str = f"{grace_str} grace {step_str}"
+        pairs = {"step": step_str}
         if note.octave is not None:
             pairs["octave"] = str(note.octave)
         if note.midi_pitch is not None:
@@ -1796,6 +1804,55 @@ class MusicData:
                 program = max(0, self.get_gmidi_program_for_part(part_id) - 1)
                 events.append((channel, program, notes_by_part[part_id], duration_ms))
         return events
+
+    def get_grace_note_events_for_indices(
+        self, selected_indices: List[int], index: Optional[int] = None
+    ) -> List[Tuple[int, Optional[int], List[int]]]:
+        """Grace note(s) attached to the selected notes (NoteData.grace_notes,
+        see models/note_data.py), grouped by part - same (channel, program,
+        pitches) shape as get_playback_events_for_indices but with no
+        duration_ms, since these are meant to sound BRIEFLY before the main
+        chord, not for their own notated length (there isn't one - a grace
+        note carries no <duration>). audio/strum_schedule.py's sound_events
+        is what actually schedules them ahead of the main chord via
+        SynthEngine.play_chord_with_grace; empty when nothing selected
+        carries a grace note, the common case, which callers use to fall
+        straight through to the plain play_chord path unchanged.
+        """
+        notes = self._visible_notes(index)
+        if not notes:
+            return []
+
+        pitches_by_part: Dict[str, List[int]] = {}
+        part_order: List[str] = []
+        for i in selected_indices:
+            if not (0 <= i < len(notes)):
+                continue
+            note = notes[i]
+            if not note.grace_notes:
+                continue
+            grace_pitches = [g.midi_pitch for g in note.grace_notes if g.midi_pitch is not None]
+            if not grace_pitches:
+                continue
+            if note.part_id not in pitches_by_part:
+                pitches_by_part[note.part_id] = []
+                part_order.append(note.part_id)
+            pitches_by_part[note.part_id].extend(grace_pitches)
+
+        events = []
+        for part_id in part_order:
+            channel = self.get_channel_for_part(part_id)
+            program = max(0, self.get_gmidi_program_for_part(part_id) - 1)
+            events.append((channel, program, pitches_by_part[part_id]))
+        return events
+
+    def get_grace_note_events_at_index(self, index: int) -> List[Tuple[int, Optional[int], List[int]]]:
+        """The Sequencer's (index-based) equivalent of
+        get_grace_note_events_for_indices, mirroring get_playback_events_at_index."""
+        notes = self._visible_notes(index)
+        if not notes:
+            return []
+        return self.get_grace_note_events_for_indices(list(range(len(notes))), index=index)
 
     def get_current_duration_ms(self) -> int:
         return self.get_duration_ms_for_index(self.active_event_index)

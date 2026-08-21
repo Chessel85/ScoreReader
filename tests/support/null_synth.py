@@ -12,6 +12,7 @@ class NullSynth:
 
     def __init__(self):
         self.played: List[Dict[str, Any]] = []
+        self.grace_chords: List[Dict[str, Any]] = []
         self.strummed_bars: List[Dict[str, Any]] = []
         self.program_changes: List[tuple] = []
         self.stop_count: int = 0
@@ -88,6 +89,48 @@ class NullSynth:
                     "bank": bank,
                 }
             )
+
+    def play_chord_with_grace(
+        self,
+        main_events: List[tuple],
+        grace_events: List[tuple],
+        retrigger: bool = True,
+        grace_duration_ms: Optional[int] = None,
+    ) -> None:
+        """Mirrors SynthEngine.play_chord_with_grace - records the grace
+        groups (with the same effective_grace_duration_ms every real call
+        derives) separately in `grace_chords`, then plays main_events
+        synchronously via play_chord(retrigger=False) so `played` ends up
+        with the main notes exactly as the real engine's delayed QTimer
+        would eventually produce, with no real delay for a test to wait
+        out - same reasoning as play_strummed_bar's synchronous schedule
+        computation below."""
+        from audio.grace_note_schedule import effective_grace_duration_ms
+
+        if retrigger:
+            self.stop_all_notes()
+
+        if not grace_events:
+            self.play_chord(main_events, retrigger=False)
+            return
+
+        duration_ms = (
+            effective_grace_duration_ms(main_events)
+            if grace_duration_ms is None
+            else grace_duration_ms
+        )
+        for channel, program, pitches in grace_events:
+            if not pitches:
+                continue
+            self.grace_chords.append(
+                {
+                    "channel": channel,
+                    "program": program,
+                    "midi_notes": list(pitches),
+                    "duration_ms": duration_ms,
+                }
+            )
+        self.play_chord(main_events, retrigger=False)
 
     def play_strummed_bar(
         self,

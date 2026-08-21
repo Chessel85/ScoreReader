@@ -65,6 +65,54 @@ def test_string_and_fret_captured_from_notations_technical(timeline, string_fret
     assert second_note.fret == 3
 
 
+def test_grace_note_attaches_to_the_following_note_not_its_own_slice(timeline, grace_note_score):
+    """Reported bug: a <grace> note carries no <duration>, so without
+    special handling it lands at the exact same (measure, offset) as the
+    note it decorates and renders as a phantom extra chord tone. The grace
+    note must not get its own EventSlice at all - it attaches to the next
+    real note's NoteData.grace_notes instead, so the slice stays a single
+    note."""
+    md = timeline(grace_note_score)
+
+    first_slice = md.timeline_slices[0]
+    assert len(first_slice.notes) == 1, "the grace note must not appear as a second chord tone"
+
+    main_note = first_slice.notes[0]
+    assert main_note.step_name == "A"
+    assert main_note.grace_notes is not None
+    assert len(main_note.grace_notes) == 1
+    grace = main_note.grace_notes[0]
+    assert (grace.step_name, grace.midi_pitch, grace.slash) == ("B", 71, True)
+
+    # The slice's own quarter_length must be the MAIN note's duration, not
+    # clamped to the grace note's 0 - see TimelineBuilder.build()'s
+    # q_len = min(...) computation.
+    assert first_slice.quarter_length == 1.0
+
+    step_names = [s.notes[0].step_name for s in md.timeline_slices]
+    assert step_names == ["A", "C", "D", "E"], "only 4 real slices - the grace note added none of its own"
+
+
+def test_grace_note_group_attaches_in_document_order(timeline, grace_note_group_score):
+    """A double grace-note group (two consecutive <grace> notes before one
+    main note) attaches both, in the order they were written, to the same
+    main note - not just the first or last."""
+    md = timeline(grace_note_group_score)
+
+    main_note = md.timeline_slices[0].notes[0]
+    assert main_note.step_name == "A"
+    assert [(g.step_name, g.midi_pitch) for g in main_note.grace_notes] == [("B", 71), ("C", 72)]
+
+
+def test_grace_note_renders_as_grace_phrase_in_region_3(timeline, grace_note_score):
+    """The user-requested display: "B grace A", not "B, A" (which would
+    read as an ordinary two-note chord) - shared by Region 3 and Region 4
+    since both read MusicData._note_attribute_pairs' "step" value."""
+    md = timeline(grace_note_score)
+
+    assert md.get_region_3_data()[0] == "B grace A"
+
+
 def _note_by_pitch(md, step_name, octave):
     return next(
         n for s in md.timeline_slices for n in s.notes

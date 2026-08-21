@@ -8,6 +8,7 @@ from audio.metronome import METRONOME_CHANNEL
 from audio.midi_input import LIVE_MIDI_INPUT_CHANNEL
 from audio.performance_cue import PERFORMANCE_CUE_CHANNEL
 from audio.position_announcer import POSITION_ANNOUNCER_CHANNEL
+from audio.grace_note_schedule import effective_grace_duration_ms
 from audio.strum_schedule import build_strum_schedule
 
 # --- DLL RESOLUTION FROM SUBFOLDER ---
@@ -67,6 +68,13 @@ class SynthEngine:
         # midway through a new one - the same class of bug
         # _group_off_timers already exists to prevent, one level earlier.
         self._pending_strum_timers: List[QTimer] = []
+
+        # play_chord_with_grace's delayed main-chord attack, scheduled to
+        # fire once the grace note's own brief pre-note has had its moment -
+        # a still-pending future note-on, same "stop_all_notes() must cancel
+        # this or a previous audition's delayed chord fires midway through a
+        # new one" reasoning as _pending_strum_timers above.
+        self._pending_grace_timers: List[QTimer] = []
 
         # The click, the spoken position word and the performance cue each
         # get their own slot, separate from _active_notes and from each
@@ -269,6 +277,10 @@ class SynthEngine:
             timer.stop()
         self._pending_strum_timers.clear()
 
+        for timer in self._pending_grace_timers:
+            timer.stop()
+        self._pending_grace_timers.clear()
+
         for timer in self._group_off_timers:
             timer.stop()
         self._group_off_timers.clear()
@@ -455,6 +467,75 @@ class SynthEngine:
 
             if group_notes and group_duration_ms > 0:
                 self._schedule_group_off(group_notes, group_duration_ms)
+
+    def play_chord_with_grace(
+        self,
+        main_events: List[Tuple],
+        grace_events: List[Tuple],
+        retrigger: bool = True,
+        grace_duration_ms: Optional[int] = None,
+    ):
+        """Sounds grace_events briefly, then main_events - "B grace A"
+        played as two quick successive attacks instead of play_chord's
+        default of stacking every pitch into one simultaneous chord (which
+        is what made a grace note look and sound like an extra chord tone -
+        see models/note_data.py's GraceNote). Used only when
+        get_grace_note_events_for_indices found something to schedule; see
+        audio/strum_schedule.py's sound_events, the dispatcher that decides
+        between this and the plain play_chord path.
+
+        grace_events carries no duration of its own (a grace note has no
+        <duration>) - effective_grace_duration_ms (audio/
+        grace_note_schedule.py) derives a brief, tempo-aware ring time from
+        main_events' own durations, the one piece of real timing math,
+        split out as a pure function for the same testability reason
+        build_strum_schedule is. Deliberately flat, like play_strummed_bar:
+        one QTimer schedules the whole delayed main chord via the ordinary
+        play_chord (retrigger=False, since retrigger for the WHOLE call
+        already happened above if requested) rather than nesting further
+        timers per note.
+        """
+        if self._fs is None:
+            return
+
+        if retrigger:
+            self.stop_all_notes()
+
+        if not grace_events:
+            self.play_chord(main_events, retrigger=False)
+            return
+
+        duration_ms = (
+            effective_grace_duration_ms(main_events)
+            if grace_duration_ms is None
+            else grace_duration_ms
+        )
+
+        for channel, program, pitches in grace_events:
+            if not pitches:
+                continue
+            ch = channel & 0x0F
+            if program is not None:
+                self.set_program(ch, program)
+            group_notes: List[Tuple[int, int]] = []
+            for note in pitches:
+                self._fs.noteon(ch, note, 90)
+                group_notes.append((ch, note))
+            self._active_notes.extend(group_notes)
+            self._schedule_group_off(group_notes, duration_ms)
+
+        timer = QTimer()
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda t=timer: self._fire_delayed_chord(main_events, t))
+        self._pending_grace_timers.append(timer)
+        timer.start(duration_ms)
+
+    def _fire_delayed_chord(self, main_events: List[Tuple], timer: QTimer):
+        if timer in self._pending_grace_timers:
+            self._pending_grace_timers.remove(timer)
+        if self._fs is None:
+            return
+        self.play_chord(main_events, retrigger=False)
 
     def play_strummed_bar(
         self,

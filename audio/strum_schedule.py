@@ -7,7 +7,7 @@ getting right and easiest to get wrong - is directly unit-testable without
 a real event loop. SynthEngine.play_strummed_bar (audio/synth_engine.py)
 is the thin QTimer-driven wrapper around this.
 """
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 
 def build_strum_schedule(
@@ -56,7 +56,9 @@ def build_strum_schedule(
     return events
 
 
-def sound_events(synth, music_data, events: List[Tuple], retrigger: bool) -> None:
+def sound_events(
+    synth, music_data, events: List[Tuple], retrigger: bool, grace_events: Optional[List[Tuple]] = None
+) -> None:
     """The single dispatch point discrete audition (PlaybackController) and
     continuous playback (Sequencer) both route through instead of calling
     synth.play_chord directly. A UG score's Chords part is the only part
@@ -64,8 +66,13 @@ def sound_events(synth, music_data, events: List[Tuple], retrigger: bool) -> Non
     parsers/ug_timeline_builder.py), so get_playback_events_for_indices/
     get_playback_events_at_index always return exactly one group for a UG
     score - events[0] is always the right (and only) group to reroute.
-    Every other format, and a UG tab with no strumming data, falls straight
-    through to the unchanged play_chord path."""
+
+    grace_events (from MusicData.get_grace_note_events_for_indices/
+    get_grace_note_events_at_index) routes through play_chord_with_grace
+    instead when non-empty - a UG score never has any (UG's synthetic
+    Chords/Lyrics parts carry no MusicXML <grace> concept), so the two
+    routes never need to combine. Every other case falls straight through
+    to the unchanged play_chord path."""
     if not events:
         return
     if music_data.is_ug and music_data.ug_strum_pattern:
@@ -73,5 +80,7 @@ def sound_events(synth, music_data, events: List[Tuple], retrigger: bool) -> Non
         synth.play_strummed_bar(
             channel, program, pitches, music_data.ug_strum_pattern, duration_ms, retrigger=retrigger
         )
+    elif grace_events:
+        synth.play_chord_with_grace(events, grace_events, retrigger=retrigger)
     else:
         synth.play_chord(events, retrigger=retrigger)

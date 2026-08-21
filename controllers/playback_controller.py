@@ -738,14 +738,16 @@ class PlaybackController(QObject):
             return
 
         events = self.music_data.get_playback_events_for_indices(selected_indices)
+        grace_events = self.music_data.get_grace_note_events_for_indices(selected_indices)
 
         # sound_events (audio/strum_schedule.py) routes a UG score's Chords
         # bar through a real strummed pattern (play_strummed_bar) when one
-        # is available, else falls straight through to the unchanged
-        # play_chord path used by every other format - each group still
-        # carries its own duration, so no slice-wide duration_ms is needed
-        # here.
-        sound_events(self.synth, self.music_data, events, retrigger=True)
+        # is available, a selection with a MusicXML grace note through
+        # play_chord_with_grace, else falls straight through to the
+        # unchanged play_chord path used by every other format - each group
+        # still carries its own duration, so no slice-wide duration_ms is
+        # needed here.
+        sound_events(self.synth, self.music_data, events, retrigger=True, grace_events=grace_events)
 
         # Ref 14 AC3: fires even with no events at all (a metronome-only
         # beat marker), which is why it isn't folded into `if events`.

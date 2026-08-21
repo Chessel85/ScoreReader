@@ -18,7 +18,7 @@ from models.event_slice import EventSlice
 from models.fine_mark import FineMark
 from models.hairpin_span import HairpinSpan
 from models.navigation_jump import NavigationJump
-from models.note_data import NoteData
+from models.note_data import GraceNote, NoteData
 from models.parts_structure import PartStructureInfo
 from models.repeat_span import RepeatSpan
 from models.segno_mark import SegnoMark
@@ -418,6 +418,21 @@ class TimelineBuilder:
                 # including every note of a chord, which share an offset.
                 # Reset per measure; a direction's target is always local.
                 pending_dynamics: Dict[Tuple[Optional[int], int], str] = {}
+                # MusicXML <grace> support: a grace note carries no
+                # <duration> of its own, so without this it would land at
+                # the exact same (measure, offset) as the note it decorates
+                # and render as a phantom extra chord tone (reported bug -
+                # "B grace A" showing as a B/A chord). Buffered per
+                # (staff, voice) - the same key a chord's own notes share -
+                # in document order until the next non-grace note for that
+                # voice arrives, which is where they get attached (see
+                # GraceNote/NoteData.grace_notes). Reset per measure, like
+                # pending_dynamics: every real grace note seen resolves
+                # within the same measure as the note it leads into; a
+                # leftover entry (last note of a voice/measure being itself
+                # a grace note - untested by any real file) is flushed as a
+                # standalone note rather than silently dropped, see below.
+                pending_grace: Dict[Tuple[int, int], List[Tuple[NoteData, bool, Tuple[int, float]]]] = {}
 
                 for elem in m:
                     result = walker.step(elem)
@@ -488,6 +503,17 @@ class TimelineBuilder:
 
                     is_rest = elem.find("rest") is not None
                     dur_divs = _duration_divs(elem)
+
+                    # <grace> is a <note> child with no <duration> sibling -
+                    # dur_divs above is already 0 for it, which is also why
+                    # walker.step() never advances offset_divs past a grace
+                    # note (see _MeasureOffsetWalker.step). slash="yes" is
+                    # the conventional "crushed" acciaccatura; slash="no" or
+                    # absent is a longer appoggiatura - both are captured
+                    # here and realized identically for now (see GraceNote).
+                    grace_el = elem.find("grace")
+                    is_grace = grace_el is not None
+                    grace_slash = grace_el.attrib.get("slash", "no") == "yes" if is_grace else False
 
                     # The note's own notated shape (<type>/<dot>), not a
                     # reverse-lookup from quarter_length - a tuplet member's
@@ -709,6 +735,22 @@ class TimelineBuilder:
                     )
 
                     key = (m_num, round(offset_q, 4))
+                    voice_key = (staff, voice)
+
+                    if is_grace:
+                        # Not bucketed here at all - see GraceNote/
+                        # pending_grace's own comments. Held until the next
+                        # non-grace note for this (staff, voice) arrives.
+                        pending_grace.setdefault(voice_key, []).append((note_obj, grace_slash, key))
+                        continue
+
+                    grace_list = pending_grace.pop(voice_key, None)
+                    if grace_list:
+                        note_obj.grace_notes = [
+                            GraceNote(step_name=g.step_name, midi_pitch=g.midi_pitch, slash=slash)
+                            for g, slash, _ in grace_list
+                        ]
+
                     if key not in buckets:
                         buckets[key] = []
                     buckets[key].append(note_obj)
@@ -768,6 +810,21 @@ class TimelineBuilder:
                             duration_name_us=duration_name_us,
                         )
                         buckets[key].append(stroke_note)
+
+                # A grace note with no following non-grace note for its
+                # (staff, voice) before the measure ends (the piece's very
+                # last note being itself a grace note, or a voice ending
+                # mid-measure on one - untested by any real file so far).
+                # Flushed as an ordinary standalone note at its own captured
+                # key rather than silently dropped - the same "degrade
+                # gracefully" convention every other absent-data case in
+                # this parser follows.
+                for grace_list in pending_grace.values():
+                    for note_obj, _slash, key in grace_list:
+                        if key not in buckets:
+                            buckets[key] = []
+                        buckets[key].append(note_obj)
+                        slice_state[key] = ((walker.ts_num, walker.ts_den), walker.fifths)
 
                 divisions, time_sig_num, time_sig_den, fifths = (
                     walker.divisions, walker.ts_num, walker.ts_den, walker.fifths

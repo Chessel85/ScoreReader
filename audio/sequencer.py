@@ -142,6 +142,7 @@ class Sequencer(QObject):
             return
 
         events = self.music_data.get_playback_events_at_index(self._current_index)
+        grace_events = self.music_data.get_grace_note_events_at_index(self._current_index)
         if events:
             # retrigger=False for a natural advance: it must not silence
             # other parts' still-ringing notes just because this part has a
@@ -158,7 +159,9 @@ class Sequencer(QObject):
             # Chords bar through a real strummed pattern when one is
             # available, else falls through to the unchanged play_chord
             # path.
-            sound_events(self.synth, self.music_data, events, retrigger=self._pending_retrigger)
+            sound_events(
+                self.synth, self.music_data, events, retrigger=self._pending_retrigger, grace_events=grace_events
+            )
             # Groups carry their own durations, so the longest is what has
             # to finish ringing before this step is done - which matters
             # below when this is the run's final step.
