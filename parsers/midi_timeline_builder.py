@@ -60,6 +60,11 @@ class MidiTimelineBuilder:
         self.repeat_spans: List = []
         self.ending_spans: List = []
         self.hairpin_spans: List = []
+        self.segno_marks: List = []
+        self.coda_marks: List = []
+        self.to_coda_marks: List = []
+        self.fine_marks: List = []
+        self.navigation_jumps: List = []
         self.total_measures: int = 0
 
     def build(self) -> List[EventSlice]:

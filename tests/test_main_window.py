@@ -1695,6 +1695,55 @@ def test_preview_lead_in_pads_a_fractional_pickup_with_a_silent_remainder(
     assert play_offset == pytest.approx((4 + 1.5) * beat_ms, abs=1)
 
 
+# --- Repeat/D.C./D.S./Coda-aware Preview ---------------------------------
+
+def test_preview_jump_lower_bound_is_wired_to_the_preview_windows_start(
+    window, qtbot, dc_plain_score
+):
+    """The bound that keeps Preview from following a jump outside its own
+    short window (see MusicData.next_playback_index/PlaybackController.
+    _fire_preview_event): the Sequencer run this starts must receive
+    jump_lower_bound=run.start_index, not 0 - a D.C. reached while
+    previewing measure 2 alone must never be able to land back on measure
+    1, which sits outside the previewed window."""
+    load_and_wait(window, qtbot, dc_plain_score)
+    no_lead_in(window)
+    assert window._music_data.jump_to_measure(2) is True
+
+    window.audition_phrase()
+
+    run = window.playback._preview
+    assert run is not None and run.start_index != 0
+    assert window.sequencer._jump_lower_bound == run.start_index
+
+
+def test_preview_loop_timing_accounts_for_a_repeat_fully_inside_the_window(
+    window, qtbot, repeat_ending_then_dc_al_coda_score
+):
+    """Bug fix: iteration_ms (which schedules the loop-restart timer) used
+    to come from a flat, jump-unaware walk (span_ms_to_quarters) - with a
+    repeat fully inside the previewed 4 bars (the repeat+1st/2nd-ending
+    shape, measures 1-4), the REAL Sequencer run replays measures 2-3 an
+    extra time, taking longer than that flat walk predicts (8000ms) would
+    account for. playback_span_ms fixes this by simulating the same
+    jump-aware walk: m1->D4 (2000) + D4->D5 (1000) + D5->E (1000) + [repeat
+    retake: E's own duration, 2000] + D4->D5 second pass (1000) + [ending-
+    skip: D5's own duration, 1000, instead of the raw quarters gap to
+    measure 4] + measure 4 to end_quarters=16.0 (2000) = 10000ms total
+    (independently verified via MusicData.playback_span_ms directly)."""
+    load_and_wait(window, qtbot, repeat_ending_then_dc_al_coda_score)
+    no_lead_in(window, preview_bars=4)
+    md = window._music_data
+    assert md.active_event_index == 0  # measure 1, already the default
+
+    window.audition_phrase()
+
+    run = window.playback._preview
+    assert (run.start_index, run.end_index) == (0, 4)
+    assert run.end_quarters == 16.0
+    assert run.iteration_ms == 10000, "must be the jump-aware duration, not the flat 8000ms"
+
+
 # --- Alt+PageUp/PageDown: adjust preview length -------------------------
 
 def test_alt_page_up_and_down_adjust_the_preview_length_by_one_bar(

@@ -6,6 +6,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from audio.metronome import click_event_for_beat
 from audio.position_announcer import announcement_event_for_beat
 from audio.strum_schedule import sound_events
+from models.playback_jump_state import PlaybackJumpState
 
 
 class Sequencer(QObject):
@@ -43,6 +44,18 @@ class Sequencer(QObject):
         self.update_cursor: bool = True
         self._is_playing: bool = False
         self._is_paused: bool = False
+        # Repeat/ending/Segno/Coda/D.C./D.S./Fine-aware stepping state for
+        # THIS run only - see MusicData.next_playback_index. Reset fresh on
+        # every play_from(), same as the other per-run fields above.
+        self._jump_state: PlaybackJumpState = PlaybackJumpState()
+        self._jump_lower_bound: int = 0
+        # Whether the step ABOUT TO BE SOUNDED was reached by a jump (see
+        # PlaybackJumpState.last_step_was_jump) rather than a natural
+        # forward advance - read by _sound_current_step to decide retrigger
+        # for THIS step, then overwritten for the NEXT one right after
+        # next_playback_index is called. False for the very first step of a
+        # run; harmless, since play_from already clears the deck itself.
+        self._pending_retrigger: bool = False
 
     @property
     def is_playing(self) -> bool:
@@ -60,11 +73,23 @@ class Sequencer(QObject):
     def original_start_index(self) -> Optional[int]:
         return self._original_start_index
 
-    def play_from(self, start_index: int, end_index: Optional[int] = None, update_cursor: bool = True) -> None:
+    def play_from(
+        self,
+        start_index: int,
+        end_index: Optional[int] = None,
+        update_cursor: bool = True,
+        jump_lower_bound: int = 0,
+    ) -> None:
         """Ref 10 AC1: play from start_index through end_index (inclusive),
         or to the end of the visible timeline. update_cursor tells MainWindow
         whether this run moves active_event_index as it goes (full playback)
-        or leaves it alone (phrase audition)."""
+        or leaves it alone (phrase audition).
+
+        jump_lower_bound is the lowest index a repeat/D.C./D.S./Coda jump is
+        allowed to land on this run (see MusicData.next_playback_index) - 0
+        for ordinary full playback (every jump in the piece is reachable),
+        or Preview's own start_index (so a jump never lands before Preview's
+        own window)."""
         self._timer.stop()
         # An explicit reposition clears the deck; _sound_current_step uses
         # retrigger=False and won't, which is what lets other parts' notes
@@ -73,6 +98,9 @@ class Sequencer(QObject):
         self._current_index = start_index
         self._original_start_index = start_index
         self._end_index = end_index
+        self._jump_state = PlaybackJumpState()
+        self._jump_lower_bound = jump_lower_bound
+        self._pending_retrigger = False
         self.update_cursor = update_cursor
         self._is_playing = True
         self._is_paused = False
@@ -115,14 +143,22 @@ class Sequencer(QObject):
 
         events = self.music_data.get_playback_events_at_index(self._current_index)
         if events:
-            # retrigger=False: a natural advance must not silence other
-            # parts' still-ringing notes just because this part has a new
-            # attack here. play_from/resume clear the deck themselves.
+            # retrigger=False for a natural advance: it must not silence
+            # other parts' still-ringing notes just because this part has a
+            # new attack here (play_from/resume clear the deck themselves).
+            # But a step reached via a repeat/D.C./D.S./Coda jump
+            # (self._pending_retrigger, set after the PREVIOUS step's
+            # next_playback_index call - see PlaybackJumpState.
+            # last_step_was_jump) is a reposition, not a continuation, and
+            # must retrigger: without it, the departing note's own
+            # scheduled note-off timer races this step's note-on, which
+            # could easily lose the race and briefly double-sound - an
+            # audible stutter right at the jump (reported, live-tested).
             # sound_events (audio/strum_schedule.py) routes a UG score's
             # Chords bar through a real strummed pattern when one is
             # available, else falls through to the unchanged play_chord
             # path.
-            sound_events(self.synth, self.music_data, events, retrigger=False)
+            sound_events(self.synth, self.music_data, events, retrigger=self._pending_retrigger)
             # Groups carry their own durations, so the longest is what has
             # to finish ringing before this step is done - which matters
             # below when this is the run's final step.
@@ -151,7 +187,13 @@ class Sequencer(QObject):
 
         self.step_played.emit(self._current_index)
 
-        next_index = self.music_data.next_visible_event_index(self._current_index, self._end_index)
+        next_index = self.music_data.next_playback_index(
+            self._current_index, self._jump_state, self._end_index, self._jump_lower_bound
+        )
+        # Recorded now for whichever step sounds next (see the retrigger
+        # comment above) - next_playback_index has already set it fresh for
+        # THIS call by the time it returns.
+        self._pending_retrigger = self._jump_state.last_step_was_jump
         if next_index is None:
             # Stay "playing" and wait out the last note's ring via the same
             # timer path, with _pending_next_index None marking this wait as
@@ -170,6 +212,19 @@ class Sequencer(QObject):
         """Uses the tempo at the CURRENT step, not the next one: a marking
         at next_index takes effect on arrival, so the time taken to get
         there is governed by the tempo in force beforehand (Ref 12)."""
+        if self._pending_retrigger:
+            # next_index was reached via a jump - see PlaybackJumpState.
+            # last_step_was_jump, read into _pending_retrigger right after
+            # the next_playback_index call that produced it (still current
+            # here, nothing has touched it since). The departing note rings
+            # its own natural duration before the jump; the raw quarters
+            # delta below has no real-time meaning for a jump, which can
+            # move EITHER backward (a repeat/D.C./D.S. retake, delta <= 0 -
+            # the plain formula would collapse to the 1 ms floor) OR forward
+            # over unplayed content (an ending-skip/To Coda redirect, delta
+            # > 0 - the plain formula would wrongly compute a real-time
+            # pause for content that's never actually sounding).
+            return self.music_data.get_duration_ms_for_index(self._current_index)
         current_slice = self.music_data.timeline_slices[self._current_index]
         next_slice = self.music_data.timeline_slices[next_index]
         delta_quarters = next_slice.quarters_from_start - current_slice.quarters_from_start

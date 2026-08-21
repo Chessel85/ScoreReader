@@ -334,6 +334,105 @@ def test_no_announcement_when_position_announcer_disabled(timeline, null_synth, 
     assert null_synth.words == []
 
 
+def test_full_playback_follows_repeat_ending_and_dc_al_coda(
+    timeline, null_synth, repeat_ending_then_dc_al_coda_score
+):
+    """Real Sequencer wiring (not just the pure resolver, see
+    tests/models/test_playback_jump_resolver.py) - proves play_from actually
+    steps through the repeat, skips ending 1's content on the second pass,
+    and follows the D.C. al Coda jump. See the fixture's own doc comment for
+    the full expected sequence."""
+    md = timeline(repeat_ending_then_dc_al_coda_score, tempo_bpm=120)
+    seq, timer = _build(md, null_synth)
+
+    seq.play_from(0)
+    visited = [seq.current_index]
+    for _ in range(14):
+        timer.fire()
+        visited.append(seq.current_index)
+
+    assert visited == [0, 1, 2, 3, 1, 2, 4, 5, 6, 0, 1, 2, 4, 5, 7]
+
+
+def test_a_repeat_jump_retriggers_but_ordinary_steps_do_not(
+    timeline, null_synth, repeat_ending_then_dc_al_coda_score
+):
+    """Reported bug, live-tested against real scores (carcassi-etudes-1.mxl,
+    bach-bourree-tab/score.xml): a step reached via a repeat/ending-skip/
+    D.C./D.S./Coda jump is a reposition, not a natural continuation - it
+    must call stop_all_notes() first (retrigger=True), same as play_from's
+    own initial reposition, or the departing note's own scheduled note-off
+    races the jump target's note-on and can briefly double-sound (an
+    audible stutter right at the jump). An ordinary forward step must NOT
+    retrigger (Ref 8/A8 - other parts keep ringing across an unrelated
+    attack)."""
+    md = timeline(repeat_ending_then_dc_al_coda_score, tempo_bpm=120)
+    seq, timer = _build(md, null_synth)
+
+    seq.play_from(0)  # index0 - play_from's own reposition: stop_count == 1
+    assert null_synth.stop_count == 1
+
+    stop_counts = [null_synth.stop_count]
+    for _ in range(14):
+        timer.fire()
+        stop_counts.append(null_synth.stop_count)
+
+    # Jumps land on steps 4 (repeat retake), 6 (ending-skip to m4), 9
+    # (D.C. fires), 12 (ending-skip again, not retaken) and 14 (To Coda) -
+    # see the fixture's own doc comment for the full index sequence
+    # (0,1,2,3, 1,2,4, 5,6, 0,1,2, 4,5, 7). Every other step must be a
+    # plain, non-retriggering advance.
+    retriggered_at = [i for i in range(1, len(stop_counts)) if stop_counts[i] != stop_counts[i - 1]]
+    assert retriggered_at == [4, 6, 9, 12, 14]
+
+
+def test_backward_jump_lets_the_departing_note_ring_its_own_duration(
+    timeline, null_synth, dc_plain_score
+):
+    """Bug fix: a repeat/D.C./D.S./Coda jump lands at or before the current
+    position in elapsed-quarters, which the plain delta-quarters formula
+    turns negative - max(1, negative) used to collapse that to a 1 ms
+    delay, clipping the departing note almost instantly instead of letting
+    it ring its own whole-note duration (2000 ms at 120bpm) before the jump."""
+    md = timeline(dc_plain_score, tempo_bpm=120)
+    seq, timer = _build(md, null_synth)
+
+    seq.play_from(0)  # index0 (C, measure 1) - schedules the delay to index1
+    timer.fire()  # now index1 (D, measure 2, carries the D.C. mark)
+
+    # The jump back to index0 is what's now scheduled - its delay must be
+    # the departing note's own ring-out duration, not the 1 ms floor.
+    assert timer.scheduled_ms[-1] == 2000
+    assert seq.current_index == 1
+
+
+def test_forward_skip_jump_also_uses_the_departing_notes_own_duration(
+    timeline, null_synth, repeat_ending_then_dc_al_coda_score
+):
+    """Reported bug, live-tested against bach-bourree-tab/score.xml: an
+    ending-skip (or a To Coda redirect) moves FORWARD in elapsed-quarters,
+    skipping over unplayed content - the old delta_quarters<=0 check only
+    caught BACKWARD jumps, so a forward skip fell through to the plain
+    formula, which computed the raw quarters gap across the skipped content
+    as if it were real elapsed silence: a spurious ~1-bar pause was
+    reported right where the 2nd ending should start. The departing note's
+    own duration is the only sensible delay here too, regardless of
+    direction."""
+    md = timeline(repeat_ending_then_dc_al_coda_score, tempo_bpm=120)
+    seq, timer = _build(md, null_synth)
+
+    seq.play_from(0)
+    for _ in range(5):
+        timer.fire()
+    # Now at index2 (D5, measure 2, a half note - quarter_length 2.0, 1000ms
+    # at 120bpm) - the next step is the ending-skip redirect straight to
+    # measure 4, which must schedule D5's own 1000ms, not the raw quarters
+    # gap to measure 4's downbeat (which would span the skipped measure 3
+    # content as a spurious pause).
+    assert seq.current_index == 2
+    assert timer.scheduled_ms[-1] == 1000
+
+
 def test_restarting_playback_while_already_playing_replaces_the_previous_run(
     timeline, null_synth, minimal_score
 ):

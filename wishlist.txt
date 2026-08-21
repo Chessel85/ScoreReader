@@ -1,4 +1,5 @@
 * Playback and preview should obey repeats and codas.  but moving with cursor keys should not.
+* need to respect  Acciaccatura and other types of grace note
 * The application title bar should put Recall Score ahead of the filename 
 * when metronome is on, but moving up and down a chord, do not sound the metronome click.
 * A mute option so midi is not played.

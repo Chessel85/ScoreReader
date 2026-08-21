@@ -462,7 +462,12 @@ class PlaybackController(QObject):
         offset_ms = int(round(
             lead_quarters * 60000.0 / float(self.music_data.effective_tempo_bpm(start_index))
         ))
-        span_ms = self.music_data.span_ms_to_quarters(start_index, end_quarters)
+        # Jump-aware, not span_ms_to_quarters's flat walk - a repeat fully
+        # inside the preview window makes the real Sequencer run take longer
+        # than a naive linear walk would predict, and this drives the
+        # loop-restart timer below (iteration_ms), so it must know about it
+        # too or a contained repeat gets truncated mid-replay.
+        span_ms = self.music_data.playback_span_ms(start_index, end_index, end_quarters)
 
         return _PreviewRun(
             settings=settings,
@@ -596,7 +601,10 @@ class PlaybackController(QObject):
             run.playing = True
             if self.sequencer is not None:
                 self.sequencer.play_from(
-                    run.start_index, end_index=run.end_index, update_cursor=False
+                    run.start_index,
+                    end_index=run.end_index,
+                    update_cursor=False,
+                    jump_lower_bound=run.start_index,
                 )
             self.playback_state_changed.emit()
         elif kind == "loop":

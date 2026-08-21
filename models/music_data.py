@@ -3,18 +3,24 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from models import vocabulary
+from models.coda_mark import CodaMark
 from models.ending_span import EndingSpan
 from models.event_slice import EventSlice
+from models.fine_mark import FineMark
 from models.gm_percussion_map import GM_PERCUSSION_BANK, GM_PERCUSSION_PROGRAM, detect_percussion_key_shift
 from models.hairpin_span import HairpinSpan
 from models.key_signatures import key_signature_display_name
 from models.mixer_settings import MixerSettings
+from models.navigation_jump import NavigationJump
 from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
 from models.performance_region_row import PerformanceRegionRow
+from models.playback_jump_state import PlaybackJumpState
 from models.repeat_span import RepeatSpan
 from models.score_config_data import ScoreConfig
+from models.segno_mark import SegnoMark
 from models.tempo_change import TempoChange
+from models.to_coda_mark import ToCodaMark
 from parsers.gp_timeline_builder import GpTimelineBuilder
 from parsers.midi_timeline_builder import MidiTimelineBuilder, _spell_pitch
 from parsers.timeline_builder import CHORDS_PART_ID, LYRICS_PART_ID, TimelineBuilder
@@ -165,6 +171,18 @@ class MusicData:
     hairpin_spans: List[HairpinSpan] = field(default_factory=list)
     total_measures: int = 0
 
+    # Segno/Coda/D.C./D.S./Fine navigation marks, same side-channel pattern
+    # as repeat_spans/ending_spans/hairpin_spans above. MusicXML-only, like
+    # every other field on this line - MIDI/GP/UG builders stub these to
+    # empty lists (see e.g. parsers/midi_timeline_builder.py). Consumed by
+    # next_playback_index (playback/preview repeat-and-jump stepping) and
+    # get_performance_region_rows/get_performance_report_lines (display).
+    segno_marks: List[SegnoMark] = field(default_factory=list)
+    coda_marks: List[CodaMark] = field(default_factory=list)
+    to_coda_marks: List[ToCodaMark] = field(default_factory=list)
+    fine_marks: List[FineMark] = field(default_factory=list)
+    navigation_jumps: List[NavigationJump] = field(default_factory=list)
+
     @property
     def is_midi(self) -> bool:
         """True for a score loaded from a Standard MIDI File, as opposed to
@@ -251,6 +269,11 @@ class MusicData:
             self.repeat_spans = builder.repeat_spans
             self.ending_spans = builder.ending_spans
             self.hairpin_spans = builder.hairpin_spans
+            self.segno_marks = builder.segno_marks
+            self.coda_marks = builder.coda_marks
+            self.to_coda_marks = builder.to_coda_marks
+            self.fine_marks = builder.fine_marks
+            self.navigation_jumps = builder.navigation_jumps
             self.total_measures = builder.total_measures
             self.active_event_index = 0
             self._set_percussion_voice_names()
@@ -1175,6 +1198,69 @@ class MusicData:
                     )
                 )
 
+        # Segno/Coda/D.C./D.S./Fine: one-shot rows, like the time-sig/tempo
+        # rows below - unlike repeat/ending/hairpin spans, each of these is a
+        # single point, not a start/end pair, so the gate is a direct
+        # "does this mark sit at the resolved slice's own measure" check,
+        # not a diff against the previous slice (those marks aren't sticky
+        # per-slice values the way key/time-sig/tempo are). jump_target_*
+        # is always this row's OWN position (a harmless Ctrl+Home/Ctrl+End
+        # no-op, same as the time-sig/tempo rows) - jumping to where a mark
+        # actually points is out of scope; NavigationController.jump_to_span
+        # has no concept of that.
+        def _label_suffix(label: str) -> str:
+            return f" {label}" if label and label != "1" else ""
+
+        for segno in self.segno_marks:
+            if segno.measure == slice_.measure:
+                rows.append(
+                    PerformanceRegionRow(
+                        label=f"Segno{_label_suffix(segno.label)}",
+                        jump_target_measure=slice_.measure,
+                        jump_target_quarters=slice_.quarters_from_start,
+                    )
+                )
+
+        for coda in self.coda_marks:
+            if coda.measure == slice_.measure:
+                rows.append(
+                    PerformanceRegionRow(
+                        label=f"Coda{_label_suffix(coda.label)}",
+                        jump_target_measure=slice_.measure,
+                        jump_target_quarters=slice_.quarters_from_start,
+                    )
+                )
+
+        for to_coda in self.to_coda_marks:
+            if to_coda.measure == slice_.measure:
+                rows.append(
+                    PerformanceRegionRow(
+                        label=f"To coda{_label_suffix(to_coda.label)}",
+                        jump_target_measure=slice_.measure,
+                        jump_target_quarters=slice_.quarters_from_start,
+                    )
+                )
+
+        for fine in self.fine_marks:
+            if fine.measure == slice_.measure:
+                rows.append(
+                    PerformanceRegionRow(
+                        label="Fine",
+                        jump_target_measure=slice_.measure,
+                        jump_target_quarters=slice_.quarters_from_start,
+                    )
+                )
+
+        for nj in self.navigation_jumps:
+            if nj.measure == slice_.measure:
+                rows.append(
+                    PerformanceRegionRow(
+                        label="Da capo" if nj.kind == "dacapo" else "Dal segno",
+                        jump_target_measure=slice_.measure,
+                        jump_target_quarters=slice_.quarters_from_start,
+                    )
+                )
+
         # S7: a one-shot alert - unlike the three span kinds above, this has
         # no start/end pair, it just fires once at the transition itself.
         # "Previous" is the immediately preceding entry in whichever list
@@ -1306,6 +1392,26 @@ class MusicData:
             lines.append(
                 f"{span.kind.capitalize()}: {bar_word} {span.start_measure} to {bar_word} {span.end_measure}"
             )
+
+        def _label_suffix(label: str) -> str:
+            return f" {label}" if label and label != "1" else ""
+
+        lines.append(f"Segno marks: {len(self.segno_marks)}")
+        for segno in self.segno_marks:
+            lines.append(f"Segno{_label_suffix(segno.label)}: {bar_word} {segno.measure}")
+
+        lines.append(f"Coda marks: {len(self.coda_marks)}")
+        for coda in self.coda_marks:
+            lines.append(f"Coda{_label_suffix(coda.label)}: {bar_word} {coda.measure}")
+
+        lines.append(f"Fine marks: {len(self.fine_marks)}")
+        for fine in self.fine_marks:
+            lines.append(f"Fine: {bar_word} {fine.measure}")
+
+        lines.append(f"Navigation jumps: {len(self.navigation_jumps)}")
+        for nj in self.navigation_jumps:
+            name = "Da capo" if nj.kind == "dacapo" else "Dal segno"
+            lines.append(f"{name}: {bar_word} {nj.measure}")
 
         return lines
 
@@ -1786,6 +1892,200 @@ class MusicData:
             if self._slice_is_navigable(idx):
                 return idx
         return None
+
+    def _dacapo_target_measure(self) -> int:
+        """Da Capo means the true beginning of the piece - measure 0 when a
+        pickup bar exists (Ref 17's pickup numbering), not a hardcoded 1."""
+        measures = self.measure_numbers()
+        return measures[0] if measures else 1
+
+    def _resolve_coda_target(self, to_coda: "ToCodaMark") -> Optional[int]:
+        """The CodaMark a ToCodaMark jumps to: an exact label match first
+        (the normal <sound tocoda="X">/<sound coda="X"> case), else the
+        nearest CodaMark after this ToCodaMark's own measure (the text-only
+        fallback, where neither mark carries a real label to match)."""
+        for coda in self.coda_marks:
+            if to_coda.label and coda.label == to_coda.label:
+                return coda.measure
+        candidates = [c.measure for c in self.coda_marks if c.measure > to_coda.measure]
+        return min(candidates) if candidates else None
+
+    def next_playback_index(
+        self,
+        index: int,
+        jump_state: PlaybackJumpState,
+        end_index: Optional[int] = None,
+        jump_lower_bound: int = 0,
+    ) -> Optional[int]:
+        """Repeat/ending/Segno/Coda/D.C./D.S./Fine-aware sibling of
+        next_visible_event_index, for PLAYBACK AND PREVIEW ONLY - arrow-key
+        navigation keeps calling the plain, stateless next_visible_event_index
+        and is entirely untouched by this method's existence.
+
+        jump_state is per-RUN, owned by the caller (Sequencer.play_from
+        creates a fresh PlaybackJumpState alongside its other per-run resets)
+        - MusicData itself stays the stateless, shared source of truth it is
+        everywhere else.
+
+        A jump is only followed when its target index falls within
+        [jump_lower_bound, effective end] - this single rule is what makes
+        one algorithm correct for both callers: full playback passes
+        jump_lower_bound=0 (every jump in the piece is reachable, including
+        one that lands before wherever this particular run happened to
+        start), while Preview passes jump_lower_bound=start_index (its own
+        window start) with its own short end_index, so a repeat/ending fully
+        inside the previewed bars is followed while a D.C./D.S./Coda whose
+        target lies outside that short window is silently skipped - it just
+        falls through to plain linear stepping, exactly as it does today.
+
+        When the score has none of these marks (every list below is empty),
+        this degrades to a single next_visible_event_index call.
+
+        Also sets jump_state.last_step_was_jump - see its own docstring.
+        Default False here; each jump branch below sets it True right
+        before returning.
+        """
+        jump_state.last_step_was_jump = False
+        effective_end = end_index if end_index is not None else len(self.timeline_slices) - 1
+
+        def in_bounds(target: Optional[int]) -> bool:
+            return target is not None and jump_lower_bound <= target <= effective_end
+
+        if 0 <= index < len(self.timeline_slices):
+            m = self.timeline_slices[index].measure
+            if self.last_visible_event_index_of_measure(m) == index:
+                if not jump_state.jump_taken:
+                    for i, rs in enumerate(self.repeat_spans):
+                        if rs.end_measure == m and i not in jump_state.repeats_taken:
+                            target = self.first_visible_event_index_of_measure(rs.start_measure)
+                            if in_bounds(target):
+                                jump_state.repeats_taken.add(i)
+                                for j, es in enumerate(self.ending_spans):
+                                    if es.start_measure <= m <= es.end_measure:
+                                        jump_state.endings_to_skip.add(j)
+                                jump_state.last_step_was_jump = True
+                                return target
+                            break
+
+                    for nj in self.navigation_jumps:
+                        if nj.measure != m:
+                            continue
+                        if nj.kind == "dacapo":
+                            target_measure = self._dacapo_target_measure()
+                        else:
+                            label = nj.target_label or "1"
+                            segno = next(
+                                (s for s in self.segno_marks if (s.label or "1") == label), None
+                            )
+                            if segno is None:
+                                continue
+                            target_measure = segno.measure
+                        target = self.first_visible_event_index_of_measure(target_measure)
+                        if in_bounds(target):
+                            jump_state.jump_taken = True
+                            jump_state.last_step_was_jump = True
+                            return target
+                        break
+
+                if jump_state.jump_taken:
+                    for tc in self.to_coda_marks:
+                        if tc.measure == m:
+                            coda_measure = self._resolve_coda_target(tc)
+                            if coda_measure is not None:
+                                target = self.first_visible_event_index_of_measure(coda_measure)
+                                if in_bounds(target):
+                                    jump_state.last_step_was_jump = True
+                                    return target
+                            break
+
+                    if any(fm.measure == m for fm in self.fine_marks):
+                        return None
+
+        candidate = self.next_visible_event_index(index, effective_end)
+        if candidate is None or not jump_state.endings_to_skip:
+            return candidate
+
+        seen = 0
+        while candidate is not None and seen <= len(self.ending_spans):
+            candidate_measure = self.timeline_slices[candidate].measure
+            hit = next(
+                (
+                    j for j in jump_state.endings_to_skip
+                    if self.ending_spans[j].start_measure == candidate_measure
+                ),
+                None,
+            )
+            if hit is None:
+                break
+            redirected = self.first_visible_event_index_of_measure(
+                self.ending_spans[hit].end_measure + 1
+            )
+            if not in_bounds(redirected):
+                break
+            candidate = redirected
+            jump_state.last_step_was_jump = True
+            seen += 1
+        return candidate
+
+    def playback_span_ms(self, start_index: int, end_index: int, end_quarters: float) -> int:
+        """Jump-aware sibling of span_ms_to_quarters (left untouched, still
+        used elsewhere) - needed because Preview's own loop-restart timing
+        (_build_preview_run's iteration_ms) must know the REAL elapsed time a
+        repeat/jump-aware run through [start_index, end_index] takes, not the
+        flat, jump-unaware walk span_ms_to_quarters does. Without this, a
+        repeat fully inside the preview window would make the real Sequencer
+        run take longer than the separately-scheduled loop-restart timer
+        expects, truncating the repeat mid-replay.
+
+        Simulates the walk with a throwaway PlaybackJumpState (this is not a
+        real playback run - nothing actually sounds), using the same
+        jump_lower_bound=start_index Preview itself passes to Sequencer.
+        play_from, then adds the same tail-to-end_quarters segment
+        span_ms_to_quarters computes, so the loop still restarts on the true
+        bar line rather than when the last simulated note's ring-out ends.
+        When nothing inside the window jumps, this is numerically identical
+        to span_ms_to_quarters.
+        """
+        if not (0 <= start_index < len(self.timeline_slices)):
+            return 0
+        jump_state = PlaybackJumpState()
+        total_ms = 0.0
+        index = start_index
+        position = self.timeline_slices[start_index].quarters_from_start
+        guard = len(self.timeline_slices) * 2 + 4
+        while guard > 0:
+            guard -= 1
+            next_index = self.next_playback_index(index, jump_state, end_index, start_index)
+            # Deliberately NOT "if index == end_index: break" here - reaching
+            # end_index must still get its own next_playback_index call
+            # before stopping, or a repeat/jump whose TRIGGER point is
+            # end_index itself (e.g. a repeat spanning exactly the previewed
+            # window, a common case since a repeat is often exactly the
+            # requested bar count) would never be detected: next_index is
+            # None only once next_playback_index has genuinely found nothing
+            # further to do at end_index (bounded by the SAME end_index it
+            # was passed), which is what actually ends this walk.
+            if next_index is None:
+                break
+            next_quarters = self.timeline_slices[next_index].quarters_from_start
+            if jump_state.last_step_was_jump:
+                # A jump (backward repeat/D.C./D.S., or a forward
+                # ending-skip/To Coda) - the departing note still rings its
+                # own duration first regardless of which direction the jump
+                # moves in elapsed-quarters, the same jump-aware handling
+                # Sequencer._delay_ms_to applies for the real run.
+                total_ms += self.get_duration_ms_for_index(index)
+            elif next_quarters > position:
+                total_ms += (next_quarters - position) * 60000.0 / float(
+                    self.effective_tempo_bpm(index)
+                )
+            position = next_quarters
+            index = next_index
+        if end_quarters > position:
+            total_ms += (end_quarters - position) * 60000.0 / float(
+                self.effective_tempo_bpm(index)
+            )
+        return max(0, int(round(total_ms)))
 
     def get_status_bar_fields(self) -> List[str]:
         """The first four status-bar fields in Tab order: position, key,

@@ -279,6 +279,77 @@ def unmatched_backward_repeat_score() -> str:
 
 
 @pytest.fixture
+def dc_plain_score() -> str:
+    """Bare D.C. (Da Capo), no Fine/Coda - see the fixture's own doc
+    comment for the expected next_playback_index step sequence."""
+    return _require(FIXTURES_DIR / "dc_plain.musicxml")
+
+
+@pytest.fixture
+def dc_al_fine_score() -> str:
+    """D.C. al Fine - see the fixture's own doc comment for the expected
+    next_playback_index step sequence."""
+    return _require(FIXTURES_DIR / "dc_al_fine.musicxml")
+
+
+@pytest.fixture
+def dc_al_coda_score() -> str:
+    """D.C. al Coda - see the fixture's own doc comment for the expected
+    next_playback_index step sequence."""
+    return _require(FIXTURES_DIR / "dc_al_coda.musicxml")
+
+
+@pytest.fixture
+def dc_with_pickup_score() -> str:
+    """D.C. in a piece with a pickup bar - proves the dacapo target is
+    measure 0 (the pickup), not a hardcoded 1."""
+    return _require(FIXTURES_DIR / "dc_with_pickup.musicxml")
+
+
+@pytest.fixture
+def ds_plain_score() -> str:
+    """Plain D.S. (Dal Segno), segno on measure 2 - proves the jump target
+    is the segno, not the piece's start."""
+    return _require(FIXTURES_DIR / "ds_plain.musicxml")
+
+
+@pytest.fixture
+def ds_al_fine_score() -> str:
+    """D.S. al Fine - see the fixture's own doc comment for the expected
+    next_playback_index step sequence."""
+    return _require(FIXTURES_DIR / "ds_al_fine.musicxml")
+
+
+@pytest.fixture
+def ds_al_coda_score() -> str:
+    """D.S. al Coda - see the fixture's own doc comment for the expected
+    next_playback_index step sequence."""
+    return _require(FIXTURES_DIR / "ds_al_coda.musicxml")
+
+
+@pytest.fixture
+def multi_coda_labels_score() -> str:
+    """Two codas disambiguated by <sound> label matching - proves label
+    matching wins over "nearest coda after this point"."""
+    return _require(FIXTURES_DIR / "multi_coda_labels.musicxml")
+
+
+@pytest.fixture
+def text_only_jump_marks_score() -> str:
+    """D.S. al Coda with no <sound> element anywhere - exercises the
+    text/glyph-only fallback parse path."""
+    return _require(FIXTURES_DIR / "text_only_jump_marks.musicxml")
+
+
+@pytest.fixture
+def repeat_ending_then_dc_al_coda_score() -> str:
+    """repeats_and_endings.musicxml's repeat/1st-2nd-ending shape followed
+    by a D.C. al Coda - proves repeats/endings are not retaken on the
+    D.C. pass, end-to-end."""
+    return _require(FIXTURES_DIR / "repeat_ending_then_dc_al_coda.musicxml")
+
+
+@pytest.fixture
 def hairpin_score() -> str:
     """Ref 29: one part, 3 complete 4/4 bars of quarter notes - a crescendo
     spanning a measure boundary (m1 beat 3 -> m2 beat 2) and a diminuendo

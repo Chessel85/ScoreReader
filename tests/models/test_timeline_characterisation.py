@@ -324,6 +324,85 @@ def test_total_measures_counts_the_whole_score_not_just_sounding_slices(
     assert md.total_measures == 4
 
 
+def test_sound_attribute_jump_marks_are_parsed_with_their_labels(
+    timeline, dc_al_coda_score
+):
+    """<sound dacapo="yes">/<sound tocoda="1">/<sound coda="1"> are read
+    directly, unconditionally of a <segno/>/<coda/> sign glyph also being
+    present on the same direction (a <coda/> IS present here, but the
+    attribute read does not depend on it)."""
+    md = timeline(dc_al_coda_score)
+
+    assert len(md.navigation_jumps) == 1
+    nj = md.navigation_jumps[0]
+    assert (nj.measure, nj.kind, nj.target_label) == (3, "dacapo", None)
+
+    assert len(md.to_coda_marks) == 1
+    assert (md.to_coda_marks[0].measure, md.to_coda_marks[0].label) == (2, "1")
+
+    assert len(md.coda_marks) == 1
+    assert (md.coda_marks[0].measure, md.coda_marks[0].label) == (4, "1")
+
+
+def test_dalsegno_and_segno_labels_are_parsed(timeline, ds_al_coda_score):
+    md = timeline(ds_al_coda_score)
+
+    assert len(md.segno_marks) == 1
+    assert (md.segno_marks[0].measure, md.segno_marks[0].label) == (2, "1")
+
+    assert len(md.navigation_jumps) == 1
+    nj = md.navigation_jumps[0]
+    assert (nj.measure, nj.kind, nj.target_label) == (4, "dalsegno", "1")
+
+
+def test_fine_mark_is_parsed(timeline, dc_al_fine_score):
+    md = timeline(dc_al_fine_score)
+
+    assert len(md.fine_marks) == 1
+    assert md.fine_marks[0].measure == 1
+
+
+def test_multi_coda_labels_are_each_parsed_distinctly(timeline, multi_coda_labels_score):
+    md = timeline(multi_coda_labels_score)
+
+    assert len(md.coda_marks) == 2
+    assert (md.coda_marks[0].measure, md.coda_marks[0].label) == (4, "1")
+    assert (md.coda_marks[1].measure, md.coda_marks[1].label) == (5, "2")
+    assert md.to_coda_marks[0].label == "2"
+
+
+def test_get_performance_report_lines_lists_jump_marks(
+    timeline, repeat_ending_then_dc_al_coda_score
+):
+    """Ref 29 follow-up ("Want to know about codas"): the Performance
+    Report's whole-score summary lists every Segno/Coda/Fine/navigation-jump
+    mark by bar, same style as the existing repeat/ending/hairpin listing."""
+    md = timeline(repeat_ending_then_dc_al_coda_score)
+    lines = md.get_performance_report_lines()
+
+    assert "Coda marks: 1" in lines
+    assert "Coda: Measure 7" in lines
+    assert "Navigation jumps: 1" in lines
+    assert "Da capo: Measure 6" in lines
+
+
+def test_get_performance_region_rows_include_jump_marks(
+    timeline, repeat_ending_then_dc_al_coda_score
+):
+    """Ref 29 follow-up: Segno/Coda/Fine/D.C./D.S. marks get one-shot Region
+    5 rows, each gated on the mark's own measure - unlike repeat/ending
+    spans, these are single points, not start/end pairs."""
+    md = timeline(repeat_ending_then_dc_al_coda_score)
+
+    m6_index = next(i for i, s in enumerate(md.timeline_slices) if s.measure == 6)
+    labels = [r.label for r in md.get_performance_region_rows(m6_index)]
+    assert "Da capo" in labels
+
+    m7_index = next(i for i, s in enumerate(md.timeline_slices) if s.measure == 7)
+    labels = [r.label for r in md.get_performance_region_rows(m7_index)]
+    assert "Coda" in labels
+
+
 def test_performance_region_rows_follow_the_cursor_into_and_out_of_a_span(
     timeline, repeats_and_endings_score
 ):

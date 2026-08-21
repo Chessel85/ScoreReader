@@ -1,4 +1,5 @@
 # parsers/timeline_builder.py
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
@@ -11,13 +12,18 @@ from models.duration_units import (
     quarter_length_to_display_name,
     tuplet_word,
 )
+from models.coda_mark import CodaMark
 from models.ending_span import EndingSpan
 from models.event_slice import EventSlice
+from models.fine_mark import FineMark
 from models.hairpin_span import HairpinSpan
+from models.navigation_jump import NavigationJump
 from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
 from models.repeat_span import RepeatSpan
+from models.segno_mark import SegnoMark
 from models.tempo_change import TempoChange
+from models.to_coda_mark import ToCodaMark
 from models.vocabulary import articulation_name, dynamic_name, spell_out_minor_chord
 from parsers.xml_source import read_musicxml_root
 
@@ -250,6 +256,11 @@ class _FirstPartScan:
     repeat_spans: List[RepeatSpan] = field(default_factory=list)
     ending_spans: List[EndingSpan] = field(default_factory=list)
     hairpin_spans: List[HairpinSpan] = field(default_factory=list)
+    segno_marks: List[SegnoMark] = field(default_factory=list)
+    coda_marks: List[CodaMark] = field(default_factory=list)
+    to_coda_marks: List[ToCodaMark] = field(default_factory=list)
+    fine_marks: List[FineMark] = field(default_factory=list)
+    navigation_jumps: List[NavigationJump] = field(default_factory=list)
 
 
 class TimelineBuilder:
@@ -288,6 +299,13 @@ class TimelineBuilder:
         self.repeat_spans: List[RepeatSpan] = []
         self.ending_spans: List[EndingSpan] = []
         self.hairpin_spans: List[HairpinSpan] = []
+        # Segno/Coda/D.C./D.S./Fine navigation marks, same side-channel
+        # pattern - see _step_direction_jump_marks.
+        self.segno_marks: List[SegnoMark] = []
+        self.coda_marks: List[CodaMark] = []
+        self.to_coda_marks: List[ToCodaMark] = []
+        self.fine_marks: List[FineMark] = []
+        self.navigation_jumps: List[NavigationJump] = []
         # From measure_start_quarters, which exists regardless of note
         # content - deriving it from timeline_slices would undercount a
         # trailing all-rest measure, since rests are skipped from there.
@@ -340,6 +358,11 @@ class TimelineBuilder:
         self.repeat_spans = scan.repeat_spans
         self.ending_spans = scan.ending_spans
         self.hairpin_spans = scan.hairpin_spans
+        self.segno_marks = scan.segno_marks
+        self.coda_marks = scan.coda_marks
+        self.to_coda_marks = scan.to_coda_marks
+        self.fine_marks = scan.fine_marks
+        self.navigation_jumps = scan.navigation_jumps
         self.total_measures = max(measure_start_quarters.keys()) if measure_start_quarters else 0
 
         buckets: Dict[Tuple[int, float], List[NoteData]] = {}
@@ -921,6 +944,7 @@ class TimelineBuilder:
                     open_wedge = self._step_wedge(
                         elem, m_num, walker, scan, open_wedge, pickup_filled_quarters
                     )
+                    self._step_direction_jump_marks(elem, m_num, scan)
                 elif elem.tag == "barline":
                     open_repeat_measure = self._step_barline(
                         elem, m_num, scan, open_repeat_measure, open_endings
@@ -1041,6 +1065,105 @@ class TimelineBuilder:
             )
             return None
         return open_wedge
+
+    # D.C./D.S. "al Fine"/"al Coda" is matched but its qualifier is
+    # discarded - the actual Fine/To-Coda marks live in their OWN separate
+    # <words> elsewhere in the piece (MuseScore's own convention, see the
+    # coda-variant fixtures), so the qualifier itself carries no extra
+    # information this app needs. Order matters: "to coda"/"coda" must be
+    # tried before the bare "D.C."/"D.S." patterns since a phrase like
+    # "D.C. al Coda" would otherwise never reach the coda branch.
+    _TO_CODA_WORDS_RE = re.compile(r"^\s*to\s+coda\s*([\w.]*)\s*$", re.IGNORECASE)
+    _CODA_WORDS_RE = re.compile(r"^\s*coda\s*([\w.]*)\s*$", re.IGNORECASE)
+    _DACAPO_WORDS_RE = re.compile(r"^\s*d\.?\s*c\.?(\s+al\s+.+)?\s*$", re.IGNORECASE)
+    _DALSEGNO_WORDS_RE = re.compile(r"^\s*d\.?\s*s\.?(\s+al\s+.+)?\s*$", re.IGNORECASE)
+    _FINE_WORDS_RE = re.compile(r"^\s*fine\s*\.?\s*$", re.IGNORECASE)
+
+    def _step_direction_jump_marks(
+        self, direction_elem, m_num: int, scan: "_FirstPartScan"
+    ) -> None:
+        """Segno/Coda signs and D.C./D.S./To-Coda/Fine directions.
+
+        Prefers the sibling <sound> element's machine-readable attributes
+        (dacapo/dalsegno/segno/coda/tocoda/fine) whenever present - read
+        directly and unconditionally, NOT gated on a <segno/>/<coda/> sign
+        glyph also being present in the same <direction-type>, since the
+        spec ties the two together by convention rather than requirement.
+        Falls back to case-insensitive <words> text matching only when no
+        <sound> element exists at all - real files (including MuseScore's
+        own test corpus) sometimes carry only the printed words with no
+        playback-oriented <sound> attributes.
+        """
+        sound_el = direction_elem.find("sound")
+        if sound_el is not None:
+            attrib = sound_el.attrib
+            if "segno" in attrib:
+                scan.segno_marks.append(SegnoMark(measure=m_num, label=attrib.get("segno") or "1"))
+            if "coda" in attrib:
+                scan.coda_marks.append(CodaMark(measure=m_num, label=attrib.get("coda") or "1"))
+            if "dacapo" in attrib:
+                scan.navigation_jumps.append(
+                    NavigationJump(measure=m_num, kind="dacapo", target_label=None)
+                )
+            if "dalsegno" in attrib:
+                scan.navigation_jumps.append(
+                    NavigationJump(measure=m_num, kind="dalsegno", target_label=attrib.get("dalsegno") or "1")
+                )
+            if "tocoda" in attrib:
+                scan.to_coda_marks.append(ToCodaMark(measure=m_num, label=attrib.get("tocoda") or "1"))
+            if "fine" in attrib:
+                scan.fine_marks.append(FineMark(measure=m_num))
+            return
+
+        dtypes = direction_elem.findall("direction-type")
+        if any(dt.find("segno") is not None for dt in dtypes):
+            scan.segno_marks.append(SegnoMark(measure=m_num, label="1"))
+        if any(dt.find("coda") is not None for dt in dtypes):
+            scan.coda_marks.append(CodaMark(measure=m_num, label=""))
+
+        for dt in dtypes:
+            words_el = dt.find("words")
+            if words_el is None or not words_el.text:
+                continue
+            self._match_words_jump_mark(words_el.text, m_num, scan)
+
+    @classmethod
+    def _match_words_jump_mark(cls, text: str, m_num: int, scan: "_FirstPartScan") -> None:
+        """Text-only fallback for a <words> direction with no accompanying
+        <sound> element - see _step_direction_jump_marks. Defensive: text
+        that doesn't match any known pattern is silently ignored, the same
+        "reads don't crash, absence isn't an error" convention every other
+        format's parser in this codebase follows."""
+        to_coda_match = cls._TO_CODA_WORDS_RE.match(text)
+        if to_coda_match:
+            scan.to_coda_marks.append(ToCodaMark(measure=m_num, label=to_coda_match.group(1) or ""))
+            return
+
+        dacapo_match = cls._DACAPO_WORDS_RE.match(text)
+        if dacapo_match:
+            scan.navigation_jumps.append(
+                NavigationJump(measure=m_num, kind="dacapo", target_label=None)
+            )
+            return
+
+        dalsegno_match = cls._DALSEGNO_WORDS_RE.match(text)
+        if dalsegno_match:
+            scan.navigation_jumps.append(
+                NavigationJump(measure=m_num, kind="dalsegno", target_label="1")
+            )
+            return
+
+        if cls._FINE_WORDS_RE.match(text):
+            scan.fine_marks.append(FineMark(measure=m_num))
+            return
+
+        # Tried last: a bare "Coda"/"Coda II" label under a <coda/> sign
+        # already recorded above (or, rarely, standing in for it in a
+        # file with no sign glyph at all) would otherwise never be
+        # captured with its printed label.
+        coda_match = cls._CODA_WORDS_RE.match(text)
+        if coda_match:
+            scan.coda_marks.append(CodaMark(measure=m_num, label=coda_match.group(1) or ""))
 
     @staticmethod
     def _tempo_change_from_direction(
