@@ -21,6 +21,9 @@ class NullSynth:
         self.performance_cues: List[Dict[str, Any]] = []
         self.volume_changes: List[tuple] = []
         self.pan_changes: List[tuple] = []
+        self.live_notes_on: List[tuple] = []
+        self.live_notes_off: List[int] = []
+        self.live_all_off_count: int = 0
 
     def set_program(self, channel: int, program: int, bank: int = 0) -> None:
         self.program_changes.append((channel, program, bank))
@@ -165,6 +168,19 @@ class NullSynth:
                 "velocity": velocity,
             }
         )
+
+    def live_note_on(self, pitch: int, velocity: int) -> None:
+        """Mirrors SynthEngine.live_note_on - recorded separately from
+        `played` (real notes), since live input never goes through
+        play_chord/stop_all_notes (see SynthEngine.stop_all_notes's own
+        comment on why)."""
+        self.live_notes_on.append((pitch, velocity))
+
+    def live_note_off(self, pitch: int) -> None:
+        self.live_notes_off.append(pitch)
+
+    def live_all_notes_off(self) -> None:
+        self.live_all_off_count += 1
 
     def close(self) -> None:
         self.closed = True

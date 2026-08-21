@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple
 from PySide6.QtCore import QTimer
 
 from audio.metronome import METRONOME_CHANNEL
+from audio.midi_input import LIVE_MIDI_INPUT_CHANNEL
 from audio.performance_cue import PERFORMANCE_CUE_CHANNEL
 from audio.position_announcer import POSITION_ANNOUNCER_CHANNEL
 from audio.strum_schedule import build_strum_schedule
@@ -81,6 +82,19 @@ class SynthEngine:
         self._active_click: Optional[Tuple[int, int]] = None  # (channel, note)
         self._active_announcement: Optional[Tuple[int, int]] = None
         self._active_performance_cue: Optional[Tuple[int, int]] = None
+
+        # Live MIDI input (audio/midi_input.py, controllers/live_midi_input_
+        # controller.py): pitches currently held down on a connected
+        # keyboard, all on the one reserved LIVE_MIDI_INPUT_CHANNEL. Just
+        # pitches, not (channel, note) pairs, since there is only one
+        # channel. Deliberately NOT part of _active_notes and NOT touched by
+        # stop_all_notes() below - every score navigation/audition calls
+        # stop_all_notes() far too often for a purpose (silence the score's
+        # OWN sounding notes before the next one) that has nothing to do
+        # with a note the user is physically holding down. A live note's
+        # only note-off is the matching live_note_off() call (a real key
+        # release) or the explicit live_all_notes_off() panic/teardown path.
+        self._live_input_active_notes: set = set()
 
         if not FLUIDSYNTH_AVAILABLE:
             print("[WARN] pyfluidsynth or DLLs missing. Sound engine disabled.")
@@ -243,6 +257,11 @@ class SynthEngine:
         self._fs.cc(channel & 0x0F, self.PAN_CC, max(0, min(127, value)))
 
     def stop_all_notes(self):
+        """Deliberately does NOT touch _live_input_active_notes - see that
+        attribute's own comment in __init__. Moving the score cursor must
+        never cut off a note the user is physically holding on a connected
+        keyboard; only live_all_notes_off() (device disable/close) does
+        that."""
         if self._fs is None:
             return
 
@@ -289,6 +308,35 @@ class SynthEngine:
         channel, note = self._active_performance_cue
         self._fs.noteoff(channel, note)
         self._active_performance_cue = None
+
+    def live_note_on(self, pitch: int, velocity: int) -> None:
+        """A key pressed on a connected live-input device (controllers/
+        live_midi_input_controller.py, itself called only from the Qt main
+        thread after marshaling off rtmidi's own callback thread - see that
+        controller's own docstring). Always LIVE_MIDI_INPUT_CHANNEL - the
+        instrument/volume/pan for that channel are set once at connect time
+        via set_program/set_channel_volume/set_channel_pan, not per note."""
+        if self._fs is None:
+            return
+        self._fs.noteon(LIVE_MIDI_INPUT_CHANNEL, pitch, velocity)
+        self._live_input_active_notes.add(pitch)
+
+    def live_note_off(self, pitch: int) -> None:
+        """The matching key release. Removes from the tracking set even if
+        _fs is None (a torn-down engine has no notes sounding either way)."""
+        self._live_input_active_notes.discard(pitch)
+        if self._fs is None:
+            return
+        self._fs.noteoff(LIVE_MIDI_INPUT_CHANNEL, pitch)
+
+    def live_all_notes_off(self) -> None:
+        """The one path that DOES force-release every currently-held live-
+        input note - explicit device change/disable and app close, never
+        ordinary score navigation (see stop_all_notes()'s own comment)."""
+        if self._fs is not None:
+            for pitch in list(self._live_input_active_notes):
+                self._fs.noteoff(LIVE_MIDI_INPUT_CHANNEL, pitch)
+        self._live_input_active_notes.clear()
 
     def play_performance_cue(self, channel: int, bank: int, program: int, pitch: int, velocity: int):
         """Sounds the "check Region 5" cue - same shape and one-shot-sample
@@ -497,5 +545,6 @@ class SynthEngine:
     def close(self):
         if self._fs:
             self.stop_all_notes()
+            self.live_all_notes_off()
             self._fs.delete()
             self._fs = None

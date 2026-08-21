@@ -7,6 +7,7 @@ from typing import List, Optional
 
 from PySide6.QtCore import QStandardPaths
 
+from models.live_midi_input_settings import LiveMidiInputSettings
 from models.preview_settings import PreviewSettings
 
 # File > Recent Files - most-recent-first, capped at this many entries.
@@ -25,11 +26,17 @@ class AppSettings:
     preview is global rather than per-score on the user's own decision: a
     count-in length is a practice habit that should follow them from piece
     to piece. Defaults live on PreviewSettings itself, so a settings file
-    written before this field existed simply gets them."""
+    written before this field existed simply gets them.
+
+    live_midi_input (device/instrument/volume/pan for playing a connected
+    MIDI keyboard live, controllers/live_midi_input_controller.py) is global
+    for the same reasoning as preview - confirmed with the user: it's the
+    user's hardware setup, not a property of any one score."""
 
     uk_terms: Optional[bool] = None
     recent_files: List[str] = field(default_factory=list)
     preview: PreviewSettings = field(default_factory=PreviewSettings)
+    live_midi_input: LiveMidiInputSettings = field(default_factory=LiveMidiInputSettings)
 
 
 def settings_path() -> Path:
@@ -48,6 +55,7 @@ def load() -> AppSettings:
             uk_terms=data.get("uk_terms"),
             recent_files=data.get("recent_files", []),
             preview=PreviewSettings.from_dict(data.get("preview")),
+            live_midi_input=LiveMidiInputSettings.from_dict(data.get("live_midi_input")),
         )
     except FileNotFoundError:
         return AppSettings()
@@ -86,4 +94,12 @@ def set_preview_settings(settings: PreviewSettings) -> None:
     would silently wipe uk_terms and the Recent Files list."""
     current = load()
     current.preview = settings.copy()
+    save(current)
+
+
+def set_live_midi_input_settings(settings: LiveMidiInputSettings) -> None:
+    """Records the live-MIDI-input settings, load-mutate-save for the same
+    reason as add_recent_file/set_preview_settings above."""
+    current = load()
+    current.live_midi_input = settings.copy()
     save(current)

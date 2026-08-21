@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from models.music_data import MusicData
+from tests.support.null_live_midi_input import NullMidiInputManager
 from tests.support.null_synth import NullSynth
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -389,6 +390,15 @@ def null_synth() -> NullSynth:
     return NullSynth()
 
 
+@pytest.fixture
+def null_live_midi_manager() -> NullMidiInputManager:
+    """Recording/injectable stand-in for audio.midi_input.MidiInputManager.
+    Never touches a real MIDI device. Pass to
+    MainWindow(live_midi_manager=...) for tests exercising live-MIDI-input
+    behaviour."""
+    return NullMidiInputManager()
+
+
 @pytest.fixture(autouse=True)
 def _isolate_persistence(monkeypatch, tmp_path):
     """Phase G: redirects app_settings/score_config's on-disk locations into
@@ -420,3 +430,31 @@ def _forbid_real_audio(monkeypatch):
         )
 
     monkeypatch.setattr(synth_engine.SynthEngine, "_init_engine", _blocked)
+
+
+@pytest.fixture(autouse=True)
+def _forbid_real_midi_input(monkeypatch):
+    """Fail loudly if any test opens a real MIDI input device or enumerates
+    real ports - the live-MIDI-input counterpart of _forbid_real_audio
+    above. A test that needs this behaviour should inject a
+    NullMidiInputManager (the null_live_midi_manager fixture) via
+    MainWindow(live_midi_manager=...) instead.
+
+    Belt-and-braces alongside that injectable stand-in: a test could still
+    construct MainWindow(synth=null_synth) without ever passing
+    live_midi_manager=, which would otherwise fall through to a real
+    MidiInputManager()."""
+    from audio import midi_input
+
+    def _blocked_open(self, device_name):
+        raise AssertionError(
+            "This test tried to open a real MIDI input device. Inject a "
+            "NullMidiInputManager instead - see "
+            "tests/support/null_live_midi_input.py."
+        )
+
+    def _blocked_list_ports():
+        raise AssertionError("This test tried to enumerate real MIDI input ports.")
+
+    monkeypatch.setattr(midi_input.MidiInputManager, "open", _blocked_open)
+    monkeypatch.setattr(midi_input, "list_input_ports", _blocked_list_ports)

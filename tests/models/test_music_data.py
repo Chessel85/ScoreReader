@@ -675,24 +675,26 @@ def test_get_channel_for_part_assigns_one_channel_per_part_in_order():
     assert md.get_channel_for_part("P2") == 1
 
 
-def test_get_channel_for_part_skips_the_metronome_announcer_and_cue_channels():
+def test_get_channel_for_part_skips_the_metronome_announcer_cue_and_live_input_channels():
     """MIDI channel 10 (0-indexed 9) is reserved for the click metronome
     (D-5) - a REAL percussion part is NOT routed here (wishlist #8: it gets
     an ordinary channel like any other part, program-selected to the GM
     percussion bank instead); channel 9 (0-indexed 8) is reserved for the
     position announcer (Ref 28); channel 8 (0-indexed 7) is reserved for the
-    Performance region's change cue (Ref 29) - see
+    Performance region's change cue (Ref 29); channel 7 (0-indexed 6) is
+    reserved for live MIDI input (audio/midi_input.py) - see
     MusicData.RESERVED_CHANNELS. 11 parts (idx 0-10) walk straight through
-    the 7 usable channels below the reservations, then resume past all
-    three."""
+    the 6 usable channels below the reservations, then resume past all
+    four."""
     parts = [PartStructureInfo(part_id=f"P{i}", gmidi_program=1) for i in range(1, 12)]
     md = MusicData(parts_info=parts)
 
-    assert md.get_channel_for_part("P7") == 6, "last channel before all three reservations"
-    assert md.get_channel_for_part("P8") == 10, "channel indices 7, 8 and 9 are all skipped"
-    assert md.get_channel_for_part("P9") == 11
-    assert md.get_channel_for_part("P10") == 12
-    assert md.get_channel_for_part("P11") == 13
+    assert md.get_channel_for_part("P6") == 5, "last channel before all four reservations"
+    assert md.get_channel_for_part("P7") == 10, "channel indices 6, 7, 8 and 9 are all skipped"
+    assert md.get_channel_for_part("P8") == 11
+    assert md.get_channel_for_part("P9") == 12
+    assert md.get_channel_for_part("P10") == 13
+    assert md.get_channel_for_part("P11") == 14
 
 
 def test_get_channel_for_part_returns_zero_for_an_unknown_part():

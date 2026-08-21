@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from audio.synth_engine import SynthEngine
 from controllers.attribute_controller import AttributeController
 from controllers.focus_controller import FocusController
+from controllers.live_midi_input_controller import LiveMidiInputController
 from controllers.navigation_controller import NavigationController
 from controllers.playback_controller import PlaybackController
 from controllers.region_presenter import RegionPresenter
@@ -32,6 +33,7 @@ from widgets.attribute_order_dialog import AttributeOrderDialog
 from widgets.goto_measure_dialog import GotoMeasureDialog
 from widgets.instrument_dialog import InstrumentDialog
 from widgets.key_signature_dialog import KeySignatureDialog
+from widgets.live_midi_input_dialog import LiveMidiInputDialog
 from widgets.menu_builder import MenuBuilder, goto_measure_action_text
 from widgets.mixer_dialog import MixerDialog
 from widgets.part_order_dialog import PartOrderDialog
@@ -92,7 +94,7 @@ class MainWindow(QMainWindow):
     BOUNDARY_MIDI_PITCH = PlaybackController.BOUNDARY_MIDI_PITCH
     BOUNDARY_DURATION_MS = PlaybackController.BOUNDARY_DURATION_MS
 
-    def __init__(self, synth=None, uk_terms: bool | None = None):
+    def __init__(self, synth=None, uk_terms: bool | None = None, live_midi_manager=None):
         """Create the main window.
 
         synth: any object with the SynthEngine interface (play_chord /
@@ -104,6 +106,11 @@ class MainWindow(QMainWindow):
         AppSettings value, falling back to OS-locale detection when nothing
         has ever been saved. An explicit value skips both and is not
         persisted, so tests are deterministic regardless of the machine.
+
+        live_midi_manager: any object with the MidiInputManager interface
+        (set_callback / list_ports / open / close / is_open / device_name).
+        Tests pass a NullMidiInputManager stand-in so no real MIDI device is
+        touched - same reasoning as synth above.
         """
         super().__init__()
         self.setWindowTitle("Recall Score")
@@ -118,6 +125,7 @@ class MainWindow(QMainWindow):
         self.session = ScoreSession(
             synth if synth is not None else SynthEngine(), uk_terms, parent=self
         )
+        self._live_midi_manager = live_midi_manager
 
         self.setup_ui()
         self.setup_controllers()
@@ -232,6 +240,15 @@ class MainWindow(QMainWindow):
         # scores), so it is loaded once here rather than per file load -
         # unlike the mixer, which travels with the score's own config.
         self.playback.set_preview_settings(app_settings.load().preview)
+        # Live MIDI input (device/instrument/volume/pan) is likewise global,
+        # not per-score - constructed once here, outliving every file load,
+        # the same lifetime ScoreSession/SynthEngine already have. .start()
+        # auto-connects to the last-used device if enabled and present this
+        # session; degrades silently otherwise.
+        self.live_midi = LiveMidiInputController(
+            self.session.synth, parent=self, midi_manager=self._live_midi_manager,
+        )
+        self.live_midi.start()
         self.navigation = NavigationController(self.session, parent=self)
         self.focus = FocusController(self, regions, self.status_bar)
         self.presenter = RegionPresenter(
@@ -278,6 +295,11 @@ class MainWindow(QMainWindow):
         self.us_language_action = actions.us_language
         self.metronome_action = actions.metronome
         self.position_announcer_action = actions.position_announcer
+        self.live_midi_input_action = actions.live_midi_input
+        self.live_midi_input_settings_action = actions.live_midi_input_settings
+        # Global (AppSettings), not per-score like metronome/position
+        # announcer above - set once here, never re-set on score load.
+        self.live_midi_input_action.setChecked(self.live_midi.settings.enabled)
         self.attribute_order_action = actions.attribute_order
         self.user_guide_action = actions.user_guide
         self.about_action = actions.about
@@ -586,6 +608,9 @@ class MainWindow(QMainWindow):
             self.playback.toggle_position_announcer()
         )
 
+    def toggle_live_midi_input(self):
+        self.live_midi_input_action.setChecked(self.live_midi.toggle_enabled())
+
     def _play_boundary_cue(self):
         self.playback.play_boundary_cue()
 
@@ -864,6 +889,33 @@ class MainWindow(QMainWindow):
         if previous_focus is not None:
             previous_focus.setFocus()
 
+    def _show_live_midi_input_dialog(self):
+        """Options > Live MIDI Input Settings... (Ctrl+Shift+L). Pure view
+        (see widgets/live_midi_input_dialog.py's own docstring) - this
+        method wires its signals and decides commit vs. revert from exec()'s
+        result, the same shape _show_mixer_dialog already has. Unlike the
+        Mixer dialog, this needs no loaded score at all - the feature is
+        global, not per-score."""
+        previous_focus = self.focusWidget()
+        dialog = LiveMidiInputDialog(
+            self,
+            devices=self.live_midi.available_devices(),
+            settings=self.live_midi.begin_settings_edit(),
+        )
+        dialog.instrument_changed.connect(self.live_midi.preview_instrument)
+        dialog.volume_changed.connect(self.live_midi.preview_volume)
+        dialog.pan_changed.connect(self.live_midi.preview_pan)
+        dialog.refresh_requested.connect(
+            lambda: dialog.set_devices(self.live_midi.available_devices())
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.live_midi.commit_settings_edit(dialog.result_settings())
+        else:
+            self.live_midi.cancel_settings_edit()
+        self.live_midi_input_action.setChecked(self.live_midi.settings.enabled)
+        if previous_focus is not None:
+            previous_focus.setFocus()
+
     def _show_instrument_dialog(self):
         """S5: rename a part and/or change its playback instrument, for
         both MusicXML and MIDI scores - "piano may not always be a suitable
@@ -991,5 +1043,9 @@ class MainWindow(QMainWindow):
         self.playback.cancel_preview()
         if self.playback.sequencer is not None:
             self.playback.sequencer.stop()
+        # Before synth.close(): needs self._fs still alive to send the real
+        # note-offs for any note still physically held on a live-input
+        # device.
+        self.live_midi.close()
         self.synth.close()
         super().closeEvent(event)

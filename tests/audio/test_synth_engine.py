@@ -36,6 +36,7 @@ def _engine():
     engine._active_click = None
     engine._active_announcement = None
     engine._active_performance_cue = None
+    engine._live_input_active_notes = set()
     return engine
 
 
@@ -144,6 +145,52 @@ def test_fire_strum_note_sounds_the_note_and_removes_itself_from_pending(qtbot):
     assert stand_in_timer not in engine._pending_strum_timers
     for timer in engine._group_off_timers:
         timer.stop()  # tidy up the note-off timer this scheduled
+
+
+def test_live_note_on_off_track_pitches_only_on_the_live_channel():
+    from audio.midi_input import LIVE_MIDI_INPUT_CHANNEL
+
+    engine = _engine()
+    engine.live_note_on(60, 90)
+    engine.live_note_on(64, 80)
+
+    assert engine._fs.note_ons == [(LIVE_MIDI_INPUT_CHANNEL, 60, 90), (LIVE_MIDI_INPUT_CHANNEL, 64, 80)]
+    assert engine._live_input_active_notes == {60, 64}
+
+    engine.live_note_off(60)
+
+    assert engine._fs.note_offs == [(LIVE_MIDI_INPUT_CHANNEL, 60)]
+    assert engine._live_input_active_notes == {64}
+
+
+def test_stop_all_notes_does_not_touch_live_input_notes():
+    """The whole point of live_input_active_notes being tracked separately
+    from _active_notes: moving the score cursor (which calls
+    stop_all_notes() via play_chord's retrigger, or directly) must not cut
+    off a note the user is physically holding on a connected keyboard."""
+    engine = _engine()
+    engine.live_note_on(60, 90)
+    engine._active_notes.append((0, 67))  # an ordinary score note also sounding
+
+    engine.stop_all_notes()
+
+    from audio.midi_input import LIVE_MIDI_INPUT_CHANNEL
+    assert (LIVE_MIDI_INPUT_CHANNEL, 60) not in engine._fs.note_offs
+    assert engine._live_input_active_notes == {60}, "the live note must still be tracked as held"
+    assert engine._active_notes == [], "the ordinary score note is still cleared as normal"
+
+
+def test_live_all_notes_off_force_releases_every_held_note():
+    from audio.midi_input import LIVE_MIDI_INPUT_CHANNEL
+
+    engine = _engine()
+    engine.live_note_on(60, 90)
+    engine.live_note_on(64, 80)
+
+    engine.live_all_notes_off()
+
+    assert sorted(engine._fs.note_offs) == [(LIVE_MIDI_INPUT_CHANNEL, 60), (LIVE_MIDI_INPUT_CHANNEL, 64)]
+    assert engine._live_input_active_notes == set()
 
 
 def test_stopping_a_group_is_safe_with_no_engine():

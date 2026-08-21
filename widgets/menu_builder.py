@@ -53,6 +53,8 @@ class Actions:
     terminology_group: Optional[QActionGroup] = None
     metronome: Optional[QAction] = None
     position_announcer: Optional[QAction] = None
+    live_midi_input: Optional[QAction] = None
+    live_midi_input_settings: Optional[QAction] = None
     attribute_order: Optional[QAction] = None
     user_guide: Optional[QAction] = None
     about: Optional[QAction] = None
@@ -367,6 +369,26 @@ class MenuBuilder:
             QKeySequence("Ctrl+P"), checkable=True,
         )
         options_menu.addAction(a.position_announcer)
+
+        # Play a connected MIDI keyboard/controller live through the app's
+        # own synth. Same checkable-toggle-plus-settings-dialog pairing as
+        # Preview/Preview Settings: Ctrl+L to turn it on/off (matching the
+        # single-Ctrl+letter family metronome/announcer already use),
+        # Ctrl+Shift+L for the settings dialog (matching the Ctrl+Shift+
+        # letter family Instruments/Key Signature/Mixer already use).
+        a.live_midi_input = self._action(
+            "Toggle Live &MIDI Input", self.slots.toggle_live_midi_input,
+            QKeySequence("Ctrl+L"), checkable=True,
+            status_tip="Play a connected MIDI keyboard live through Recall Score",
+        )
+        options_menu.addAction(a.live_midi_input)
+
+        a.live_midi_input_settings = self._action(
+            "Live MIDI Input &Settings...", self.slots._show_live_midi_input_dialog,
+            QKeySequence("Ctrl+Shift+L"),
+            status_tip="Choose the MIDI device, instrument, volume and pan for live input",
+        )
+        options_menu.addAction(a.live_midi_input_settings)
 
         # Ref 15 AC4: the ordering half of the attribute-display system;
         # add/remove is Region 4's right-click menu.

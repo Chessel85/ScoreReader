@@ -10,41 +10,11 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
-
-class _RangeSpinBox(QSpinBox):
-    """A QSpinBox where Home jumps to the maximum, End to the minimum, and
-    Insert resets to reset_value (e.g. pan's centre, 0%, or the user's
-    preferred volume reset point, 50%) - a plain QSpinBox only uses Home/End
-    to move the text cursor within the typed digits, giving no
-    single-keystroke way to reach an extreme (e.g. full left/full right
-    pan) or back to a known reference point.
-
-    Home->maximum/End->minimum (not the other way round) per the user's own
-    request: for Pan, Home is +100% (right) and End is -100% (left); for
-    Volume, Home is 100% (loudest this dialog allows) and End is 0% (mute) -
-    both are "Home = highest number this control has", not "Home = the
-    quiet/left end"."""
-
-    def __init__(self, parent=None, reset_value: int = 0):
-        super().__init__(parent)
-        self._reset_value = reset_value
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_Home:
-            self.setValue(self.maximum())
-            return
-        if event.key() == Qt.Key.Key_End:
-            self.setValue(self.minimum())
-            return
-        if event.key() == Qt.Key.Key_Insert:
-            self.setValue(self._reset_value)
-            return
-        super().keyPressEvent(event)
+from widgets.range_spin_box import RangeSpinBox
 
 
 class MixerDialog(QDialog):
@@ -89,7 +59,7 @@ class MixerDialog(QDialog):
         # that 50% is the engine's true default (begin_mixer_edit's initial
         # per-row display value is still the real default, 100%, for a row
         # with no override).
-        self.volume_spin = _RangeSpinBox(self, reset_value=50)
+        self.volume_spin = RangeSpinBox(self, reset_value=50)
         self.volume_spin.setRange(0, 100)
         self.volume_spin.setSuffix("%")
         # False: valueChanged fires on Enter/focus-out/arrow-step/wheel-step,
@@ -99,7 +69,7 @@ class MixerDialog(QDialog):
         self.volume_spin.setKeyboardTracking(False)
         self.volume_spin.valueChanged.connect(self._on_volume_changed)
 
-        self.pan_spin = _RangeSpinBox(self, reset_value=0)
+        self.pan_spin = RangeSpinBox(self, reset_value=0)
         self.pan_spin.setRange(-100, 100)
         self.pan_spin.setSuffix("%")
         self.pan_spin.setKeyboardTracking(False)
