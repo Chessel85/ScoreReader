@@ -205,27 +205,30 @@ class MenuBuilder:
             goto_measure_action_text(self.uk_terms),
             self.slots._show_goto_measure_dialog, QKeySequence("Ctrl+G"),
         )
-        a.move_to_notes = self._action(
-            "Move to &Notes", self.slots._navigation_menu_move_to_notes,
-            QKeySequence("N"),
-        )
-        # A direct-jump shortcut per region. Letters chosen to avoid the
-        # existing bare F/S/D tempo shortcuts - hence I for Info, not S.
+        # A direct-jump shortcut per region. Z/X/C/V/B (user-requested
+        # 2026-08-22, replacing the old scattered I/V/N/A/P): the five keys
+        # sit together on the keyboard's bottom row, left-to-right in the
+        # same order as the five regions, so they're easy to find by feel -
+        # still no collision with the existing bare F/S/D tempo shortcuts.
         a.move_to_metadata = self._action(
-            "Move to &Info", self.slots._navigation_menu_move_to_metadata,
-            QKeySequence("I"),
+            "Move to Info (&Z)", self.slots._navigation_menu_move_to_metadata,
+            QKeySequence("Z"),
         )
         a.move_to_parts = self._action(
-            "Move to Parts List (&V)", self.slots._navigation_menu_move_to_parts,
-            QKeySequence("V"),
+            "Move to Parts List (&X)", self.slots._navigation_menu_move_to_parts,
+            QKeySequence("X"),
+        )
+        a.move_to_notes = self._action(
+            "Move to Notes (&C)", self.slots._navigation_menu_move_to_notes,
+            QKeySequence("C"),
         )
         a.move_to_attributes = self._action(
-            "Move to &Attributes", self.slots._navigation_menu_move_to_attributes,
-            QKeySequence("A"),
+            "Move to Attributes (&V)", self.slots._navigation_menu_move_to_attributes,
+            QKeySequence("V"),
         )
         a.move_to_performance = self._action(
-            "Move to &Performance", self.slots._navigation_menu_move_to_performance,
-            QKeySequence("P"),
+            "Move to Performance (&B)", self.slots._navigation_menu_move_to_performance,
+            QKeySequence("B"),
         )
 
         navigation_menu.addAction(a.first_measure)

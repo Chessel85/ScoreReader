@@ -811,11 +811,11 @@ directly (see also §15.3).
 | Move to First Note | Home | Jumps to the first active note. Only enabled while focus is already in the Note region. |
 | Move to Last Note | End | Jumps to the last active note. Only enabled while focus is already in the Note region. |
 | Go to Measure... | Ctrl+G | Opens a dialog, pre-filled with the current bar, to jump to a specific bar number. |
-| Move to Notes | N | Jumps focus to the Note region from anywhere, without moving your timeline position. |
-| Move to Info | I | Jumps focus to the Score Info (metadata) region from anywhere. |
-| Move to Parts List | V | Jumps focus to the Parts List region from anywhere. |
-| Move to Attributes | A | Jumps focus to the Note Attributes region from anywhere. |
-| Move to Performance | P | Jumps focus to the Performance region from anywhere. |
+| Move to Info | Z | Jumps focus to the Score Info (metadata) region from anywhere. |
+| Move to Parts List | X | Jumps focus to the Parts List region from anywhere. |
+| Move to Notes | C | Jumps focus to the Note region from anywhere, without moving your timeline position. |
+| Move to Attributes | V | Jumps focus to the Note Attributes region from anywhere. |
+| Move to Performance | B | Jumps focus to the Performance region from anywhere. |
 
 ### 13.4 Playback Menu
 

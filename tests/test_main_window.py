@@ -705,11 +705,11 @@ def test_navigation_menu_items_use_home_and_end_shortcuts(window):
     assert window.first_measure_action.shortcut() == QKeySequence(Qt.Key.Key_Home)
     assert window.last_measure_action.shortcut() == QKeySequence(Qt.Key.Key_End)
     assert window.goto_measure_action.shortcut() == QKeySequence("Ctrl+G")
-    assert window.move_to_notes_action.shortcut() == QKeySequence("N")
-    assert window.move_to_metadata_action.shortcut() == QKeySequence("I")
-    assert window.move_to_parts_action.shortcut() == QKeySequence("V")
-    assert window.move_to_attributes_action.shortcut() == QKeySequence("A")
-    assert window.move_to_performance_action.shortcut() == QKeySequence("P")
+    assert window.move_to_notes_action.shortcut() == QKeySequence("C")
+    assert window.move_to_metadata_action.shortcut() == QKeySequence("Z")
+    assert window.move_to_parts_action.shortcut() == QKeySequence("X")
+    assert window.move_to_attributes_action.shortcut() == QKeySequence("V")
+    assert window.move_to_performance_action.shortcut() == QKeySequence("B")
 
 
 def test_first_and_last_note_actions_are_only_enabled_in_the_note_region(
@@ -739,7 +739,7 @@ def test_first_and_last_note_actions_are_only_enabled_in_the_note_region(
 def test_move_to_notes_action_focuses_region_3_from_any_pane(
     window, qtbot, null_synth, minimal_score
 ):
-    """New Navigation > Move to Notes (N) - the deliberate exception that
+    """New Navigation > Move to Notes (C) - the deliberate exception that
     stays enabled everywhere, since its job is getting focus into the Note
     region for quick navigation in the first place."""
     load_and_wait(window, qtbot, minimal_score)
@@ -749,7 +749,7 @@ def test_move_to_notes_action_focuses_region_3_from_any_pane(
         _focus(start)
         assert window.move_to_notes_action.isEnabled()
 
-        qtbot.keyClick(window.focusWidget(), Qt.Key.Key_N)
+        qtbot.keyClick(window.focusWidget(), Qt.Key.Key_C)
 
         assert window.focusWidget() is window.region_3
 
@@ -757,16 +757,16 @@ def test_move_to_notes_action_focuses_region_3_from_any_pane(
 @pytest.mark.parametrize(
     "key, target_region_attr",
     [
-        (Qt.Key.Key_I, "region_1"),
-        (Qt.Key.Key_V, "region_2"),
-        (Qt.Key.Key_A, "region_4"),
-        (Qt.Key.Key_P, "region_5"),
+        (Qt.Key.Key_Z, "region_1"),
+        (Qt.Key.Key_X, "region_2"),
+        (Qt.Key.Key_V, "region_4"),
+        (Qt.Key.Key_B, "region_5"),
     ],
 )
 def test_move_to_region_actions_focus_their_region_from_any_pane(
     window, qtbot, null_synth, minimal_score, key, target_region_attr
 ):
-    """Ref 29 follow-up (user-requested): I/V/A/P mirror Move to Notes (N)
+    """Ref 29 follow-up (user-requested): Z/X/V/B mirror Move to Notes (C)
     for the other four regions - same "stays enabled everywhere" behaviour,
     since each one's whole job is getting focus there from anywhere."""
     load_and_wait(window, qtbot, minimal_score)
