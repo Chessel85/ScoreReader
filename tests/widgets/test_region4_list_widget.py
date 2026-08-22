@@ -99,6 +99,68 @@ def test_menu_key_is_a_noop_with_no_current_row(qtbot):
     assert fake_window.calls == []
 
 
+def test_refresh_list_stores_attribute_key_and_renders_display_value(qtbot):
+    fake_window = _FakeWindow()
+    qtbot.addWidget(fake_window)
+    widget = Region4ListWidget(parent=fake_window)
+
+    widget.refresh_list([("step", "step", "C"), ("octave", "octave", "4")])
+
+    assert [widget.item(i).text() for i in range(widget.count())] == ["step: C", "octave: 4"]
+    assert widget.item(0).data(Qt.ItemDataRole.UserRole) == "step"
+    assert widget.item(1).data(Qt.ItemDataRole.UserRole) == "octave"
+
+
+def test_refresh_list_re_anchors_on_the_same_attribute_key(qtbot):
+    """Reported: Alt+Right/Alt+Left (Find) can jump to a note whose
+    attribute set/order is entirely different from the previous one, unlike
+    ordinary Left/Right between neighbouring notes - a raw row-index clamp
+    landed on an unrelated attribute, or row 0 whenever the new note simply
+    had fewer rows. Re-anchoring on the same attribute_key fixes both."""
+    fake_window = _FakeWindow()
+    qtbot.addWidget(fake_window)
+    widget = Region4ListWidget(parent=fake_window)
+    widget.refresh_list([
+        ("step", "step", "C"), ("octave", "octave", "4"),
+        ("string", "string", "3"), ("articulation", "articulation", "staccato"),
+    ])
+    widget.setCurrentRow(3)  # "articulation: staccato"
+
+    # The new note has articulation at a DIFFERENT row (1, not 3) and no
+    # "string" at all - a plain index clamp would land on "octave".
+    widget.refresh_list([
+        ("step", "step", "D"), ("articulation", "articulation", "trill"),
+    ])
+
+    assert widget.currentRow() == 1
+    assert widget.item(1).text() == "articulation: trill"
+
+
+def test_refresh_list_falls_back_to_index_clamp_when_the_key_is_gone(qtbot):
+    fake_window = _FakeWindow()
+    qtbot.addWidget(fake_window)
+    widget = Region4ListWidget(parent=fake_window)
+    widget.refresh_list([
+        ("step", "step", "C"), ("octave", "octave", "4"), ("fret", "fret", "3"),
+    ])
+    widget.setCurrentRow(2)  # "fret: 3"
+
+    widget.refresh_list([("step", "step", "D"), ("octave", "octave", "5")])
+
+    assert widget.currentRow() == 1, "clamped to the last valid index, same as before this fix"
+
+
+def test_refresh_list_with_no_rows_leaves_an_empty_list(qtbot):
+    fake_window = _FakeWindow()
+    qtbot.addWidget(fake_window)
+    widget = Region4ListWidget(parent=fake_window)
+
+    widget.refresh_list([])
+
+    assert widget.count() == 0
+    assert widget.currentRow() == -1
+
+
 def test_tab_still_forwards_to_the_region_cycle(qtbot):
     """Overriding keyPressEvent for the Menu key must not break
     RegionPropertyListWidget's Tab/Backtab -> focus_next_region forwarding.

@@ -32,6 +32,9 @@ class Actions:
     first_measure: Optional[QAction] = None
     last_measure: Optional[QAction] = None
     goto_measure: Optional[QAction] = None
+    find: Optional[QAction] = None
+    find_next: Optional[QAction] = None
+    find_previous: Optional[QAction] = None
     move_to_metadata: Optional[QAction] = None
     move_to_parts: Optional[QAction] = None
     move_to_notes: Optional[QAction] = None
@@ -164,6 +167,21 @@ class MenuBuilder:
         )
         edit_menu.addAction(a.performance_report)
 
+        # Find (attributes like "articulation"/"string", and performance
+        # markings like repeat/ending/hairpin/Segno/Coda/D.C./D.S./key/
+        # time-sig/tempo changes): pick a target, jump to occurrences of it.
+        # Built here (not in _navigation_menu, which runs after this) so
+        # the SAME QAction - not a second one sharing the Ctrl+F shortcut,
+        # which would be a real Qt ambiguous-shortcut conflict - can be
+        # added to both the Edit and Navigation menus (user-requested: Edit
+        # is where Performance Report/Instruments/Key Signature already
+        # live, Navigation is where the other jump-to-position actions
+        # live). See _navigation_menu for Find Next/Find Previous.
+        a.find = self._action(
+            "Fin&d...", self.slots._show_find_dialog, QKeySequence("Ctrl+F"),
+        )
+        edit_menu.addAction(a.find)
+
         # S5: per-part display-name/instrument override, for both MusicXML
         # and MIDI scores.
         a.instruments = self._action(
@@ -205,6 +223,19 @@ class MenuBuilder:
             goto_measure_action_text(self.uk_terms),
             self.slots._show_goto_measure_dialog, QKeySequence("Ctrl+G"),
         )
+        # a.find itself is built in _edit_menu (shared between both menus -
+        # see its own comment there). Find Next/Previous stay Navigation-
+        # only - once a target is armed, Alt+Right/Alt+Left (global - work
+        # regardless of which region has focus, like the tempo F/S/D
+        # shortcuts) cycle further occurrences without reopening the
+        # dialog. Alt+Page Up/Down was ruled out - already bound to the
+        # Note region's preview-length adjustment.
+        a.find_next = self._action(
+            "Find &Next", self.slots.find_next, QKeySequence("Alt+Right"),
+        )
+        a.find_previous = self._action(
+            "Find Previo&us", self.slots.find_previous, QKeySequence("Alt+Left"),
+        )
         # A direct-jump shortcut per region. Z/X/C/V/B (user-requested
         # 2026-08-22, replacing the old scattered I/V/N/A/P): the five keys
         # sit together on the keyboard's bottom row, left-to-right in the
@@ -235,6 +266,10 @@ class MenuBuilder:
         navigation_menu.addAction(a.last_measure)
         navigation_menu.addSeparator()
         navigation_menu.addAction(a.goto_measure)
+        navigation_menu.addSeparator()
+        navigation_menu.addAction(a.find)
+        navigation_menu.addAction(a.find_next)
+        navigation_menu.addAction(a.find_previous)
         navigation_menu.addSeparator()
         navigation_menu.addAction(a.move_to_metadata)
         navigation_menu.addAction(a.move_to_parts)

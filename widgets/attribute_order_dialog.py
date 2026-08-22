@@ -24,6 +24,14 @@ class AttributeOrderDialog(QDialog):
     MainWindow owns the actual MusicData.move_attribute_order() mutation and
     drives this dialog's display back via refresh_list().
 
+    User-requested follow-up: this dialog already lists every attribute
+    present in scope regardless of on/off state, so a rare one spotted here
+    used to have no way to actually be switched on without first finding a
+    note that already showed it in Region 4. The Add/&Remove button below
+    opens the same voice/stave/part/score scope menu Region 4's own
+    context menu offers (AttributeController._scope_action_labels), fanning
+    out from this dialog's own node instead of a selected note.
+
     Same focus-on-show reasoning as GotoMeasureDialog: setFocus() before the
     native window exists never reaches NVDA, so it's deferred to showEvent."""
 
@@ -31,6 +39,11 @@ class AttributeOrderDialog(QDialog):
     # the actual reorder and calls refresh_list() with the result; this
     # dialog never touches MusicData itself.
     move_requested = Signal(str, bool)
+    # attribute_key of the row the button was clicked for - MainWindow
+    # builds and shows the actual scope menu (AttributeController.
+    # show_order_menu), since its content depends on live MusicData state
+    # this dialog has no access to.
+    add_remove_requested = Signal(str)
 
     def __init__(self, parent=None, pairs: Optional[List[Tuple[str, str]]] = None, scope_description: str = ""):
         super().__init__(parent)
@@ -46,11 +59,14 @@ class AttributeOrderDialog(QDialog):
         self.up_button.clicked.connect(lambda: self._request_move(up=True))
         self.down_button = QPushButton("Move &Down", self)
         self.down_button.clicked.connect(lambda: self._request_move(up=False))
+        self.add_remove_button = QPushButton("Add/&Remove...", self)
+        self.add_remove_button.clicked.connect(self._request_add_remove)
         self._update_button_state()
 
         button_row = QHBoxLayout()
         button_row.addWidget(self.up_button)
         button_row.addWidget(self.down_button)
+        button_row.addWidget(self.add_remove_button)
 
         # No Ok/Cancel semantics - every move already applied live via
         # move_requested, the same way F1's right-click attribute menu has
@@ -76,6 +92,7 @@ class AttributeOrderDialog(QDialog):
             current_row = self.attribute_list.currentRow()
         self.up_button.setEnabled(current_row > 0)
         self.down_button.setEnabled(0 <= current_row < self.attribute_list.count() - 1)
+        self.add_remove_button.setEnabled(current_row >= 0)
 
     def _request_move(self, up: bool):
         item = self.attribute_list.currentItem()
@@ -83,6 +100,13 @@ class AttributeOrderDialog(QDialog):
             return
         attribute_key = item.data(Qt.ItemDataRole.UserRole)
         self.move_requested.emit(attribute_key, up)
+
+    def _request_add_remove(self):
+        item = self.attribute_list.currentItem()
+        if item is None:
+            return
+        attribute_key = item.data(Qt.ItemDataRole.UserRole)
+        self.add_remove_requested.emit(attribute_key)
 
     def refresh_list(self, pairs: List[Tuple[str, str]], preferred_key: Optional[str] = None):
         """Rebuilds the rows after a move - re-anchors on preferred_key (the

@@ -7,6 +7,7 @@ from models.coda_mark import CodaMark
 from models.ending_span import EndingSpan
 from models.event_slice import EventSlice
 from models.fine_mark import FineMark
+from models.find_target import MARKING_KINDS, FindTarget
 from models.gm_percussion_map import GM_PERCUSSION_BANK, GM_PERCUSSION_PROGRAM, detect_percussion_key_shift
 from models.hairpin_span import HairpinSpan
 from models.key_signatures import key_signature_display_name
@@ -743,6 +744,15 @@ class MusicData:
     # plain-note-name behaviour, not an empty display.
     DEFAULT_DISPLAY_ATTRIBUTES = frozenset({"step"})
 
+    # The Find dialog (widgets/find_dialog.py): attribute keys on
+    # essentially every note. "Next occurrence of step" is meaningless -
+    # it's just "the next note" - so only the optional/situational tail of
+    # DISPLAY_ATTRIBUTE_ORDER is offered as something to find.
+    CORE_ATTRIBUTE_KEYS = frozenset({
+        "step", "octave", "midi", "measure", "beat position", "duration",
+        "part", "stave", "voice",
+    })
+
     def notes_for_indices(self, selected_indices: List[int]) -> List[NoteData]:
         """The NoteData behind Region 3's selected rows, for callers needing
         the notes themselves rather than indices or pitches."""
@@ -876,6 +886,22 @@ class MusicData:
             for display_key, _, _, value in self._region_4_rows(selected_notes)
         }
 
+    def get_region_4_rows_for_indices(self, selected_indices: List[int]) -> List[Tuple[str, str, str]]:
+        """(display_key, attribute_key, value) triples for Region 4's rows -
+        unlike get_region_4_data_for_indices's plain dict, this keeps
+        attribute_key alongside each row, which Region4ListWidget.
+        refresh_list needs to re-anchor the current row on the same
+        attribute across a rebuild (a big jump like Find's Alt+Right can
+        change the attribute set/order entirely, unlike ordinary Left/Right
+        between neighbouring notes)."""
+        selected_notes = self.notes_for_indices(selected_indices)
+        if not selected_notes:
+            return [("Status", "", "No note selected")]
+        return [
+            (display_key, attribute_key, value)
+            for display_key, attribute_key, _, value in self._region_4_rows(selected_notes)
+        ]
+
     def get_region_4_row_targets(self, selected_indices: List[int]) -> List[Tuple[str, NoteData]]:
         """(attribute_key, note) per Region 4 row, in the same order as
         get_region_4_data_for_indices - lets MainWindow map "the Region 4 row
@@ -893,16 +919,32 @@ class MusicData:
         """Whether `note`'s own voice currently shows `attribute_key` in
         Region 3 - drives the Add-vs-Remove variant of the Ref 15 AC4
         context menu."""
-        voice_key = (note.part_id, note.staff, note.voice)
+        return self.display_attribute_present_for_voice(
+            attribute_key, note.part_id, note.staff, note.voice
+        )
+
+    def display_attribute_present_for_voice(
+        self, attribute_key: str, part_id: str, staff: int, voice: int
+    ) -> bool:
+        """note_has_display_attribute, from a bare (part_id, staff, voice)
+        tuple instead of a NoteData - the Reorder Attributes dialog's own
+        Add/Remove button (below) has a Region 2 node, not a selected note,
+        to check the current state of."""
+        voice_key = (part_id, staff, voice)
         return attribute_key in self.voice_display_attributes.get(voice_key, self.DEFAULT_DISPLAY_ATTRIBUTES)
 
-    def _voice_tuples_for_scope(self, note: NoteData, scope: str) -> Set[Tuple[str, int, int]]:
-        """Every (part_id, staff, voice) tuple `scope` fans out to from
-        `note`'s own position - "voice" is just the note's own tuple,
+    def _voice_tuples_for_scope(
+        self, part_id: str, staff: int, voice: int, scope: str
+    ) -> Set[Tuple[str, int, int]]:
+        """Every (part_id, staff, voice) tuple `scope` fans out to from a
+        single starting position - "voice" is just that tuple itself,
         "stave"/"part" walk parts_info's staves_voices for siblings, "score"
-        is every voice in every part. Ref 15 AC4."""
+        is every voice in every part. Ref 15 AC4. Takes the position as
+        three plain values rather than a NoteData so it also serves the
+        Reorder Attributes dialog's Add/Remove button, which has a Region 2
+        node's position, not a note, to fan out from."""
         if scope == "voice":
-            return {(note.part_id, note.staff, note.voice)}
+            return {(part_id, staff, voice)}
         if scope == "score":
             return {
                 (p.part_id, s, v)
@@ -910,18 +952,29 @@ class MusicData:
                 for s, vs in p.staves_voices.items()
                 for v in vs
             }
-        part = next((p for p in self.parts_info if p.part_id == note.part_id), None)
+        part = next((p for p in self.parts_info if p.part_id == part_id), None)
         if part is None:
-            return {(note.part_id, note.staff, note.voice)}
+            return {(part_id, staff, voice)}
         if scope == "stave":
-            return {(note.part_id, note.staff, v) for v in part.staves_voices.get(note.staff, [])}
+            return {(part_id, staff, v) for v in part.staves_voices.get(staff, [])}
         if scope == "part":
             return {
-                (note.part_id, s, v)
+                (part_id, s, v)
                 for s, vs in part.staves_voices.items()
                 for v in vs
             }
         raise ValueError(f"Unknown display-attribute scope: {scope!r}")
+
+    def _apply_display_attribute(
+        self, attribute_key: str, voice_keys: Set[Tuple[str, int, int]], add: bool
+    ) -> None:
+        for voice_key in voice_keys:
+            current = set(self.voice_display_attributes.get(voice_key, self.DEFAULT_DISPLAY_ATTRIBUTES))
+            if add:
+                current.add(attribute_key)
+            else:
+                current.discard(attribute_key)
+            self.voice_display_attributes[voice_key] = current
 
     def set_display_attribute(
         self, attribute_key: str, scope: str, notes: List[NoteData], add: bool
@@ -933,14 +986,18 @@ class MusicData:
         was opened on."""
         voice_keys: Set[Tuple[str, int, int]] = set()
         for note in notes:
-            voice_keys |= self._voice_tuples_for_scope(note, scope)
-        for voice_key in voice_keys:
-            current = set(self.voice_display_attributes.get(voice_key, self.DEFAULT_DISPLAY_ATTRIBUTES))
-            if add:
-                current.add(attribute_key)
-            else:
-                current.discard(attribute_key)
-            self.voice_display_attributes[voice_key] = current
+            voice_keys |= self._voice_tuples_for_scope(note.part_id, note.staff, note.voice, scope)
+        self._apply_display_attribute(attribute_key, voice_keys, add)
+
+    def set_display_attribute_for_voice(
+        self, attribute_key: str, scope: str, part_id: str, staff: int, voice: int, add: bool
+    ) -> None:
+        """set_display_attribute's counterpart for the Reorder Attributes
+        dialog's Add/Remove button: fans out from a single Region 2 node
+        position instead of a list of selected notes, since that dialog has
+        no note selection of its own to derive one from."""
+        voice_keys = self._voice_tuples_for_scope(part_id, staff, voice, scope)
+        self._apply_display_attribute(attribute_key, voice_keys, add)
 
     def move_attribute_order(self, attribute_key: str, up: bool, within: Optional[List[str]] = None) -> bool:
         """F2/Ref 15 AC4: move `attribute_key` one step earlier (up) or later
@@ -1363,6 +1420,160 @@ class MusicData:
             return f"{bar_word} {measure}"
         beat_str = str(int(beat_position)) if float(beat_position).is_integer() else str(beat_position)
         return f"{bar_word} {measure} beat {beat_str}"
+
+    # --- Find (widgets/find_dialog.py) --------------------------------
+
+    def _key_signature_change_indices(self) -> List[int]:
+        """Every timeline_slices index whose key signature differs from the
+        one before it - the same comparison get_performance_region_rows
+        makes at a single index, walked here across the whole score for
+        Find's "next/previous key signature change" target. A key
+        signature override forces one constant display key score-wide, so
+        there are no change points to find while one is active."""
+        if self.key_signature_override_fifths is not None:
+            return []
+        return [
+            i for i in range(1, len(self.timeline_slices))
+            if self.timeline_slices[i - 1].key_fifths != self.timeline_slices[i].key_fifths
+        ]
+
+    def _time_signature_change_indices(self) -> List[int]:
+        """Time-signature counterpart of _key_signature_change_indices."""
+        return [
+            i for i in range(1, len(self.timeline_slices))
+            if self.timeline_slices[i - 1].time_sig != self.timeline_slices[i].time_sig
+        ]
+
+    def _tempo_change_indices(self) -> List[int]:
+        """Tempo counterpart of _key_signature_change_indices, via the same
+        _tempo_change_at comparison get_performance_region_rows uses."""
+        return [
+            i for i in range(1, len(self.timeline_slices))
+            if self._tempo_change_at(i - 1) != self._tempo_change_at(i)
+        ]
+
+    def _candidate_indices_for_target(self, target: FindTarget) -> List[Optional[int]]:
+        """Every timeline_slices index that is an occurrence of `target`,
+        unsorted and possibly containing None (an unresolvable span/mark -
+        filtered out by callers). Attribute targets scan note presence
+        directly; marking targets resolve through the same
+        first_visible_event_index_of_measure/last_visible_event_index_of_
+        measure/slice_index_at_or_after_quarters lookups
+        NavigationController.jump_to_span already uses for Region 5, so a
+        Find result and a Region 5 jump can never disagree on where a
+        marking "is". This single method also decides presence for
+        available_find_targets() below - a target is offered only when this
+        list has at least one real occurrence - so the catalog and the
+        scanner can't drift apart."""
+        if target.category == "attribute":
+            return [
+                i for i in range(len(self.timeline_slices))
+                if any(
+                    target.key in self._note_attribute_pairs(n)
+                    for n in self._visible_notes(index=i)
+                )
+            ]
+
+        kind = target.key
+        if kind == "repeat_start":
+            return [self.first_visible_event_index_of_measure(s.start_measure) for s in self.repeat_spans]
+        if kind == "repeat_end":
+            return [self.last_visible_event_index_of_measure(s.end_measure) for s in self.repeat_spans]
+        if kind == "ending_start":
+            return [self.first_visible_event_index_of_measure(s.start_measure) for s in self.ending_spans]
+        if kind == "ending_end":
+            return [self.last_visible_event_index_of_measure(s.end_measure) for s in self.ending_spans]
+        if kind == "crescendo_start":
+            return [
+                self.slice_index_at_or_after_quarters(s.start_quarters_from_start)
+                for s in self.hairpin_spans if s.kind == "crescendo"
+            ]
+        if kind == "crescendo_end":
+            return [
+                self.slice_index_at_or_after_quarters(s.end_quarters_from_start)
+                for s in self.hairpin_spans if s.kind == "crescendo"
+            ]
+        if kind == "diminuendo_start":
+            return [
+                self.slice_index_at_or_after_quarters(s.start_quarters_from_start)
+                for s in self.hairpin_spans if s.kind == "diminuendo"
+            ]
+        if kind == "diminuendo_end":
+            return [
+                self.slice_index_at_or_after_quarters(s.end_quarters_from_start)
+                for s in self.hairpin_spans if s.kind == "diminuendo"
+            ]
+        if kind == "segno":
+            return [self.first_visible_event_index_of_measure(m.measure) for m in self.segno_marks]
+        if kind == "coda":
+            return [self.first_visible_event_index_of_measure(m.measure) for m in self.coda_marks]
+        if kind == "to_coda":
+            return [self.first_visible_event_index_of_measure(m.measure) for m in self.to_coda_marks]
+        if kind == "fine":
+            return [self.first_visible_event_index_of_measure(m.measure) for m in self.fine_marks]
+        if kind == "dacapo":
+            return [
+                self.first_visible_event_index_of_measure(m.measure)
+                for m in self.navigation_jumps if m.kind == "dacapo"
+            ]
+        if kind == "dalsegno":
+            return [
+                self.first_visible_event_index_of_measure(m.measure)
+                for m in self.navigation_jumps if m.kind == "dalsegno"
+            ]
+        if kind == "key_signature_change":
+            return list(self._key_signature_change_indices())
+        if kind == "time_signature_change":
+            return list(self._time_signature_change_indices())
+        if kind == "tempo_change":
+            return list(self._tempo_change_indices())
+        return []
+
+    def available_find_targets(self) -> List[FindTarget]:
+        """The Find dialog's list (widgets/find_dialog.py), always computed
+        fresh from the currently loaded score's own parsed data - never a
+        fixed static menu. Attribute targets are the optional (non-
+        CORE_ATTRIBUTE_KEYS) keys actually present on a note in one of the
+        currently active voices (Ref 7); marking targets are whichever of
+        MARKING_KINDS actually occur anywhere in the score (structural,
+        like Region 5 - not filtered by voice)."""
+        voice_tuples = (
+            self.active_voice_filter if self.active_voice_filter is not None
+            else self._all_voice_tuples()
+        )
+        present_attribute_keys = self.attribute_keys_for_voices(voice_tuples)
+        targets = [
+            FindTarget("attribute", key, vocabulary.attribute_label(key, self.uk_terms))
+            for key in present_attribute_keys
+            if key not in self.CORE_ATTRIBUTE_KEYS
+        ]
+        for kind_id, label in MARKING_KINDS:
+            candidate = FindTarget("marking", kind_id, label)
+            if any(i is not None for i in self._candidate_indices_for_target(candidate)):
+                targets.append(candidate)
+        return targets
+
+    def find_occurrence(self, target: FindTarget, from_index: int, direction: int) -> Optional[int]:
+        """The next (direction=+1) or previous (direction=-1) timeline_
+        slices index that is an occurrence of `target`, strictly after/
+        before `from_index`, wrapping once around the ends - Alt+Right/
+        Alt+Left once a target has been armed (NavigationController.
+        find_next/find_previous). None if `target` has no occurrences at
+        all (shouldn't happen for a target that came from
+        available_find_targets(), but the catalog and the score can drift
+        if the score reloads without a fresh Find)."""
+        candidates = sorted({i for i in self._candidate_indices_for_target(target) if i is not None})
+        if not candidates:
+            return None
+        if direction > 0:
+            for i in candidates:
+                if i > from_index:
+                    return i
+            return candidates[0]
+        for i in reversed(candidates):
+            if i < from_index:
+                return i
+        return candidates[-1]
 
     def get_performance_report_lines(self) -> List[str]:
         """Ref 29: the Performance Report's content - a whole-score summary,

@@ -166,10 +166,10 @@ class RegionPresenter(QObject):
     def on_region_3_selection_changed(self) -> None:
         if not self.music_data:
             return
-        region_4_data = self.music_data.get_region_4_data_for_indices(
+        region_4_rows = self.music_data.get_region_4_rows_for_indices(
             self.selected_region_3_indices()
         )
-        self.region_4.refresh_list(region_4_data)
+        self.region_4.refresh_list(region_4_rows)
 
     def on_region_2_filter_changed(self, active_voice_tuples: set) -> None:
         if self.music_data:

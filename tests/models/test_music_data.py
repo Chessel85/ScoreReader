@@ -7,6 +7,7 @@ ElementTree-only path works and is wired up correctly.
 import pytest
 
 from models.event_slice import EventSlice
+from models.find_target import FindTarget
 from models.music_data import MusicData
 from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
@@ -1223,6 +1224,90 @@ def test_get_region_4_row_targets_strips_the_chord_note_prefix(timeline, chord_s
     assert targets[note_2_row] == ("step", notes[1])
 
 
+def test_get_region_4_rows_for_indices_carries_the_attribute_key_alongside_display_and_value(
+    timeline, minimal_score
+):
+    """Region4ListWidget.refresh_list needs attribute_key to re-anchor the
+    current row across a rebuild - get_region_4_data_for_indices's plain
+    dict loses it once flattened."""
+    md = timeline(minimal_score)
+
+    dict_data = md.get_region_4_data_for_indices([0])
+    rows = md.get_region_4_rows_for_indices([0])
+
+    assert [f"{display_key}: {value}" for display_key, _, value in rows] == [
+        f"{k}: {v}" for k, v in dict_data.items()
+    ]
+    assert [attribute_key for _, attribute_key, _ in rows] == [
+        attribute_key for attribute_key, _ in md.get_region_4_row_targets([0])
+    ]
+
+
+def test_get_region_4_rows_for_indices_with_no_selection(timeline, minimal_score):
+    md = timeline(minimal_score)
+
+    rows = md.get_region_4_rows_for_indices([])
+
+    assert rows == [("Status", "", "No note selected")]
+
+
+def test_display_attribute_present_for_voice_matches_note_has_display_attribute():
+    md = MusicData(parts_info=[PartStructureInfo(part_id="P1", staves_voices={1: [1]})])
+    note = _note()
+
+    assert md.display_attribute_present_for_voice(
+        "step", note.part_id, note.staff, note.voice
+    ) == md.note_has_display_attribute(note, "step")
+    assert md.display_attribute_present_for_voice(
+        "octave", note.part_id, note.staff, note.voice
+    ) == md.note_has_display_attribute(note, "octave")
+
+    md.set_display_attribute("octave", "voice", [note], add=True)
+
+    assert md.display_attribute_present_for_voice("octave", "P1", 1, 1) is True
+    assert md.note_has_display_attribute(note, "octave") is True
+
+
+def test_set_display_attribute_for_voice_toggles_for_the_voice_scope_only():
+    """The Reorder Attributes dialog's Add/Remove button - fans out from a
+    bare (part_id, staff, voice) tuple (a Region 2 node's position) instead
+    of a list of selected notes, since the dialog has no note selection."""
+    md = MusicData(parts_info=[
+        PartStructureInfo(part_id="P1", staves_voices={1: [1, 2], 2: [1]}),
+    ])
+
+    assert md.display_attribute_present_for_voice("fingering", "P1", 1, 1) is False
+
+    md.set_display_attribute_for_voice("fingering", "voice", "P1", 1, 1, add=True)
+
+    assert md.display_attribute_present_for_voice("fingering", "P1", 1, 1) is True
+    assert md.display_attribute_present_for_voice("fingering", "P1", 1, 2) is False, (
+        "voice scope must not leak into the sibling voice on the same stave"
+    )
+
+    md.set_display_attribute_for_voice("fingering", "voice", "P1", 1, 1, add=False)
+
+    assert md.display_attribute_present_for_voice("fingering", "P1", 1, 1) is False
+
+
+def test_set_display_attribute_for_voice_fans_out_to_part_scope():
+    md = MusicData(parts_info=[
+        PartStructureInfo(part_id="P1", staves_voices={1: [1], 2: [1, 2]}),
+        PartStructureInfo(part_id="P2", staves_voices={1: [1]}),
+    ])
+
+    md.set_display_attribute_for_voice("dynamic", "part", "P1", 1, 1, add=True)
+
+    assert md.display_attribute_present_for_voice("dynamic", "P1", 1, 1) is True
+    assert md.display_attribute_present_for_voice("dynamic", "P1", 2, 1) is True, (
+        "part scope must reach the piano's other staff/voice too"
+    )
+    assert md.display_attribute_present_for_voice("dynamic", "P1", 2, 2) is True
+    assert md.display_attribute_present_for_voice("dynamic", "P2", 1, 1) is False, (
+        "part scope must not leak into the other part"
+    )
+
+
 def test_note_has_display_attribute_defaults_to_step_only():
     md = MusicData(parts_info=[PartStructureInfo(part_id="P1", staves_voices={1: [1]})])
     note = _note()
@@ -1870,3 +1955,269 @@ def test_span_ms_follows_the_playback_tempo_offset(timeline, minimal_score):
     md.set_playback_tempo_offset(120)  # 120 -> 240bpm, so half the time
 
     assert md.span_ms_to_quarters(0, 4.0) == 1000
+
+
+# --- Find (widgets/find_dialog.py) --------------------------------------
+
+def test_available_find_targets_excludes_core_attribute_keys(
+    timeline, dynamics_articulation_fingering_score
+):
+    """step/octave/midi/measure/beat position/duration/part/stave/voice are
+    on essentially every note - "next occurrence of step" is meaningless -
+    so only the optional tail (dynamic/articulation/fingering here; string/
+    fret/pluck/strum elsewhere) is offered."""
+    md = timeline(dynamics_articulation_fingering_score)
+
+    keys = {t.key for t in md.available_find_targets() if t.category == "attribute"}
+
+    assert keys == {"dynamic", "articulation", "fingering", "pluck"}
+    assert not (keys & MusicData.CORE_ATTRIBUTE_KEYS)
+
+
+def test_available_find_targets_attribute_labels_and_order_match_attribute_order(
+    timeline, dynamics_articulation_fingering_score
+):
+    md = timeline(dynamics_articulation_fingering_score)
+
+    attribute_targets = [t for t in md.available_find_targets() if t.category == "attribute"]
+
+    assert [t.key for t in attribute_targets] == ["dynamic", "articulation", "fingering", "pluck"]
+    assert all(t.label == attribute_label(t.key, md.uk_terms) for t in attribute_targets)
+
+
+def test_available_find_targets_attributes_respect_the_active_voice_filter(
+    timeline, dynamics_articulation_fingering_score
+):
+    """Ref 7: "pluck" only occurs on the guitar part (P2) - filtering down
+    to just the piano's first staff/voice (P1, staff 1, voice 1) must drop
+    it from the catalog, the same way ordinary Left/Right navigation only
+    ever lands on what's currently visible."""
+    md = timeline(dynamics_articulation_fingering_score)
+    md.set_active_voice_filter({("P1", 1, 1)})
+
+    keys = {t.key for t in md.available_find_targets() if t.category == "attribute"}
+
+    assert keys == {"dynamic", "articulation", "fingering"}
+
+
+def test_available_find_targets_lists_only_marking_kinds_actually_present(
+    timeline, repeats_and_endings_score
+):
+    md = timeline(repeats_and_endings_score)
+
+    marking_keys = {t.key for t in md.available_find_targets() if t.category == "marking"}
+
+    assert marking_keys == {"repeat_start", "repeat_end", "ending_start", "ending_end"}
+
+
+def test_available_find_targets_lists_hairpin_kinds_present(timeline, hairpin_score):
+    md = timeline(hairpin_score)
+
+    marking_keys = {t.key for t in md.available_find_targets() if t.category == "marking"}
+
+    assert marking_keys == {
+        "crescendo_start", "crescendo_end", "diminuendo_start", "diminuendo_end",
+    }
+
+
+def test_available_find_targets_lists_segno_and_dalsegno(timeline, ds_plain_score):
+    md = timeline(ds_plain_score)
+
+    marking_keys = {t.key for t in md.available_find_targets() if t.category == "marking"}
+
+    assert marking_keys == {"segno", "dalsegno"}
+
+
+def test_available_find_targets_lists_dacapo(timeline, dc_plain_score):
+    md = timeline(dc_plain_score)
+
+    marking_keys = {t.key for t in md.available_find_targets() if t.category == "marking"}
+
+    assert marking_keys == {"dacapo"}
+
+
+def test_available_find_targets_lists_time_signature_change(timeline, ts_change_score):
+    md = timeline(ts_change_score)
+
+    marking_keys = {t.key for t in md.available_find_targets() if t.category == "marking"}
+
+    assert marking_keys == {"time_signature_change"}
+
+
+def test_available_find_targets_lists_tempo_change(timeline, tempo_change_score):
+    md = timeline(tempo_change_score)
+
+    marking_keys = {t.key for t in md.available_find_targets() if t.category == "marking"}
+
+    assert marking_keys == {"tempo_change"}
+
+
+def test_available_find_targets_lists_key_signature_change(timeline, key_change_score):
+    md = timeline(key_change_score)
+
+    marking_keys = {t.key for t in md.available_find_targets() if t.category == "marking"}
+
+    assert marking_keys == {"key_signature_change"}
+
+
+def _find_target(md, key, category="attribute"):
+    return next(t for t in md.available_find_targets() if t.category == category and t.key == key)
+
+
+def test_find_occurrence_for_an_attribute_scans_forward_and_wraps(
+    timeline, dynamics_articulation_fingering_score
+):
+    """articulation occurs at beat 2 (D5 staccato) and beat 3 (F5 trill) of
+    the piano part's own slices."""
+    md = timeline(dynamics_articulation_fingering_score)
+    target = _find_target(md, "articulation")
+
+    staccato_index = md.find_occurrence(target, from_index=0, direction=1)
+    trill_index = md.find_occurrence(target, from_index=staccato_index, direction=1)
+    wrapped_index = md.find_occurrence(target, from_index=trill_index, direction=1)
+
+    assert md.timeline_slices[staccato_index].beat_position == 2.0
+    assert md.timeline_slices[trill_index].beat_position == 3.0
+    assert wrapped_index == staccato_index, "no further occurrence ahead - wraps to the first"
+
+
+def test_find_occurrence_for_an_attribute_scans_backward_and_wraps(
+    timeline, dynamics_articulation_fingering_score
+):
+    md = timeline(dynamics_articulation_fingering_score)
+    target = _find_target(md, "articulation")
+    last_index = md.last_event_index()
+
+    trill_index = md.find_occurrence(target, from_index=last_index, direction=-1)
+    staccato_index = md.find_occurrence(target, from_index=trill_index, direction=-1)
+    wrapped_index = md.find_occurrence(target, from_index=staccato_index, direction=-1)
+
+    assert md.timeline_slices[trill_index].beat_position == 3.0
+    assert md.timeline_slices[staccato_index].beat_position == 2.0
+    assert wrapped_index == trill_index, "no further occurrence behind - wraps to the last"
+
+
+def test_find_occurrence_for_an_attribute_with_no_occurrences_returns_none(
+    timeline, dynamics_articulation_fingering_score
+):
+    md = timeline(dynamics_articulation_fingering_score)
+    target = FindTarget("attribute", "strum", "strum")  # not present in this fixture
+
+    assert md.find_occurrence(target, from_index=0, direction=1) is None
+
+
+def test_find_occurrence_for_repeat_start_and_end(timeline, repeats_and_endings_score):
+    md = timeline(repeats_and_endings_score)
+    start_target = _find_target(md, "repeat_start", category="marking")
+    end_target = _find_target(md, "repeat_end", category="marking")
+
+    start_index = md.find_occurrence(start_target, from_index=0, direction=1)
+    end_index = md.find_occurrence(end_target, from_index=0, direction=1)
+
+    assert md.timeline_slices[start_index].measure == 2
+    assert md.timeline_slices[end_index].measure == 3
+
+
+def test_find_occurrence_for_ending_start_and_end_covers_both_endings(
+    timeline, repeats_and_endings_score
+):
+    md = timeline(repeats_and_endings_score)
+    target = _find_target(md, "ending_start", category="marking")
+
+    first = md.find_occurrence(target, from_index=0, direction=1)
+    second = md.find_occurrence(target, from_index=first, direction=1)
+    wrapped = md.find_occurrence(target, from_index=second, direction=1)
+
+    assert md.timeline_slices[first].measure == 3
+    assert md.timeline_slices[second].measure == 4
+    assert wrapped == first
+
+
+def test_find_occurrence_for_hairpins(timeline, hairpin_score):
+    md = timeline(hairpin_score)
+
+    crescendo_start = md.find_occurrence(
+        _find_target(md, "crescendo_start", category="marking"), from_index=0, direction=1
+    )
+    crescendo_end = md.find_occurrence(
+        _find_target(md, "crescendo_end", category="marking"), from_index=0, direction=1
+    )
+    diminuendo_start = md.find_occurrence(
+        _find_target(md, "diminuendo_start", category="marking"), from_index=0, direction=1
+    )
+    diminuendo_end = md.find_occurrence(
+        _find_target(md, "diminuendo_end", category="marking"), from_index=0, direction=1
+    )
+
+    assert (md.timeline_slices[crescendo_start].measure, md.timeline_slices[crescendo_start].beat_position) == (1, 3.0)
+    assert (md.timeline_slices[crescendo_end].measure, md.timeline_slices[crescendo_end].beat_position) == (2, 2.0)
+    assert (md.timeline_slices[diminuendo_start].measure, md.timeline_slices[diminuendo_start].beat_position) == (3, 1.0)
+    assert (md.timeline_slices[diminuendo_end].measure, md.timeline_slices[diminuendo_end].beat_position) == (3, 3.0)
+
+
+def test_find_occurrence_for_segno_and_dalsegno(timeline, ds_plain_score):
+    md = timeline(ds_plain_score)
+
+    segno_index = md.find_occurrence(
+        _find_target(md, "segno", category="marking"), from_index=0, direction=1
+    )
+    dalsegno_index = md.find_occurrence(
+        _find_target(md, "dalsegno", category="marking"), from_index=0, direction=1
+    )
+
+    assert md.timeline_slices[segno_index].measure == 2
+    assert md.timeline_slices[dalsegno_index].measure == 3
+
+
+def test_find_occurrence_for_dacapo(timeline, dc_plain_score):
+    md = timeline(dc_plain_score)
+    target = _find_target(md, "dacapo", category="marking")
+
+    index = md.find_occurrence(target, from_index=0, direction=1)
+
+    assert md.timeline_slices[index].measure == 2
+
+
+def test_find_occurrence_for_time_signature_change_finds_both_changes(timeline, ts_change_score):
+    """4/4 (bar 1) -> 6/8 (bar 2) -> 4/4 (bar 3): two change points."""
+    md = timeline(ts_change_score)
+    target = _find_target(md, "time_signature_change", category="marking")
+
+    first = md.find_occurrence(target, from_index=0, direction=1)
+    second = md.find_occurrence(target, from_index=first, direction=1)
+    wrapped = md.find_occurrence(target, from_index=second, direction=1)
+
+    assert first == md.first_event_index_of_measure(2)
+    assert second == md.first_event_index_of_measure(3)
+    assert wrapped == first
+
+
+def test_find_occurrence_for_tempo_change(timeline, tempo_change_score):
+    md = timeline(tempo_change_score)
+    target = _find_target(md, "tempo_change", category="marking")
+
+    index = md.find_occurrence(target, from_index=0, direction=1)
+
+    assert index == md.first_event_index_of_measure(2)
+
+
+def test_find_occurrence_for_key_signature_change(timeline, key_change_score):
+    md = timeline(key_change_score)
+    target = _find_target(md, "key_signature_change", category="marking")
+
+    index = md.find_occurrence(target, from_index=0, direction=1)
+
+    assert index == md.first_event_index_of_measure(2)
+
+
+def test_find_occurrence_for_key_signature_change_suppressed_by_an_override(
+    timeline, key_change_score
+):
+    """A key-signature override (S6) forces one constant display key
+    score-wide - the same suppression get_performance_region_rows applies
+    to its own one-shot alert."""
+    md = timeline(key_change_score)
+    target = _find_target(md, "key_signature_change", category="marking")
+    md.key_signature_override_fifths = 0
+
+    assert md.find_occurrence(target, from_index=0, direction=1) is None

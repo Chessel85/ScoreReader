@@ -28,6 +28,7 @@ from parsers.ug_source import write_ug_source
 from persistence import app_settings
 from widgets.about_dialog import AboutDialog
 from widgets.attribute_order_dialog import AttributeOrderDialog
+from widgets.find_dialog import FindDialog
 from widgets.goto_measure_dialog import GotoMeasureDialog
 from widgets.instrument_dialog import InstrumentDialog
 from widgets.key_signature_dialog import KeySignatureDialog
@@ -284,6 +285,9 @@ class MainWindow(QMainWindow):
         self.first_measure_action = actions.first_measure
         self.last_measure_action = actions.last_measure
         self.goto_measure_action = actions.goto_measure
+        self.find_action = actions.find
+        self.find_next_action = actions.find_next
+        self.find_previous_action = actions.find_previous
         self.move_to_notes_action = actions.move_to_notes
         self.move_to_metadata_action = actions.move_to_metadata
         self.move_to_parts_action = actions.move_to_parts
@@ -544,6 +548,12 @@ class MainWindow(QMainWindow):
     def jump_to_performance_span_end(self):
         self.navigation.jump_to_span(self.region_5.current_row_data(), is_start=False)
 
+    def find_next(self):
+        self.navigation.find_next()
+
+    def find_previous(self):
+        self.navigation.find_previous()
+
     # --- playback (delegators) ----------------------------------------
 
     def toggle_play_stop(self):
@@ -683,6 +693,9 @@ class MainWindow(QMainWindow):
                 dialog, node, attribute_key, up
             )
         )
+        dialog.add_remove_requested.connect(
+            lambda attribute_key: self.attributes.show_order_menu(dialog, node, attribute_key)
+        )
         dialog.exec()
         self.region_2.setFocus()
 
@@ -796,6 +809,21 @@ class MainWindow(QMainWindow):
             if measure_number is not None:
                 self.navigate_to_typed_measure(str(measure_number))
                 self.region_3.setFocus()
+
+    def _show_find_dialog(self):
+        """Navigation > Find... (Ctrl+F). OK arms the selected FindTarget
+        and performs the initial jump in one step (NavigationController.
+        find_next from wherever the cursor already is); Alt+Right/Alt+Left
+        then cycle further occurrences without reopening this dialog."""
+        if not self._music_data:
+            return
+        dialog = FindDialog(self, targets=self._music_data.available_find_targets())
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            target = dialog.selected_target()
+            if target is not None:
+                self.navigation.arm_find_target(target)
+                self.find_next()
+        self.region_3.setFocus()
 
     def _show_tempo_offset_dialog(self):
         """Unlike GotoMeasureDialog there's no obvious "next place" for

@@ -29,6 +29,66 @@ class AttributeController:
     def music_data(self):
         return self.session.music_data
 
+    # --- shared scope-menu building ------------------------------------
+
+    @staticmethod
+    def _scope_action_labels(already_present: bool) -> list:
+        """(scope, label) pairs for the four fan-out scopes, worded for
+        either direction of the toggle. D-15: "stave" is deliberately not
+        dialect-translated here. Shared by Region 4's context menu and the
+        Reorder Attributes dialog's Add/Remove button, so the two can't
+        drift onto different wording for the same action."""
+        if already_present:
+            return [
+                ("voice", "Remove for notes in current voice"),
+                ("stave", "Remove for notes in current stave"),
+                ("part", "Remove for notes in current part"),
+                ("score", "Remove for notes in the whole score"),
+            ]
+        return [
+            ("voice", "Add to notes for this voice"),
+            ("stave", "Add to notes in same stave"),
+            ("part", "Add to notes in the same part"),
+            ("score", "Add to notes in the whole score"),
+        ]
+
+    # Broader-or-equal-to-node-level check for the Reorder Attributes
+    # dialog's Add/Remove button (_filter_scopes_for_node_level below) -
+    # Region2Node.node_type spells the middle level "staff", the attribute-
+    # scope vocabulary spells it "stave" (D-15's own dialect-free choice);
+    # these two dicts are the one place that difference has to be bridged.
+    _SCOPE_LEVEL = {"voice": 0, "stave": 1, "part": 2, "score": 3}
+    _NODE_TYPE_LEVEL = {"voice": 0, "staff": 1, "part": 2}
+
+    def _filter_scopes_for_node_level(self, scopes: list, node_type: str) -> list:
+        """Reported: the Reorder Attributes dialog can be opened at any
+        Region 2 level (voice/staff/part), but every scope was always
+        offered regardless - "Add to notes for this voice" from a STAVE-
+        level dialog with two voices underneath is genuinely ambiguous
+        (which voice?). Only scopes at or broader than the dialog's own
+        node level are unambiguous: a stave-level dialog offers stave/
+        part/score; a part-level dialog offers only part/score. A voice-
+        level dialog (the common case) is unaffected - every scope is
+        still offered, same as before this fix."""
+        floor = self._NODE_TYPE_LEVEL.get(node_type, 0)
+        return [(scope, label) for scope, label in scopes if self._SCOPE_LEVEL[scope] >= floor]
+
+    def _filter_scopes_for_part(self, scopes: list, part_id: str) -> list:
+        """Reported: a part with no real stave/voice concept underneath it
+        (a MIDI track, a pure Ultimate Guitar import, or one of the
+        synthetic Chords/Lyrics parts a MusicXML file's own <harmony>/
+        <lyric> markup can add - see MusicData.collapsed_part_ids, the
+        same check Region 2 uses to decide whether to show a fake
+        staff/voice tree underneath that part) offered "current voice"/
+        "current stave" scopes that acted on exactly the same notes as
+        "current part" - not wrong, just redundant menu clutter with
+        nothing real behind it. Those two scopes are dropped for such a
+        part; "part" and "score" still apply normally."""
+        collapsed = self.music_data.collapsed_part_ids
+        if collapsed is True or part_id in collapsed:
+            return [(scope, label) for scope, label in scopes if scope not in ("voice", "stave")]
+        return scopes
+
     # --- Region 4 context menu ---------------------------------------
 
     def menu_actions(self, row: int) -> list:
@@ -47,36 +107,8 @@ class AttributeController:
         selected_notes = self.music_data.notes_for_indices(selected_indices)
         already_present = self.music_data.note_has_display_attribute(anchor_note, attribute_key)
 
-        # D-15: "stave" is deliberately not dialect-translated here.
-        if already_present:
-            scopes = [
-                ("voice", "Remove for notes in current voice"),
-                ("stave", "Remove for notes in current stave"),
-                ("part", "Remove for notes in current part"),
-                ("score", "Remove for notes in the whole score"),
-            ]
-        else:
-            scopes = [
-                ("voice", "Add to notes for this voice"),
-                ("stave", "Add to notes in same stave"),
-                ("part", "Add to notes in the same part"),
-                ("score", "Add to notes in the whole score"),
-            ]
-
-        # Reported: a part with no real stave/voice concept underneath it
-        # (a MIDI track, a pure Ultimate Guitar import, or one of the
-        # synthetic Chords/Lyrics parts a MusicXML file's own <harmony>/
-        # <lyric> markup can add - see MusicData.collapsed_part_ids, the
-        # same check Region 2 uses to decide whether to show a fake
-        # staff/voice tree underneath that part) offered "current voice"/
-        # "current stave" scopes that acted on exactly the same notes as
-        # "current part" - not wrong, just redundant menu clutter with
-        # nothing real behind it. Those two scopes are dropped for such a
-        # part; "part" and "score" still apply normally.
-        collapsed = self.music_data.collapsed_part_ids
-        part_has_no_real_stave_or_voice = collapsed is True or anchor_note.part_id in collapsed
-        if part_has_no_real_stave_or_voice:
-            scopes = [(scope, label) for scope, label in scopes if scope not in ("voice", "stave")]
+        scopes = self._scope_action_labels(already_present)
+        scopes = self._filter_scopes_for_part(scopes, anchor_note.part_id)
 
         return [
             (
@@ -166,3 +198,67 @@ class AttributeController:
         self.presenter.refresh_region_3_labels()
         self.presenter.on_region_3_selection_changed()
         dialog.refresh_list(self.order_pairs_for_node(node), preferred_key=attribute_key)
+
+    # --- reorder dialog's Add/Remove button ----------------------------
+    # User-requested: Reorder Attributes already lists every attribute
+    # present in the dialog's scope regardless of on/off state (below), so
+    # a user who spots a rare one there had no way to actually switch it
+    # on without first finding a note that already shows it in Region 4.
+    # Reuses Region 4's own scope wording/logic (_scope_action_labels/
+    # _filter_scopes_for_part above) so the two can't drift onto different
+    # behaviour for the same action - the only real difference is that this
+    # one fans out from the dialog's own Region 2 node position instead of
+    # a selected note, since the dialog has no note selection of its own.
+
+    def order_menu_actions(self, node, attribute_key: str) -> list:
+        """(label, callback) pairs for the Add/Remove button's dropdown,
+        empty if there's nothing to act on. "Already present" is read off
+        one representative voice under `node` (the lowest-sorted one) -
+        node is usually a single voice already; for a wider staff/part
+        selection this is the same "one anchor decides the wording"
+        simplification note_has_display_attribute makes for a chord."""
+        if not self.music_data:
+            return []
+        voice_tuples = voice_tuples_for_node(node)
+        if not voice_tuples:
+            return []
+        part_id, staff, voice = sorted(voice_tuples)[0]
+        already_present = self.music_data.display_attribute_present_for_voice(
+            attribute_key, part_id, staff, voice
+        )
+
+        scopes = self._scope_action_labels(already_present)
+        scopes = self._filter_scopes_for_node_level(scopes, node.node_type)
+        scopes = self._filter_scopes_for_part(scopes, part_id)
+
+        return [
+            (
+                label,
+                lambda checked=False, scope=scope: self.apply_order_change(
+                    attribute_key, scope, part_id, staff, voice, add=not already_present
+                ),
+            )
+            for scope, label in scopes
+        ]
+
+    def show_order_menu(self, dialog, node, attribute_key: str) -> None:
+        """Called by MainWindow on the Reorder Attributes dialog's Add/
+        Remove button. The dialog stays open throughout - toggling on/off
+        changes neither which attributes are listed (presence-based) nor
+        their order, so unlike on_order_move there's nothing to refresh in
+        the dialog itself, only Region 3."""
+        actions = self.order_menu_actions(node, attribute_key)
+        if not actions:
+            return
+        menu = QMenu(self._window)
+        for label, callback in actions:
+            menu.addAction(label).triggered.connect(callback)
+        button = dialog.add_remove_button
+        menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
+        dialog.attribute_list.setFocus()
+
+    def apply_order_change(
+        self, attribute_key: str, scope: str, part_id: str, staff: int, voice: int, add: bool
+    ) -> None:
+        self.music_data.set_display_attribute_for_voice(attribute_key, scope, part_id, staff, voice, add)
+        self.presenter.refresh_region_3_labels()
