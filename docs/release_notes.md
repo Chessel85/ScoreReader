@@ -1,5 +1,9 @@
 # Recall Score Release Notes
 
+## 2026.1.22
+
+* Changed shortcuts for the regions in the main app area to Z, X, C, V, and B.
+* Converted the information and attribute regions to lists rather than tables so whole line is read out in one go by screen reader.
 
 ## 2026.1.21
 

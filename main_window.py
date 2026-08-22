@@ -434,7 +434,7 @@ class MainWindow(QMainWindow):
             return
         write_ug_source(self._music_data.ug_source, file_path)
         self._music_data.file_path = file_path
-        self.setWindowTitle(f"{os.path.basename(file_path)} - Recall Score")
+        self.setWindowTitle(f"Recall Score - {os.path.basename(file_path)}")
         self.persistence.refresh_clear_action()
         self._save_current_score_config()
         app_settings.add_recent_file(file_path)
@@ -466,7 +466,7 @@ class MainWindow(QMainWindow):
         regions render, and Region 2's own per-node toggles have to be in
         effect before the first audition, or the opening chord includes
         voices the user had switched off."""
-        self.setWindowTitle(f"{os.path.basename(music_data.file_path)} - Recall Score")
+        self.setWindowTitle(f"Recall Score - {os.path.basename(music_data.file_path)}")
 
         # A URL-imported UG score's file_path is a synthetic slug with
         # nothing on disk at it (see UgReader) - os.path.exists naturally

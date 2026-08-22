@@ -2656,7 +2656,7 @@ def test_window_title_before_any_file_is_loaded(window):
 def test_window_title_shows_loaded_filename(window, qtbot, minimal_score):
     load_and_wait(window, qtbot, minimal_score)
 
-    assert window.windowTitle() == "minimal_4_4.musicxml - Recall Score"
+    assert window.windowTitle() == "Recall Score - minimal_4_4.musicxml"
 
 
 def test_clear_preferences_action_disabled_with_no_file_loaded(window):
@@ -2737,6 +2737,19 @@ def test_voice_filter_persists_across_reload_of_same_file(
 
     assert window._music_data.active_voice_filter == {("P1", 1, 1)}
     assert window.region_2.model_manager.node("part_P2").muted is True
+
+
+def test_cursor_position_persists_across_reload_of_same_file(
+    window, qtbot, flute_crotchets_viola_semibreves_score
+):
+    load_and_wait(window, qtbot, flute_crotchets_viola_semibreves_score)
+
+    window._music_data.active_event_index = 4
+    window._save_current_score_config()
+
+    load_and_wait(window, qtbot, flute_crotchets_viola_semibreves_score)
+
+    assert window._music_data.active_event_index == 4
 
 
 def test_initial_audition_on_reload_respects_the_restored_voice_filter(
@@ -3117,7 +3130,7 @@ def test_save_ultimate_guitar_import_writes_a_file_and_updates_file_path(
     import os
     assert os.path.exists(save_path)
     assert window._music_data.file_path == save_path
-    assert window.windowTitle() == "Test Song.ug - Recall Score"
+    assert window.windowTitle() == "Recall Score - Test Song.ug"
 
 
 def test_save_ultimate_guitar_import_does_nothing_with_no_score_loaded(window, qtbot):
@@ -3240,7 +3253,7 @@ def test_triggering_a_recent_file_action_reopens_it(window, qtbot, minimal_score
     action.trigger()
     qtbot.waitUntil(lambda: window._load_thread is None, timeout=5000)
 
-    assert window.windowTitle() == f"{os.path.basename(minimal_score)} - Recall Score"
+    assert window.windowTitle() == f"Recall Score - {os.path.basename(minimal_score)}"
 
 
 def test_a_ug_import_from_a_url_is_not_added_to_recent_files(window, qtbot, monkeypatch):

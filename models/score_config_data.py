@@ -86,3 +86,9 @@ class ScoreConfig:
     # is best-effort against whatever parts the freshly loaded score
     # actually has.
     part_order: List[str] = field(default_factory=list)
+    # Where the cursor was in the timeline when the score was last saved -
+    # so reopening the file returns to the same place instead of always
+    # starting over at index 0. Best-effort like everything else here: an
+    # out-of-range value (the score changed since) is dropped in
+    # MusicData.apply_config, leaving the default of 0.
+    last_position_index: int = 0

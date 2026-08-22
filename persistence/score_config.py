@@ -105,6 +105,7 @@ def load_for(file_path: str) -> Optional[ScoreConfig]:
                 for k, v in (data.get("percussion_item_name_overrides") or {}).items()
             },
             percussion_auto_correct_enabled=data.get("percussion_auto_correct_enabled", False),
+            last_position_index=int(data.get("last_position_index", 0)),
         )
     except FileNotFoundError:
         return None
@@ -142,6 +143,7 @@ def save(file_path: str, config: ScoreConfig) -> None:
             _encode_percussion_item_key(k): v for k, v in config.percussion_item_name_overrides.items()
         },
         "percussion_auto_correct_enabled": config.percussion_auto_correct_enabled,
+        "last_position_index": config.last_position_index,
     }
     try:
         os.makedirs(path.parent, exist_ok=True)

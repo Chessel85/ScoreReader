@@ -1055,6 +1055,7 @@ class MusicData:
             percussion_item_overrides=dict(self.percussion_item_overrides),
             percussion_item_name_overrides=dict(self.percussion_item_name_overrides),
             percussion_auto_correct_enabled=self.percussion_auto_correct_enabled,
+            last_position_index=self.active_event_index,
         )
 
     def apply_config(self, config: ScoreConfig) -> None:
@@ -1062,6 +1063,9 @@ class MusicData:
         longer matches anything in THIS score (renamed part, deleted voice,
         unknown attribute key) is dropped silently rather than rejecting the
         whole config, so a stale .rsc still applies everything it can."""
+        if 0 <= config.last_position_index < len(self.timeline_slices):
+            self.active_event_index = config.last_position_index
+
         known_voices = self._all_voice_tuples()
         active = known_voices - (config.voices_muted & known_voices)
         self.set_active_voice_filter(active)
