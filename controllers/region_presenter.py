@@ -2,7 +2,7 @@
 from typing import List, Optional
 
 from PySide6.QtCore import QItemSelectionModel, QObject, Signal
-from PySide6.QtWidgets import QHeaderView, QListWidgetItem, QTableWidget, QTableWidgetItem
+from PySide6.QtWidgets import QListWidgetItem
 
 from audio.performance_cue import performance_cue_event
 from models.vocabulary import bar_word
@@ -64,7 +64,7 @@ class RegionPresenter(QObject):
     def refresh_all(self, play_all: bool = True) -> None:
         if not self.music_data:
             return
-        self.populate_table(self.region_1, self.music_data.get_region_1_data())
+        self.region_1.refresh_list(self.music_data.get_region_1_data())
         self.region_2.load_score_structure(self.music_data.get_score_structure())
         self.update_timeline_views(play_all=play_all)
 
@@ -169,7 +169,7 @@ class RegionPresenter(QObject):
         region_4_data = self.music_data.get_region_4_data_for_indices(
             self.selected_region_3_indices()
         )
-        self.populate_table(self.region_4, region_4_data)
+        self.region_4.refresh_list(region_4_data)
 
     def on_region_2_filter_changed(self, active_voice_tuples: set) -> None:
         if self.music_data:
@@ -204,30 +204,6 @@ class RegionPresenter(QObject):
         else:
             self.update_status_bar()
 
-    # --- tables -------------------------------------------------------
-
-    def populate_table(self, table: QTableWidget, data_dict: dict) -> None:
-        """Refills a property table, restoring the current cell.
-
-        clearContents()/setRowCount() reset the current cell to (0, 0), so
-        without this the row the user is reading jumps to the top on every
-        in-place refresh. Restored position is clamped to the new bounds."""
-        current_row = table.currentRow()
-        current_col = table.currentColumn()
-
-        items = list(data_dict.items())
-        table.clearContents()
-        table.setRowCount(len(items))
-        for row, (key, value) in enumerate(items):
-            table.setItem(row, 0, QTableWidgetItem(str(key)))
-            table.setItem(row, 1, QTableWidgetItem(str(value)))
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-
-        if items:
-            restore_row = min(max(current_row, 0), len(items) - 1)
-            restore_col = current_col if current_col in (0, 1) else 0
-            table.setCurrentCell(restore_row, restore_col)
-
     def refresh_region_1(self) -> None:
         if self.music_data:
-            self.populate_table(self.region_1, self.music_data.get_region_1_data())
+            self.region_1.refresh_list(self.music_data.get_region_1_data())

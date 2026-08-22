@@ -106,8 +106,8 @@ class AttributeController:
             menu.addAction(label).triggered.connect(callback)
         return menu
 
-    def show_menu(self, row: int, column: int, global_pos) -> None:
-        """Called by Region4TableWidget on right-click or the Menu key.
+    def show_menu(self, row: int, global_pos) -> None:
+        """Called by Region4ListWidget on right-click or the Menu key.
 
         Plain exec(), deliberately: pre-highlighting the first action (via
         exec(at=...), with or without a synthetic Key_Down) does move the
@@ -118,21 +118,19 @@ class AttributeController:
         if menu is None:
             return
         menu.exec(global_pos)
-        self.restore_focus_after_menu(row, column)
+        self.restore_focus_after_menu(row)
 
-    def restore_focus_after_menu(self, row: int, column: int) -> None:
-        """Restores the cell the menu was opened from, whether an action
+    def restore_focus_after_menu(self, row: int) -> None:
+        """Restores the row the menu was opened from, whether an action
         fired or Escape cancelled.
 
         Needed because QAction.triggered fires BEFORE exec() returns, so the
-        rebuild the callback causes resets the table's current cell while the
+        rebuild the callback causes resets the list's current row while the
         menu is still up. (Escape, triggering no callback and no rebuild,
-        lands correctly without this; Enter does not.) Both row and column
-        matter - restoring column 0 unconditionally sends a menu opened from
-        the value column back to the key column."""
+        lands correctly without this; Enter does not.)"""
         region_4 = self.presenter.region_4
-        if 0 <= row < region_4.rowCount():
-            region_4.setCurrentCell(row, column)
+        if 0 <= row < region_4.count():
+            region_4.setCurrentRow(row)
         region_4.setFocus()
 
     def apply_change(self, attribute_key: str, scope: str, notes: list, add: bool) -> None:

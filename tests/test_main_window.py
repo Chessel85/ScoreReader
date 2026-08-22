@@ -6,7 +6,7 @@ If any test here opens a window or an audio device, the harness is broken.
 import pytest
 from PySide6.QtCore import QLocale, Qt
 from PySide6.QtGui import QKeySequence, QValidator
-from PySide6.QtWidgets import QApplication, QDialog, QLabel, QTableWidget, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QWidget
 
 from audio.metronome import METRONOME_OFFBEAT_NOTE
 from main_window import MainWindow, detect_default_uk_terms
@@ -77,11 +77,11 @@ def test_five_distinct_regions_are_tab_focusable(window):
 def test_loading_a_score_populates_regions_and_plays(window, qtbot, null_synth, minimal_score):
     load_and_wait(window, qtbot, minimal_score)
 
-    assert window.region_1.rowCount() > 0, "score metadata"
+    assert window.region_1.count() > 0, "score metadata"
     assert [
         window.region_3.item(i).text() for i in range(window.region_3.count())
     ] == ["C"]
-    assert window.region_4.rowCount() > 0, "note attributes"
+    assert window.region_4.count() > 0, "note attributes"
 
     assert null_synth.last_played is not None
     assert null_synth.last_played["midi_notes"] == [60], "middle C"
@@ -208,7 +208,7 @@ def test_timeline_navigation_keys_have_no_effect_outside_the_note_region(
 ):
     """Ref 4, D-2 RESOLVED: navigation keystrokes are scoped to the Note
     region, not global - pressing them while another region has focus must
-    not move the timeline. Region 1/4 (RegionTableWidget) and Region 2
+    not move the timeline. Region 1/4 (RegionPropertyListWidget) and Region 2
     (Region2ListWidget) never call the navigate_timeline_* methods for
     these keys, so this is a regression test for that, not new wiring."""
     load_and_wait(window, qtbot, minimal_score)
@@ -840,7 +840,7 @@ def test_loading_a_midi_file_populates_regions_and_plays(window, qtbot, null_syn
     changes at all - it only ever reads through MusicData's accessors."""
     load_and_wait(window, qtbot, midi_bach_bourree)
 
-    assert window.region_1.rowCount() > 0, "score metadata"
+    assert window.region_1.count() > 0, "score metadata"
     assert window.region_3.count() > 0, "note list"
     assert window._music_data.timeline_slices
     assert null_synth.last_played is not None
@@ -2422,27 +2422,16 @@ def test_uk_terms_preference_survives_loading_a_new_score(window, qtbot, minimal
     assert window.uk_language_action.isChecked() is True
 
 
-def test_populate_table_preserves_current_cell_across_a_rebuild(window, qtbot, minimal_score):
-    """Live-tested bug: Region 1/4's current cell jumped to the top-left on
-    every terminology-language change - _populate_table must restore the
-    previous row/column instead."""
+def test_region_1_list_preserves_current_row_across_a_rebuild(window, qtbot, minimal_score):
+    """Live-tested bug: Region 1/4's current row jumped to the top on every
+    terminology-language change - RegionPropertyListWidget.refresh_list must
+    restore the previous row instead."""
     load_and_wait(window, qtbot, minimal_score)
-    window.region_1.setCurrentCell(2, 1)
+    window.region_1.setCurrentRow(2)
 
     window.set_uk_terms(True)
 
     assert window.region_1.currentRow() == 2
-    assert window.region_1.currentColumn() == 1
-
-
-def test_populate_table_clamps_a_now_out_of_range_row(window):
-    table = QTableWidget(3, 2)
-    table.setCurrentCell(2, 1)
-
-    window._populate_table(table, {"a": "1"})
-
-    assert table.currentRow() == 0
-    assert table.currentColumn() == 1
 
 
 def test_navigating_onto_a_beat_plays_a_click_alongside_the_note(
@@ -2501,7 +2490,7 @@ def test_region_4_attribute_menu_add_updates_region_3_without_reauditioning(
     assert _region_3_labels(window) == ["C, octave 4"]
     assert null_synth.played == [], "an attribute toggle must not re-audition the note"
     assert len(window.region_3.selectedIndexes()) == 1, "selection must be preserved"
-    assert window.region_4.rowCount() > 0, "Region 4 refreshed alongside Region 3"
+    assert window.region_4.count() > 0, "Region 4 refreshed alongside Region 3"
 
 
 def test_region_4_attribute_menu_first_action_is_add_to_this_voice(
@@ -2521,35 +2510,35 @@ def test_region_4_attribute_menu_first_action_is_add_to_this_voice(
     assert menu.actions()[0].text() == "Add to notes for this voice"
 
 
-def test_restore_region_4_focus_after_menu_returns_to_the_same_row_and_column(
+def test_restore_region_4_focus_after_menu_returns_to_the_same_row(
     window, qtbot, null_synth, minimal_score
 ):
     """Originally a live-tested bug: selecting a menu action rebuilds Region
     4's rows (via _apply_display_attribute_change -> _refresh_region_3_labels
-    -> _on_region_3_selection_changed -> _populate_table) while the menu's
-    own exec() is still running (QAction.triggered fires before exec()
-    returns), and that rebuild used to reset the table's current cell to
-    (0, 0) - NVDA kept reporting the stale menu item, and the next Down
-    landed on row 0 ("step") instead of back where the menu was opened.
-    _populate_table itself now preserves the current cell across a rebuild
-    (F4's Region 1/4 position-persistence fix), so that half of the bug is
-    fixed at the source - the current cell is already correct by the time
+    -> _on_region_3_selection_changed -> refresh_list) while the menu's own
+    exec() is still running (QAction.triggered fires before exec() returns),
+    and that rebuild used to reset the list's current row to 0 - NVDA kept
+    reporting the stale menu item, and the next Down landed on row 0 ("step")
+    instead of back where the menu was opened. RegionPropertyListWidget.
+    refresh_list itself now preserves the current row across a rebuild (F4's
+    Region 1/4 position-persistence fix), so that half of the bug is fixed
+    at the source - the current row is already correct by the time
     _restore_region_4_focus_after_menu runs. What that method still owns is
     giving actual WIDGET FOCUS back: exec() steals focus to the menu while
     it's open, and nothing else returns it to Region 4 once the menu closes."""
     load_and_wait(window, qtbot, minimal_score)
 
-    window.region_4.setCurrentCell(1, 1)  # octave row, value column
+    window.region_4.setCurrentRow(1)  # octave row
     selected_notes = window._music_data.notes_for_indices([0])
     window._apply_display_attribute_change("octave", "voice", selected_notes, add=True)
-    assert (window.region_4.currentRow(), window.region_4.currentColumn()) == (1, 1), (
-        "_populate_table already preserved the cell through the rebuild"
+    assert window.region_4.currentRow() == 1, (
+        "refresh_list already preserved the row through the rebuild"
     )
 
-    window._restore_region_4_focus_after_menu(1, 1)
+    window._restore_region_4_focus_after_menu(1)
     QApplication.processEvents()
 
-    assert (window.region_4.currentRow(), window.region_4.currentColumn()) == (1, 1)
+    assert window.region_4.currentRow() == 1
     assert window.focusWidget() is window.region_4
 
 

@@ -1,10 +1,10 @@
-# widgets/region4_table_widget.py
+# widgets/region4_list_widget.py
 from PySide6.QtCore import Qt
 
-from widgets.region_table_widget import RegionTableWidget
+from widgets.region_property_list_widget import RegionPropertyListWidget
 
 
-class Region4TableWidget(RegionTableWidget):
+class Region4ListWidget(RegionPropertyListWidget):
     """
     Region 4 (note attributes) property list. Adds the Ref 15 AC4 context
     menu for appending/removing a Region 4 attribute from Region 3's note
@@ -13,11 +13,11 @@ class Region4TableWidget(RegionTableWidget):
     Reachable by right-click (customContextMenuRequested) and explicitly by
     the Menu key and Shift+F10. The keyboard path needs its own handler:
     Qt's CustomContextMenu policy does not reliably synthesise a keyboard
-    contextMenuEvent for a QTableWidget.
+    contextMenuEvent for a QListWidget either.
     """
 
-    def __init__(self, rows: int = 0, columns: int = 2, parent=None):
-        super().__init__(rows, columns, parent)
+    def __init__(self, parent=None):
+        super().__init__(parent)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_attribute_menu)
 
@@ -33,23 +33,17 @@ class Region4TableWidget(RegionTableWidget):
 
     def _show_attribute_menu(self, pos):
         """pos is the local click position for a real right-click, None for
-        the keyboard path. Either way the row and anchor are resolved from
-        the table's own state rather than from pos, which is not reliable
-        enough to place the popup when keyboard-synthesised."""
-        row = self.rowAt(pos.y()) if pos is not None else -1
-        if row < 0:
-            row = self.currentRow()
-        if row < 0:
+        the keyboard path. Either way the item is resolved from the click
+        position first, falling back to the current item - no column to
+        preserve, unlike the old table."""
+        item = self.itemAt(pos) if pos is not None else None
+        if item is None:
+            item = self.currentItem()
+        if item is None:
             return
-        # Preserve the current column: hard-coding 0 sends a menu opened
-        # from the value column back to the key column afterwards.
-        column = self.currentColumn()
-        if column < 0:
-            column = 0
-        self.setCurrentCell(row, column)
+        row = self.row(item)
+        self.setCurrentRow(row)
 
-        item = self.item(row, 0)
-        anchor = self.visualItemRect(item).center() if item is not None else self.rect().center()
-
+        anchor = self.visualItemRect(item).center()
         # window() is always MainWindow - only setup_ui creates this.
-        self.window().show_region_4_attribute_menu(row, column, self.viewport().mapToGlobal(anchor))
+        self.window().show_region_4_attribute_menu(row, self.viewport().mapToGlobal(anchor))

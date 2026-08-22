@@ -10,9 +10,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QGridLayout,
-    QHeaderView,
     QMainWindow,
-    QTableWidget,
     QWidget,
 )
 
@@ -39,11 +37,11 @@ from widgets.mixer_dialog import MixerDialog
 from widgets.part_order_dialog import PartOrderDialog
 from widgets.performance_report_dialog import PerformanceReportDialog
 from widgets.preview_settings_dialog import PreviewSettingsDialog
+from widgets.region1_list_widget import Region1ListWidget
 from widgets.region2_list_widget import Region2ListWidget
 from widgets.region2_manager import node_breadcrumb
-from widgets.region4_table_widget import Region4TableWidget
+from widgets.region4_list_widget import Region4ListWidget
 from widgets.region5_list_widget import Region5ListWidget
-from widgets.region_table_widget import RegionTableWidget
 from widgets.status_bar_widget import StatusBarWidget
 from widgets.tempo_offset_dialog import TempoOffsetDialog
 from widgets.timeline_list_widget import TimelineListWidget
@@ -143,7 +141,8 @@ class MainWindow(QMainWindow):
         grid_layout = QGridLayout(central_widget)
 
         # Region 1: score info
-        self.region_1 = self.create_property_list()
+        self.region_1 = Region1ListWidget()
+        self.region_1.setFocusPolicy(Qt.FocusPolicy.TabFocus)
 
         # Region 2: Parts/Staves/Voices hierarchy, navigated Up/Down, O to toggle
         self.region_2 = Region2ListWidget()
@@ -154,10 +153,11 @@ class MainWindow(QMainWindow):
         self.region_3.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.region_3.setFocusPolicy(Qt.FocusPolicy.TabFocus)
 
-        # Region 4: note attributes. Region4TableWidget (not the plain
-        # RegionTableWidget Region 1 uses) adds the Ref 15 AC4 context menu
+        # Region 4: note attributes. Region4ListWidget (not the plain
+        # Region1ListWidget-shaped base) adds the Ref 15 AC4 context menu
         # for appending/removing an attribute in Region 3's note display.
-        self.region_4 = self.create_property_list(table_cls=Region4TableWidget)
+        self.region_4 = Region4ListWidget()
+        self.region_4.setFocusPolicy(Qt.FocusPolicy.TabFocus)
 
         # Region 5 (Ref 29, the "Performance region"): duration-spanning
         # markers (repeat barlines, 1st/2nd endings, crescendo/diminuendo
@@ -341,18 +341,6 @@ class MainWindow(QMainWindow):
         self.region_3.itemSelectionChanged.connect(
             self.presenter.on_region_3_selection_changed
         )
-
-    def create_property_list(self, table_cls: type = RegionTableWidget) -> RegionTableWidget:
-        """An empty two-column property table for Region 1 or Region 4.
-        Population is RegionPresenter.populate_table's job, once a score is
-        loaded."""
-        table = table_cls(0, 2)
-        table.setHorizontalHeaderLabels(["Property", "Value"])
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        table.verticalHeader().setVisible(False)
-        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        table.setFocusPolicy(Qt.FocusPolicy.TabFocus)
-        return table
 
     # --- state exposed for the widgets and tests ----------------------
 
@@ -659,8 +647,8 @@ class MainWindow(QMainWindow):
 
     # --- attributes (delegators) --------------------------------------
 
-    def show_region_4_attribute_menu(self, row: int, column: int, global_pos):
-        self.attributes.show_menu(row, column, global_pos)
+    def show_region_4_attribute_menu(self, row: int, global_pos):
+        self.attributes.show_menu(row, global_pos)
 
     def _region_4_attribute_menu_actions(self, row: int) -> list:
         return self.attributes.menu_actions(row)
@@ -668,8 +656,8 @@ class MainWindow(QMainWindow):
     def _build_region_4_attribute_menu(self, row: int):
         return self.attributes.build_menu(row)
 
-    def _restore_region_4_focus_after_menu(self, row: int, column: int):
-        self.attributes.restore_focus_after_menu(row, column)
+    def _restore_region_4_focus_after_menu(self, row: int):
+        self.attributes.restore_focus_after_menu(row)
 
     def _apply_display_attribute_change(self, attribute_key: str, scope: str,
                                         notes: list, add: bool):
@@ -724,9 +712,6 @@ class MainWindow(QMainWindow):
             previous_focus.setFocus()
 
     # --- presentation (delegators) ------------------------------------
-
-    def _populate_table(self, table: QTableWidget, data_dict: dict):
-        self.presenter.populate_table(table, data_dict)
 
     def _update_timeline_views(self, play_all: bool = True):
         self.presenter.update_timeline_views(play_all)
