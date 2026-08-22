@@ -1,5 +1,16 @@
 # Recall Score Release Notes
 
+## 2026.1.24
+
+* Added a find feature for attributes and performance indicators.  Use control+F to set up the find and then alt plus left and right arrow keys to find subsequent next and previous occurances.
+* Added an Add/Remove button to the reorder attributes dialogue so attributes can be more easily added or removed from the notes region.
+* Both these features aid adding attributes that occur sparsly in a score to the note region.
+
+## 2026.1.23
+
+* Title bar now appends the open score file rather than having it first
+* Recall Score now remembers last location in timeline when re-opening a score file.
+
 ## 2026.1.22
 
 * Changed shortcuts for the regions in the main app area to Z, X, C, V, and B.
