@@ -8,6 +8,7 @@ from audio.metronome import METRONOME_CHANNEL
 from audio.midi_input import LIVE_MIDI_INPUT_CHANNEL
 from audio.performance_cue import PERFORMANCE_CUE_CHANNEL
 from audio.position_announcer import POSITION_ANNOUNCER_CHANNEL
+from audio.voice_confirmation_cue import VOICE_CONTROL_CUE_CHANNEL
 from audio.grace_note_schedule import effective_grace_duration_ms
 from audio.strum_schedule import build_strum_schedule
 
@@ -90,6 +91,7 @@ class SynthEngine:
         self._active_click: Optional[Tuple[int, int]] = None  # (channel, note)
         self._active_announcement: Optional[Tuple[int, int]] = None
         self._active_performance_cue: Optional[Tuple[int, int]] = None
+        self._active_voice_confirmation_cue: Optional[Tuple[int, int]] = None
 
         # Live MIDI input (audio/midi_input.py, controllers/live_midi_input_
         # controller.py): pitches currently held down on a connected
@@ -222,6 +224,7 @@ class SynthEngine:
         self._fs.cc(POSITION_ANNOUNCER_CHANNEL, 10, PAN_FULL_LEFT)
         self._fs.cc(METRONOME_CHANNEL, 10, PAN_FULL_RIGHT)
         self._fs.cc(PERFORMANCE_CUE_CHANNEL, 10, PAN_CENTER)
+        self._fs.cc(VOICE_CONTROL_CUE_CHANNEL, 10, PAN_CENTER)
 
     def set_program(self, channel: int, program: int, bank: int = 0):
         """Pin the channel to the main GM SoundFont explicitly via
@@ -292,6 +295,7 @@ class SynthEngine:
         self._stop_click()
         self._stop_announcement()
         self._stop_performance_cue()
+        self._stop_voice_confirmation_cue()
 
     def _stop_click(self):
         """Silences a still-ringing click. Called from stop_all_notes() so
@@ -320,6 +324,16 @@ class SynthEngine:
         channel, note = self._active_performance_cue
         self._fs.noteoff(channel, note)
         self._active_performance_cue = None
+
+    def _stop_voice_confirmation_cue(self):
+        """The voice-control ding's counterpart of _stop_click/
+        _stop_announcement/_stop_performance_cue, on its own channel and
+        slot for the same reason."""
+        if self._fs is None or self._active_voice_confirmation_cue is None:
+            return
+        channel, note = self._active_voice_confirmation_cue
+        self._fs.noteoff(channel, note)
+        self._active_voice_confirmation_cue = None
 
     def live_note_on(self, pitch: int, velocity: int) -> None:
         """A key pressed on a connected live-input device (controllers/
@@ -362,6 +376,19 @@ class SynthEngine:
         self._fs.program_select(ch, self._click_sfid, bank, program)
         self._fs.noteon(ch, pitch, velocity)
         self._active_performance_cue = (ch, pitch)
+
+    def play_voice_confirmation_cue(self, channel: int, bank: int, program: int, pitch: int, velocity: int):
+        """Sounds the voice-control "command recognized" ding - same shape
+        and one-shot-sample reasoning as play_click/play_performance_cue."""
+        if self._fs is None or self._click_sfid is None:
+            return
+
+        self._stop_voice_confirmation_cue()
+
+        ch = channel & 0x0F
+        self._fs.program_select(ch, self._click_sfid, bank, program)
+        self._fs.noteon(ch, pitch, velocity)
+        self._active_voice_confirmation_cue = (ch, pitch)
 
     def play_click(self, channel: int, bank: int, program: int, pitch: int, velocity: int):
         """Sounds a metronome click on its own dedicated channel,

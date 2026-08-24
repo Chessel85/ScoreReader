@@ -23,6 +23,7 @@ from controllers.playback_controller import PlaybackController
 from controllers.region_presenter import RegionPresenter
 from controllers.score_persistence import ScorePersistenceController
 from controllers.score_session import ScoreSession
+from controllers.voice_control_controller import VoiceControlController
 from models.vocabulary import bar_word
 from parsers.ug_source import write_ug_source
 from persistence import app_settings
@@ -47,6 +48,8 @@ from widgets.status_bar_widget import StatusBarWidget
 from widgets.tempo_offset_dialog import TempoOffsetDialog
 from widgets.timeline_list_widget import TimelineListWidget
 from widgets.ultimate_guitar_import_dialog import UltimateGuitarImportDialog
+from widgets.voice_control_dialog import VoiceControlDialog
+from widgets.voice_control_test_dialog import VoiceControlTestDialog
 
 
 def detect_default_uk_terms(system_locale: Optional[QLocale] = None) -> bool:
@@ -93,7 +96,10 @@ class MainWindow(QMainWindow):
     BOUNDARY_MIDI_PITCH = PlaybackController.BOUNDARY_MIDI_PITCH
     BOUNDARY_DURATION_MS = PlaybackController.BOUNDARY_DURATION_MS
 
-    def __init__(self, synth=None, uk_terms: bool | None = None, live_midi_manager=None):
+    def __init__(
+        self, synth=None, uk_terms: bool | None = None, live_midi_manager=None,
+        voice_control_manager=None,
+    ):
         """Create the main window.
 
         synth: any object with the SynthEngine interface (play_chord /
@@ -110,6 +116,12 @@ class MainWindow(QMainWindow):
         (set_callback / list_ports / open / close / is_open / device_name).
         Tests pass a NullMidiInputManager stand-in so no real MIDI device is
         touched - same reasoning as synth above.
+
+        voice_control_manager: any object with the VoiceRecognitionManager
+        interface (set_callback / set_diagnostic_callback / list_devices /
+        start / stop / is_running / rebuild_grammar / set_confidence_
+        threshold). Tests pass a NullVoiceRecognizer stand-in so no real
+        SAPI COM recognizer is touched - same reasoning as live_midi_manager.
         """
         super().__init__()
         self.setWindowTitle("Recall Score")
@@ -125,6 +137,7 @@ class MainWindow(QMainWindow):
             synth if synth is not None else SynthEngine(), uk_terms, parent=self
         )
         self._live_midi_manager = live_midi_manager
+        self._voice_control_manager = voice_control_manager
 
         self.setup_ui()
         self.setup_controllers()
@@ -251,6 +264,16 @@ class MainWindow(QMainWindow):
         )
         self.live_midi.start()
         self.navigation = NavigationController(self.session, parent=self)
+        # Hands-free voice control (Ref 19): recognized commands call
+        # straight into navigation/playback, so it's constructed once both
+        # exist. Global like live_midi above, for the same reasoning -
+        # confirmed with the user. .start() auto-starts listening if enabled
+        # and pywin32/SAPI are available; degrades silently otherwise.
+        self.voice_control = VoiceControlController(
+            self.session.synth, self.navigation, self.playback, parent=self,
+            voice_manager=self._voice_control_manager,
+        )
+        self.voice_control.start()
         self.focus = FocusController(self, regions, self.status_bar)
         self.presenter = RegionPresenter(
             self.session, self.region_1, self.region_2, self.region_3,
@@ -304,6 +327,11 @@ class MainWindow(QMainWindow):
         # Global (AppSettings), not per-score like metronome/position
         # announcer above - set once here, never re-set on score load.
         self.live_midi_input_action.setChecked(self.live_midi.settings.enabled)
+        self.voice_control_action = actions.voice_control
+        self.voice_control_settings_action = actions.voice_control_settings
+        # Global (AppSettings), not per-score - set once here, never re-set
+        # on score load, same reasoning as live_midi_input above.
+        self.voice_control_action.setChecked(self.voice_control.settings.enabled)
         self.attribute_order_action = actions.attribute_order
         self.user_guide_action = actions.user_guide
         self.about_action = actions.about
@@ -472,6 +500,14 @@ class MainWindow(QMainWindow):
         voices the user had switched off."""
         self.setWindowTitle(f"Recall Score - {os.path.basename(music_data.file_path)}")
 
+        # Ref 19: "go to bar N"'s numeric vocabulary is bounded to this
+        # score's own real measure numbers - see audio/voice_commands.
+        # go_to_bar_phrases. Safe to call regardless of whether voice
+        # control is currently enabled/listening - a no-op grammar rebuild
+        # request queued for a stopped recognizer is simply picked up by the
+        # next start().
+        self.voice_control.rebuild_grammar(music_data.total_measures)
+
         # A URL-imported UG score's file_path is a synthetic slug with
         # nothing on disk at it (see UgReader) - os.path.exists naturally
         # excludes that case without needing to special-case is_ug here.
@@ -608,6 +644,9 @@ class MainWindow(QMainWindow):
 
     def toggle_live_midi_input(self):
         self.live_midi_input_action.setChecked(self.live_midi.toggle_enabled())
+
+    def toggle_voice_control(self):
+        self.voice_control_action.setChecked(self.voice_control.toggle_enabled())
 
     def _play_boundary_cue(self):
         self.playback.play_boundary_cue()
@@ -929,6 +968,45 @@ class MainWindow(QMainWindow):
         if previous_focus is not None:
             previous_focus.setFocus()
 
+    def _show_voice_control_dialog(self):
+        """Options > Voice Control Settings... (Ref 19). Pure view (see
+        widgets/voice_control_dialog.py's own docstring) - this method wires
+        its signals and decides commit vs. revert from exec()'s result, the
+        same shape _show_live_midi_input_dialog already has. Needs no loaded
+        score at all - the feature is global, not per-score."""
+        previous_focus = self.focusWidget()
+        dialog = VoiceControlDialog(
+            self,
+            devices=self.voice_control.available_devices(),
+            settings=self.voice_control.begin_settings_edit(),
+        )
+        dialog.refresh_requested.connect(
+            lambda: dialog.set_devices(self.voice_control.available_devices())
+        )
+        dialog.test_requested.connect(self._show_voice_control_test_dialog)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.voice_control.commit_settings_edit(dialog.result_settings())
+        else:
+            self.voice_control.cancel_settings_edit()
+        self.voice_control_action.setChecked(self.voice_control.settings.enabled)
+        if previous_focus is not None:
+            previous_focus.setFocus()
+
+    def _show_voice_control_test_dialog(self, device_name: str, confidence_threshold: float):
+        """Voice Control Settings' Test... button. Pauses the real listening
+        session for the duration - VoiceControlTestDialog runs its own
+        isolated recognizer, and two in-process SAPI recognizers competing
+        for the same microphone at once is untested and best avoided."""
+        was_listening = self.voice_control.is_listening()
+        if was_listening:
+            self.voice_control.stop_listening()
+        dialog = VoiceControlTestDialog(
+            self, device_name=device_name, confidence_threshold=confidence_threshold,
+        )
+        dialog.exec()
+        if was_listening:
+            self.voice_control.resume_listening()
+
     def _show_instrument_dialog(self):
         """S5: rename a part and/or change its playback instrument, for
         both MusicXML and MIDI scores - "piano may not always be a suitable
@@ -1060,5 +1138,6 @@ class MainWindow(QMainWindow):
         # note-offs for any note still physically held on a live-input
         # device.
         self.live_midi.close()
+        self.voice_control.close()
         self.synth.close()
         super().closeEvent(event)

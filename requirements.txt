@@ -9,3 +9,11 @@ PySide6==6.11.1
 music21==10.5.0
 pyfluidsynth==1.4.0
 python-rtmidi==1.5.8
+# Hands-free voice control (Ref 19, audio/voice_recognition.py): an offline
+# Kaldi-based speech recognizer (vosk) capturing the microphone via
+# PortAudio (sounddevice). Also needs a model directory at vosk_model/ (not
+# pip-installable, not tracked in git - see .gitignore). The app still runs
+# without either - VOSK_AVAILABLE degrades silently, same as
+# FLUIDSYNTH_AVAILABLE/RTMIDI_AVAILABLE above.
+vosk==0.3.45
+sounddevice==0.5.6

@@ -302,6 +302,8 @@ id="toc-adjusting-volume-and-pan-the-mixer">7.8 Adjusting Volume and Pan
 <li><a href="#renaming-a-part-or-changing-its-instrument"
 id="toc-renaming-a-part-or-changing-its-instrument">7.9 Renaming a Part
 or Changing Its Instrument</a></li>
+<li><a href="#hands-free-voice-control"
+id="toc-hands-free-voice-control">7.10 Hands-Free Voice Control</a></li>
 </ul></li>
 <li><a href="#performance-markings-repeats-endings-and-dynamics"
 id="toc-performance-markings-repeats-endings-and-dynamics">8.
@@ -870,6 +872,47 @@ from the correct General MIDI sound, and checking it detects a
 consistent shift from whichever items already match a real GM sound name
 and applies the same correction across the whole part, including items
 with no exact match of their own.</p>
+<h3 id="hands-free-voice-control">7.10 Hands-Free Voice Control</h3>
+<p>For anyone whose hands are busy holding an instrument, spoken
+commands can control playback and navigation instead of the keyboard.
+Toggle it on or off with <code>Ctrl+Shift+Enter</code>, or
+<strong>Options &gt; Toggle Voice Control</strong>.</p>
+<p><strong>Options &gt; Voice Control Settings…</strong> chooses which
+microphone to listen on and how confident a spoken command must be
+before it is acted on (the Confidence Threshold). Its
+<strong>Test…</strong> button opens a practice session that shows what
+was heard and whether it would have been accepted, without controlling
+the app for real - useful for checking your microphone and finding a
+threshold that suits your room.</p>
+<p>A short confirmation sound plays whenever a spoken command is
+recognized and acted on.</p>
+<p>The full list of recognized commands:</p>
+<ul>
+<li><strong>preview</strong> - equivalent to pressing Enter</li>
+<li><strong>play</strong> - starts or resumes playback</li>
+<li><strong>stop</strong> - stops playback</li>
+<li><strong>pause</strong> - pauses playback</li>
+<li><strong>forward</strong> - moves right one note, like the Right
+Arrow key</li>
+<li><strong>back</strong> - moves left one note, like the Left Arrow
+key</li>
+<li><strong>next bar</strong> / <strong>next measure</strong> - moves to
+the start of the next bar</li>
+<li><strong>previous bar</strong> / <strong>previous measure</strong> -
+moves to the start of the previous bar</li>
+<li><strong>home</strong> - moves to the first note</li>
+<li><strong>end</strong> - moves to the last note</li>
+<li><strong>go to bar <code>&lt;number&gt;</code></strong> / <strong>go
+to measure <code>&lt;number&gt;</code></strong> - jumps to a bar (only
+recognizes bar numbers that actually exist in the loaded score)</li>
+<li><strong>slower</strong> - reduces playback tempo</li>
+<li><strong>faster</strong> - increases playback tempo</li>
+<li><strong>default speed</strong> - resets playback tempo to the
+score’s own tempo</li>
+</ul>
+<p>Recognition only ever matches this fixed list of phrases - nothing
+else is interpreted as a command, which keeps background noise or music
+from accidentally triggering something.</p>
 <h2 id="performance-markings-repeats-endings-and-dynamics">8.
 Performance Markings: Repeats, Endings and Dynamics</h2>
 <h3 id="what-appears-in-the-performance-region">8.1 What Appears in the

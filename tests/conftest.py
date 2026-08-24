@@ -20,6 +20,7 @@ import pytest
 from models.music_data import MusicData
 from tests.support.null_live_midi_input import NullMidiInputManager
 from tests.support.null_synth import NullSynth
+from tests.support.null_voice_recognizer import NullVoiceRecognizer
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCORES_DIR = PROJECT_ROOT / "files"
@@ -484,6 +485,15 @@ def null_live_midi_manager() -> NullMidiInputManager:
     return NullMidiInputManager()
 
 
+@pytest.fixture
+def null_voice_recognizer() -> NullVoiceRecognizer:
+    """Recording/injectable stand-in for audio.voice_recognition.
+    VoiceRecognitionManager. Never touches a real Vosk model or microphone.
+    Pass to MainWindow(voice_control_manager=...) for tests exercising
+    voice-control behaviour."""
+    return NullVoiceRecognizer()
+
+
 @pytest.fixture(autouse=True)
 def _isolate_persistence(monkeypatch, tmp_path):
     """Phase G: redirects app_settings/score_config's on-disk locations into
@@ -543,3 +553,31 @@ def _forbid_real_midi_input(monkeypatch):
 
     monkeypatch.setattr(midi_input.MidiInputManager, "open", _blocked_open)
     monkeypatch.setattr(midi_input, "list_input_ports", _blocked_list_ports)
+
+
+@pytest.fixture(autouse=True)
+def _forbid_real_voice_recognition(monkeypatch):
+    """Fail loudly if any test starts a real Vosk recognizer/microphone
+    capture or enumerates real audio input devices - the voice-control
+    counterpart of _forbid_real_midi_input above. A test that needs this
+    behaviour should inject a NullVoiceRecognizer (the null_voice_recognizer
+    fixture) via MainWindow(voice_control_manager=...) instead.
+
+    Belt-and-braces alongside that injectable stand-in: a test could still
+    construct MainWindow(synth=null_synth) without ever passing
+    voice_control_manager=, which would otherwise fall through to a real
+    VoiceRecognitionManager()."""
+    from audio import voice_recognition
+
+    def _blocked_start(self, device_name, confidence_threshold):
+        raise AssertionError(
+            "This test tried to start a real Vosk voice recognizer. Inject a "
+            "NullVoiceRecognizer instead - see "
+            "tests/support/null_voice_recognizer.py."
+        )
+
+    def _blocked_list_devices():
+        raise AssertionError("This test tried to enumerate real voice control input devices.")
+
+    monkeypatch.setattr(voice_recognition.VoiceRecognitionManager, "start", _blocked_start)
+    monkeypatch.setattr(voice_recognition, "list_input_devices", _blocked_list_devices)

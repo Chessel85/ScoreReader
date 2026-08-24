@@ -1996,6 +1996,67 @@ def test_space_and_ctrl_space_are_no_ops_before_a_score_is_loaded(window, qtbot)
     assert window.sequencer is None
 
 
+# --- Ref 19: PlaybackController.play_command/pause_command (hands-free
+# voice control's directional play/pause, distinct from Space/Ctrl+Space's
+# toggling behaviour) ------------------------------------------------------
+
+def test_play_command_starts_playback_and_is_a_no_op_if_already_playing(
+    window, qtbot, null_synth, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    null_synth.played.clear()
+
+    window.playback.play_command()
+    assert window.sequencer.is_playing is True
+    played_count = len(null_synth.played)
+
+    window.playback.play_command()  # already playing - must not stop or retrigger
+    assert window.sequencer.is_playing is True
+    assert len(null_synth.played) == played_count
+
+
+def test_play_command_resumes_from_the_paused_position(window, qtbot, null_synth, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+    window.playback.play_command()
+    window.playback.pause_command()
+    assert window.sequencer.is_paused is True
+    paused_index = window.sequencer.current_index
+
+    window.playback.play_command()
+
+    assert window.sequencer.is_playing is True
+    assert window.sequencer.is_paused is False
+    assert window.sequencer.current_index == paused_index
+
+
+def test_pause_command_is_a_no_op_when_not_playing(window, qtbot, null_synth, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+
+    window.playback.pause_command()  # must not raise or start anything
+
+    assert window.sequencer.is_playing is False
+    assert window.sequencer.is_paused is False
+
+
+def test_pause_command_does_not_resume_when_already_paused(window, qtbot, null_synth, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+    window.playback.play_command()
+    window.playback.pause_command()
+    assert window.sequencer.is_paused is True
+
+    window.playback.pause_command()  # must stay paused, never resume
+
+    assert window.sequencer.is_paused is True
+    assert window.sequencer.is_playing is False
+
+
+def test_play_command_and_pause_command_are_no_ops_before_a_score_is_loaded(window, qtbot):
+    window.playback.play_command()
+    window.playback.pause_command()
+
+    assert window.sequencer is None
+
+
 def test_sequencer_steps_advance_the_cursor_and_regions_over_real_time(
     window, qtbot, null_synth, minimal_score
 ):
@@ -3812,4 +3873,50 @@ def test_part_order_dialog_does_nothing_on_cancel(window, qtbot, monkeypatch):
 
 def test_part_order_dialog_does_nothing_with_no_score_loaded(window, qtbot):
     window._show_part_order_dialog()  # must not crash
+
+
+# --- Ref 19: hands-free voice control, MainWindow-level wiring ------------
+# (command dispatch/threading is covered in tests/test_voice_control_
+# controller.py against a bare VoiceControlController - these confirm only
+# the shell's own wiring: construction, the menu toggle, and the
+# score-load -> grammar-rebuild hook.)
+
+def test_voice_control_is_constructed_disabled_and_toggle_updates_the_menu_action(
+    qtbot, null_synth, null_voice_recognizer,
+):
+    w = MainWindow(synth=null_synth, uk_terms=False, voice_control_manager=null_voice_recognizer)
+    qtbot.addWidget(w)
+
+    assert not w.voice_control.is_listening()
+    assert w.voice_control_action.isChecked() is False
+
+    w.voice_control.settings.device_name = "My Microphone"
+    null_voice_recognizer.available_devices = ["My Microphone"]
+    w.toggle_voice_control()
+
+    assert w.voice_control.is_listening()
+    assert w.voice_control_action.isChecked() is True
+
+
+def test_loading_a_score_rebuilds_the_go_to_bar_grammar(
+    qtbot, null_synth, null_voice_recognizer, many_measures_score,
+):
+    w = MainWindow(synth=null_synth, uk_terms=False, voice_control_manager=null_voice_recognizer)
+    qtbot.addWidget(w)
+
+    load_and_wait(w, qtbot, many_measures_score)
+
+    assert null_voice_recognizer.rebuild_calls[-1] == w._music_data.total_measures
+
+
+def test_close_stops_the_voice_control_recognizer(qtbot, null_synth, null_voice_recognizer):
+    w = MainWindow(synth=null_synth, uk_terms=False, voice_control_manager=null_voice_recognizer)
+    qtbot.addWidget(w)
+    w.voice_control.settings.device_name = "My Microphone"
+    null_voice_recognizer.available_devices = ["My Microphone"]
+    w.toggle_voice_control()
+
+    w.close()
+
+    assert null_voice_recognizer.stop_count >= 1
 

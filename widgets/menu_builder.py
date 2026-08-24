@@ -58,6 +58,8 @@ class Actions:
     position_announcer: Optional[QAction] = None
     live_midi_input: Optional[QAction] = None
     live_midi_input_settings: Optional[QAction] = None
+    voice_control: Optional[QAction] = None
+    voice_control_settings: Optional[QAction] = None
     attribute_order: Optional[QAction] = None
     user_guide: Optional[QAction] = None
     about: Optional[QAction] = None
@@ -427,6 +429,44 @@ class MenuBuilder:
             status_tip="Choose the MIDI device, instrument, volume and pan for live input",
         )
         options_menu.addAction(a.live_midi_input_settings)
+
+        # Hands-free voice control (Ref 19): spoken commands ("play",
+        # "forward", "next bar", ...) call the same NavigationController/
+        # PlaybackController methods a keyboard shortcut would, for a
+        # musician whose hands are already busy holding their instrument.
+        # Ctrl+Shift+Return per the Product Definition Document's own stated
+        # shortcut (not Ctrl+V - the single-Ctrl+letter family metronome/
+        # announcer/live MIDI input already use - Return has no other
+        # window-level binding to collide with here). No fixed shortcut for
+        # the settings dialog, unlike Live MIDI Input's Ctrl+Shift+L pairing
+        # - every unclaimed Ctrl+Shift+letter was judged not worth
+        # memorising for a dialog opened rarely; menu-only, like Reorder
+        # Attributes/Reorder Parts below.
+        a.voice_control = self._action(
+            "Toggle Voice &Control", self.slots.toggle_voice_control,
+            checkable=True,
+            status_tip="Control playback and navigation hands-free by voice",
+        )
+        # Two shortcuts, not one: QKeySequence("Ctrl+Shift+Enter") parses to
+        # the NUMPAD Enter key (Qt::Key_Enter), not the main keyboard Return
+        # key the Product Definition Document actually specifies - reported,
+        # live-tested (NVDA reads a plain "Ctrl+Shift+Return" shortcut as
+        # "Return", not "Enter", which doesn't match what's printed on a
+        # real keyboard). setShortcuts() with Enter listed FIRST makes that
+        # the primary/displayed shortcut (confirmed: .shortcut() then
+        # reports "Ctrl+Shift+Enter") while the main Return key - listed
+        # second - still triggers the action too, so both the real keyboard
+        # key and the numpad Enter key work.
+        a.voice_control.setShortcuts([
+            QKeySequence("Ctrl+Shift+Enter"), QKeySequence("Ctrl+Shift+Return"),
+        ])
+        options_menu.addAction(a.voice_control)
+
+        a.voice_control_settings = self._action(
+            "Voice Control &Settings...", self.slots._show_voice_control_dialog,
+            status_tip="Choose the microphone and confidence threshold for voice control",
+        )
+        options_menu.addAction(a.voice_control_settings)
 
         # Ref 15 AC4: the ordering half of the attribute-display system;
         # add/remove is Region 4's right-click menu.

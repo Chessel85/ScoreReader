@@ -1,11 +1,12 @@
-want score to remember where user was when last had a file open.
-* The application title bar should put Recall Score ahead of the filename 
+* work with gemini on onstructions to give claude to make it write a good user manual
+* there is something unintuitive about the pause and play feature though not sure exactly what the oddity is.
+* when looping the preview, the metronome comes in too soon on the repeat. the last note is not being allowed to play for its full length.
+* nice to get the measure number announced when moving left or right by a whole bar but do not know how to do this 
+* do a poc on sapi based voice control
+* can we have a guitar tuner feature?
 * when metronome is on, but moving up and down a chord, do not sound the metronome click.
 * A mute option so midi is not played.
 * There are more performance indicators that need catering for.  speed up and slow down instructions over a period of time.  Fret position indicators whether just a one off or over a duration.  Related are barre instructions.  Perhaps chord indocators above the stave should fall into this category also.
 * Quick attribute look up.  Use control + number row to make screen reader announce that number attribute from the attribute list e.g. Pressing control + 2 announces octave.  Can the app push text to the screen reader?
-* From the reorder attributes dialogue I can discover what attributes are present but I can't easily add that attribute to the note region unless I actually find an example of it and do application key.  I want an easier way to add attributes to the note region.
-Perhaps have add and remove buttons in the reorder dialogue, or perhaps a find next attribute dialogue?
 * Notes need to account for staff symbol e.g. a piano bass stave (without a treble) seems to play too high
 * Want an audio indicator of crossing a barline. Or does the metronome already do that?
-* There might be some tiny clicks in my headphones when Recall Score starts.  This might be indicative of something bad.  Can I make Reaper reaSynth go silent again when RS closes and restarts?

@@ -20,6 +20,7 @@ class NullSynth:
         self.clicks: List[Dict[str, Any]] = []
         self.words: List[Dict[str, Any]] = []
         self.performance_cues: List[Dict[str, Any]] = []
+        self.voice_confirmation_cues: List[Dict[str, Any]] = []
         self.volume_changes: List[tuple] = []
         self.pan_changes: List[tuple] = []
         self.live_notes_on: List[tuple] = []
@@ -203,6 +204,23 @@ class NullSynth:
         Performance region's change cue fired independently of anything
         else."""
         self.performance_cues.append(
+            {
+                "channel": channel,
+                "bank": bank,
+                "program": program,
+                "pitch": pitch,
+                "velocity": velocity,
+            }
+        )
+
+    def play_voice_confirmation_cue(
+        self, channel: int, bank: int, program: int, pitch: int, velocity: int
+    ) -> None:
+        """Hands-free voice control: mirrors SynthEngine.
+        play_voice_confirmation_cue - recorded separately so a test can
+        assert the command-recognized ding fired independently of anything
+        else."""
+        self.voice_confirmation_cues.append(
             {
                 "channel": channel,
                 "bank": bank,

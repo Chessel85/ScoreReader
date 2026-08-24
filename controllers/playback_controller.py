@@ -323,6 +323,41 @@ class PlaybackController(QObject):
                 self.sequencer.play_from(start_index, update_cursor=True)
                 self.playback_state_changed.emit()
 
+    def play_command(self) -> None:
+        """Hands-free voice control's directional "play" (Ref 19): resumes
+        if paused, starts from the cursor if stopped, no-ops if already
+        playing. Unlike toggle_play_stop, never stops what's already
+        running - a spoken "play" heard while music is already playing
+        should not silence it, the way pressing Space a second time
+        deliberately does."""
+        if not self.music_data or self.sequencer is None:
+            return
+        if self._preview is not None:
+            self.stop()
+        if self.sequencer.is_paused:
+            self.sequencer.resume()
+            self.playback_state_changed.emit()
+        elif not self.sequencer.is_playing:
+            start_index = self.music_data.active_event_index
+            if self.music_data.next_visible_event_index(start_index) is None:
+                self.play_boundary_cue()
+            else:
+                self.sequencer.play_from(start_index, update_cursor=True)
+                self.playback_state_changed.emit()
+
+    def pause_command(self) -> None:
+        """Hands-free voice control's directional "pause" (Ref 19): pauses
+        if playing, no-ops otherwise - never resumes, unlike a spoken "pause"
+        heard while already paused, which should just stay paused. Body is
+        identical to toggle_pause_resume today, kept as its own named method
+        since the two commands mean different things even where they
+        currently coincide."""
+        if self.sequencer is None:
+            return
+        if self.sequencer.is_playing:
+            self.sequencer.pause()
+            self.playback_state_changed.emit()
+
     def toggle_pause_resume(self) -> None:
         """Ctrl+Space (Ref 10 AC3): pauses only. Resuming is Space's job -
         having both resume collides and leaves users pressing Space twice."""

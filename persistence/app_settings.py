@@ -9,6 +9,7 @@ from PySide6.QtCore import QStandardPaths
 
 from models.live_midi_input_settings import LiveMidiInputSettings
 from models.preview_settings import PreviewSettings
+from models.voice_control_settings import VoiceControlSettings
 
 # File > Recent Files - most-recent-first, capped at this many entries.
 MAX_RECENT_FILES = 8
@@ -31,12 +32,17 @@ class AppSettings:
     live_midi_input (device/instrument/volume/pan for playing a connected
     MIDI keyboard live, controllers/live_midi_input_controller.py) is global
     for the same reasoning as preview - confirmed with the user: it's the
-    user's hardware setup, not a property of any one score."""
+    user's hardware setup, not a property of any one score.
+
+    voice_control (device/confidence threshold for hands-free SAPI voice
+    control, controllers/voice_control_controller.py) is global for the same
+    reasoning as live_midi_input above."""
 
     uk_terms: Optional[bool] = None
     recent_files: List[str] = field(default_factory=list)
     preview: PreviewSettings = field(default_factory=PreviewSettings)
     live_midi_input: LiveMidiInputSettings = field(default_factory=LiveMidiInputSettings)
+    voice_control: VoiceControlSettings = field(default_factory=VoiceControlSettings)
 
 
 def settings_path() -> Path:
@@ -56,6 +62,7 @@ def load() -> AppSettings:
             recent_files=data.get("recent_files", []),
             preview=PreviewSettings.from_dict(data.get("preview")),
             live_midi_input=LiveMidiInputSettings.from_dict(data.get("live_midi_input")),
+            voice_control=VoiceControlSettings.from_dict(data.get("voice_control")),
         )
     except FileNotFoundError:
         return AppSettings()
@@ -102,4 +109,13 @@ def set_live_midi_input_settings(settings: LiveMidiInputSettings) -> None:
     reason as add_recent_file/set_preview_settings above."""
     current = load()
     current.live_midi_input = settings.copy()
+    save(current)
+
+
+def set_voice_control_settings(settings: VoiceControlSettings) -> None:
+    """Records the voice-control settings, load-mutate-save for the same
+    reason as add_recent_file/set_preview_settings/set_live_midi_input_
+    settings above."""
+    current = load()
+    current.voice_control = settings.copy()
     save(current)

@@ -475,6 +475,44 @@ consistent shift from whichever items already match a real GM sound name
 and applies the same correction across the whole part, including items
 with no exact match of their own.
 
+### 7.10 Hands-Free Voice Control
+
+For anyone whose hands are busy holding an instrument, spoken commands can
+control playback and navigation instead of the keyboard. Toggle it on or
+off with `Ctrl+Shift+Enter`, or **Options > Toggle Voice Control**.
+
+**Options > Voice Control Settings...** chooses which microphone to listen
+on and how confident a spoken command must be before it is acted on (the
+Confidence Threshold). Its **Test...** button opens a practice session
+that shows what was heard and whether it would have been accepted,
+without controlling the app for real - useful for checking your
+microphone and finding a threshold that suits your room.
+
+A short confirmation sound plays whenever a spoken command is recognized
+and acted on.
+
+The full list of recognized commands:
+
+- **preview** - equivalent to pressing Enter
+- **play** - starts or resumes playback
+- **stop** - stops playback
+- **pause** - pauses playback
+- **forward** - moves right one note, like the Right Arrow key
+- **back** - moves left one note, like the Left Arrow key
+- **next bar** / **next measure** - moves to the start of the next bar
+- **previous bar** / **previous measure** - moves to the start of the previous bar
+- **home** - moves to the first note
+- **end** - moves to the last note
+- **go to bar `<number>`** / **go to measure `<number>`** - jumps to a bar
+  (only recognizes bar numbers that actually exist in the loaded score)
+- **slower** - reduces playback tempo
+- **faster** - increases playback tempo
+- **default speed** - resets playback tempo to the score's own tempo
+
+Recognition only ever matches this fixed list of phrases - nothing else is
+interpreted as a command, which keeps background noise or music from
+accidentally triggering something.
+
 ## 8. Performance Markings: Repeats, Endings and Dynamics
 
 ### 8.1 What Appears in the Performance Region
