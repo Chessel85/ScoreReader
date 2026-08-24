@@ -1,0 +1,26 @@
+Act as an expert Technical Writer. I need you to write a comprehensive User Guide in Markdown format for our application, "Recall Score". This MD file will be converted to HTML and accessed via the application's Help menu.
+
+Before writing, briefly inspect the codebase—specifically the UI components, menus, and user-facing workflows—to understand exactly what the application currently does. 
+
+### Audience & Scope Constraints:
+* The target audience is strictly NON-TECHNICAL. 
+* Focus entirely on what the user can currently do and how they do it.
+* DO NOT include any technical details, underlying architecture, or code references.
+* DO NOT include the development history, past decisions, or future planned features.
+
+### Structural Requirements:
+* Organize the document by user workflows and features, NOT by the timeline of how they were developed.
+* Use task-based headings where possible (e.g., "How to Create a Score" rather than just "Score Module").
+* Follow this general structure:
+  1. Introduction / Overview (What the app does in 2-3 sentences)
+  2. Getting Started / Basic Concepts
+  3. Core Features & Workflows (The bulk of the guide)
+  4. Settings & Preferences (If applicable)
+
+### Style & Formatting Rules:
+* Use active voice and short, clear sentences.
+* Use standard Markdown headers (##, ###) for clean conversion to HTML and quick nav by screen reader users.
+* Use bulleted or numbered lists for step-by-step instructions.
+* Do not use bold markup because this will not be seen by screen reader users and complicates reading the MD version when doing manual editting.
+
+Please generate the complete Markdown user guide.
