@@ -2,6 +2,7 @@
 from typing import List, Optional
 
 from PySide6.QtCore import QItemSelectionModel, QObject, Signal
+from PySide6.QtGui import QAccessible, QAccessibleAnnouncementEvent
 from PySide6.QtWidgets import QListWidgetItem
 
 from audio.performance_cue import performance_cue_event
@@ -77,9 +78,28 @@ class RegionPresenter(QObject):
 
     # --- timeline / regions 3, 4, 5 -----------------------------------
 
-    def update_timeline_views(self, play_all: bool = True) -> None:
+    def update_timeline_views(self, play_all: bool = True, announce_measure: bool = False) -> None:
         if not self.music_data:
             return
+
+        # Fired BEFORE the rebuild below, not after: live-tested regression -
+        # row 0's own natural accessibility announcement (see the comment on
+        # setCurrentRow below) turned out to be unsuppressible from here.
+        # blockSignals(True) on region_3 only gates signals region_3 ITSELF
+        # emits; whatever Qt's accessibility bridge actually listens to for
+        # "current item changed" (its selection model, or the underlying
+        # list model's own insert signals - either way, a different QObject)
+        # fires regardless, during the clear()/addItem() rebuild itself, no
+        # matter when or whether setCurrentRow is called. An attempt to
+        # suppress it and post one hand-built "Measure N. <note text>"
+        # replacement instead produced a doubled announcement live ("C fret
+        # 2 bar 6 C fret 2" - the un-suppressed natural one, then ours).
+        # Since the natural announcement cannot reliably be stopped, this
+        # instead posts a short, TEXT-FREE "Measure N." announcement first,
+        # so it is heard before the natural mechanism announces the note -
+        # never repeating what the natural announcement will say next.
+        if announce_measure:
+            self._announce_measure_change()
 
         self.region_3.blockSignals(True)
         self.region_3.clear()
@@ -116,6 +136,27 @@ class RegionPresenter(QObject):
             self.audition_requested.emit()
 
         self.refresh_region_5()
+
+    def _announce_measure_change(self) -> None:
+        """Speaks just the new bar number - "Measure 6." - via Qt's
+        accessibility Announcement event (QAccessibleAnnouncementEvent, Qt
+        6.8+; surfaces to NVDA as a UI Automation notification on Windows),
+        called BEFORE update_timeline_views rebuilds Region 3 so this is
+        heard first, ahead of the note itself. Deliberately does NOT include
+        the note text - Region 3's own natural per-row announcement already
+        supplies that immediately afterward (see update_timeline_views'
+        comment on why it can't be suppressed and folded into one message
+        here instead). This is a one-shot spoken message: it never touches
+        what's displayed or stored in Region 3, so arrowing off row 0 and
+        back within the same chord doesn't re-read the bar number."""
+        current = self.music_data.get_current_slice()
+        if current is None:
+            return
+        label = bar_word(self.session.uk_terms).capitalize()
+        message = f"{label} {current.measure}."
+        event = QAccessibleAnnouncementEvent(self.region_3, message)
+        event.setPoliteness(QAccessible.AnnouncementPoliteness.Assertive)
+        QAccessible.updateAccessibility(event)
 
     def refresh_region_3_labels(self) -> None:
         """Re-renders Region 3's row text in place after an attribute

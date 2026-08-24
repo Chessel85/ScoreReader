@@ -18,7 +18,7 @@ class NavigationController(QObject):
     and the synth.
     """
 
-    position_changed = Signal(bool)  # play_all
+    position_changed = Signal(bool, bool)  # play_all, announce_measure
     boundary_hit = Signal()
 
     def __init__(self, session, parent=None):
@@ -37,9 +37,9 @@ class NavigationController(QObject):
     def music_data(self):
         return self.session.music_data
 
-    def _moved(self, ok: bool) -> None:
+    def _moved(self, ok: bool, announce_measure: bool = False) -> None:
         if ok:
-            self.position_changed.emit(True)
+            self.position_changed.emit(True, announce_measure)
         else:
             self.boundary_hit.emit()
 
@@ -56,12 +56,12 @@ class NavigationController(QObject):
     def measure_left(self) -> None:
         if not self.music_data:
             return
-        self._moved(self.music_data.move_timeline_left_by_measure())
+        self._moved(self.music_data.move_timeline_left_by_measure(), announce_measure=True)
 
     def measure_right(self) -> None:
         if not self.music_data:
             return
-        self._moved(self.music_data.move_timeline_right_by_measure())
+        self._moved(self.music_data.move_timeline_right_by_measure(), announce_measure=True)
 
     def timeline_home(self) -> None:
         """Home (Ref 5). Unlike Left/Right this jumps to a known limit, so it
@@ -69,21 +69,21 @@ class NavigationController(QObject):
         if not self.music_data:
             return
         self.music_data.move_timeline_home()
-        self.position_changed.emit(True)
+        self.position_changed.emit(True, True)
 
     def timeline_end(self) -> None:
         """End (Ref 5) - see timeline_home."""
         if not self.music_data:
             return
         self.music_data.move_timeline_end()
-        self.position_changed.emit(True)
+        self.position_changed.emit(True, True)
 
     def to_typed_measure(self, digits: str) -> None:
         """Ref 6: Enter with pending digits jumps to that bar's first active
         event; an unknown bar sounds the boundary cue and doesn't move."""
         if not self.music_data:
             return
-        self._moved(self.music_data.jump_to_measure(int(digits)))
+        self._moved(self.music_data.jump_to_measure(int(digits)), announce_measure=True)
 
     def jump_to_span(self, row, is_start: bool) -> None:
         """Region 5's Ctrl+Home/Ctrl+End (Ref 29). `row` is the focused
@@ -110,7 +110,7 @@ class NavigationController(QObject):
             return
 
         self.music_data.active_event_index = index
-        self.position_changed.emit(True)
+        self.position_changed.emit(True, False)
 
     def arm_find_target(self, target: FindTarget) -> None:
         """Called by MainWindow on the Find dialog's OK, before the initial
@@ -153,6 +153,6 @@ class NavigationController(QObject):
         # silence the cue almost immediately, the same bug already fixed
         # for Region 5's own change cue (see MainWindow._update_timeline_
         # views's ordering comment).
-        self.position_changed.emit(True)
+        self.position_changed.emit(True, False)
         if wrapped:
             self.boundary_hit.emit()

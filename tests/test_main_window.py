@@ -9,6 +9,7 @@ from PySide6.QtGui import QKeySequence, QValidator
 from PySide6.QtWidgets import QApplication, QDialog, QLabel, QWidget
 
 from audio.metronome import METRONOME_OFFBEAT_NOTE
+from controllers import region_presenter
 from main_window import MainWindow, detect_default_uk_terms
 from models import mixer_settings
 from models.preview_settings import PreviewSettings
@@ -98,6 +99,63 @@ def test_navigating_right_auditions_the_new_slice(window, qtbot, null_synth, min
         window.region_3.item(i).text() for i in range(window.region_3.count())
     ] == ["D"]
     assert null_synth.last_played["midi_notes"] == [62]
+
+
+def test_measure_navigation_announces_the_new_bar_number_without_changing_row_text(
+    window, qtbot, monkeypatch, tempo_change_score
+):
+    """Ctrl+Right's own delegator (navigate_measure_right) must get NVDA to
+    hear the new bar number, but Region 3's row 0 text must stay exactly the
+    note name, and the note text must never be duplicated into our own
+    announcement. Live-tested regressions, in order:
+    1) embedding "Measure N." directly into row 0's own text so the
+       ordinary per-row accessibility announcement would pick it up meant
+       the bar number was re-read every time the user arrowed off row 0
+       (into a chord) and back, since it had become the row's real,
+       persisted content rather than a one-off spoken event;
+    2) trying to suppress that ordinary announcement (via blockSignals
+       around setCurrentRow) and post one hand-built "Measure N. <note
+       text>" replacement instead didn't actually suppress it - Region 3's
+       natural announcement fired regardless, producing a doubled "C fret 2
+       bar 6 C fret 2".
+    The fix posts a short, TEXT-FREE "Measure N." announcement BEFORE
+    Region 3 is even rebuilt, so it's heard ahead of - not instead of, and
+    never repeating - the natural announcement of the note itself (see
+    RegionPresenter._announce_measure_change/update_timeline_views).
+    Captured here in place of a real screen reader."""
+    announcements = []
+    monkeypatch.setattr(
+        region_presenter.QAccessible,
+        "updateAccessibility",
+        lambda event: announcements.append(event.message()),
+    )
+    load_and_wait(window, qtbot, tempo_change_score)
+    announcements.clear()
+
+    window.navigate_measure_right()  # bar 1 -> bar 2, first note G
+
+    assert window.region_3.item(0).text() == "G"
+    assert announcements == ["Measure 2."]
+
+
+def test_note_by_note_navigation_does_not_announce_a_bar_number(
+    window, qtbot, monkeypatch, tempo_change_score
+):
+    """Plain Left/Right (test_navigating_right_auditions_the_new_slice, above)
+    stays unprefixed and un-announced - only Ctrl+Left/Right, Home/End, and
+    "go to bar N" are measure-level jumps."""
+    announcements = []
+    monkeypatch.setattr(
+        region_presenter.QAccessible,
+        "updateAccessibility",
+        lambda event: announcements.append(event.message()),
+    )
+    load_and_wait(window, qtbot, tempo_change_score)
+    announcements.clear()
+
+    window.navigate_timeline_right()  # C -> D, still bar 1
+
+    assert announcements == []
 
 
 def test_navigating_onto_a_single_note_slice_sets_a_current_row(window, qtbot, minimal_score):
