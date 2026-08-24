@@ -2,7 +2,7 @@
 from dataclasses import dataclass, field
 from typing import Any, List, Optional, Tuple
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 
 from audio.lead_in import build_lead_in_schedule
 from audio.metronome import METRONOME_CHANNEL, click_event_for_beat
@@ -104,7 +104,12 @@ class PlaybackController(QObject):
         self._preview: Optional[_PreviewRun] = None
         # timer: injectable like Sequencer's, so tests can drive the
         # count-in and the loop without waiting on the clock.
-        self._preview_timer = timer if timer is not None else QTimer(self)
+        if timer is None:
+            timer = QTimer(self)
+            # See Sequencer.__init__'s own comment - the same fast-tempo
+            # drift applies to the count-in/loop-restart chain here.
+            timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._preview_timer = timer
         self._preview_timer.setSingleShot(True)
         self._preview_timer.timeout.connect(self._on_preview_timer)
 
@@ -493,26 +498,47 @@ class PlaybackController(QObject):
         bar_start_quarters = max(0.0, start_bar[0]) if start_bar else start_slice.quarters_from_start
         end_quarters = end_bar[1] if end_bar else start_slice.quarters_from_start
 
-        lead_quarters = max(0.0, start_slice.quarters_from_start - bar_start_quarters)
-        offset_ms = int(round(
-            lead_quarters * 60000.0 / float(self.music_data.effective_tempo_bpm(start_index))
-        ))
-        # Jump-aware, not span_ms_to_quarters's flat walk - a repeat fully
-        # inside the preview window makes the real Sequencer run take longer
-        # than a naive linear walk would predict, and this drives the
-        # loop-restart timer below (iteration_ms), so it must know about it
-        # too or a contained repeat gets truncated mid-replay.
-        span_ms = self.music_data.playback_span_ms(start_index, end_index, end_quarters)
-
-        return _PreviewRun(
+        run = _PreviewRun(
             settings=settings,
             start_index=start_index,
             end_index=end_index,
             end_quarters=end_quarters,
             is_pickup=is_pickup,
-            offset_ms=offset_ms,
-            iteration_ms=offset_ms + span_ms,
+            offset_ms=0,
+            iteration_ms=0,
         )
+        self._refresh_preview_span(run)
+        return run
+
+    def _refresh_preview_span(self, run: "_PreviewRun") -> None:
+        """(Re)computes offset_ms/iteration_ms from the CURRENT tempo -
+        called both when a run is first built and again at the top of every
+        _start_preview_iteration call (including a loop repeat), so an
+        F/S/D tempo change made while Preview is already looping is
+        reflected in the very next loop-restart's timing rather than
+        replaying a stale span computed at whatever tempo was in force when
+        Enter was first pressed. Reported live: speeding up ~40bpm while a
+        repeat-containing passage was already looping left the loop-restart
+        (and the lead-in count-in it schedules) drifting out of time -
+        _start_preview_iteration's own bpm (used for the count-in clicks)
+        was already re-derived per iteration (see its own comment below),
+        but iteration_ms/offset_ms - the loop-restart's own timing - were
+        computed once in _build_preview_run and never touched again."""
+        start_slice = self.music_data.timeline_slices[run.start_index]
+        start_bar = self.music_data.bar_bounds_quarters(run.start_index)
+        # Clamped at 0 for a pickup bar, whose NOTIONAL start is before the
+        # piece begins - see is_pickup/_build_preview_run's own comment.
+        bar_start_quarters = max(0.0, start_bar[0]) if start_bar else start_slice.quarters_from_start
+        lead_quarters = max(0.0, start_slice.quarters_from_start - bar_start_quarters)
+        bpm = self.music_data.effective_tempo_bpm(run.start_index)
+        run.offset_ms = int(round(lead_quarters * 60000.0 / float(bpm)))
+        # Jump-aware, not span_ms_to_quarters's flat walk - a repeat fully
+        # inside the preview window makes the real Sequencer run take longer
+        # than a naive linear walk would predict, and this drives the
+        # loop-restart timer below (iteration_ms), so it must know about it
+        # too or a contained repeat gets truncated mid-replay.
+        span_ms = self.music_data.playback_span_ms(run.start_index, run.end_index, run.end_quarters)
+        run.iteration_ms = run.offset_ms + span_ms
 
     def _start_preview_iteration(self, with_lead_in: bool) -> None:
         """Build one iteration's event schedule - count-in clicks, the
@@ -521,6 +547,9 @@ class PlaybackController(QObject):
         run = self._preview
         if run is None or not self.music_data:
             return
+        # See _refresh_preview_span's own docstring: keeps a loop repeat's
+        # own restart timing current, not just the count-in's bpm below.
+        self._refresh_preview_span(run)
 
         start_slice = self.music_data.timeline_slices[run.start_index]
         ts_num, ts_den = start_slice.time_sig

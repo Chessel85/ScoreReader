@@ -1,8 +1,13 @@
+* Think the glitch i hear at start up is a real problem. is very noticeable when on speakers. and sometimes the quality of the midi rendering is crackly. or is this only when running from command prompt?
+* add a voice control command of loop length to set how many bars the preview plays for.
 * work with gemini on onstructions to give claude to make it write a good user manual
+* Write a new user guide before doing a new release.
 * there is something unintuitive about the pause and play feature though not sure exactly what the oddity is.
 * when looping the preview, the metronome comes in too soon on the repeat. the last note is not being allowed to play for its full length.
+* need to do a root and branch review of keystrokes to try and get some logicalness to it. 
+* Need to properly plan and organise the menus.
+* Need to review file formats; midi 0 and ultimate guitar need assumptions about bars revisiting.
 * nice to get the measure number announced when moving left or right by a whole bar but do not know how to do this 
-* do a poc on sapi based voice control
 * can we have a guitar tuner feature?
 * when metronome is on, but moving up and down a chord, do not sound the metronome click.
 * A mute option so midi is not played.

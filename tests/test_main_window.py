@@ -2262,6 +2262,33 @@ def test_preview_loop_timing_accounts_for_a_repeat_fully_inside_the_window(
     assert run.iteration_ms == 10000, "must be the jump-aware duration, not the flat 8000ms"
 
 
+def test_preview_loop_restart_timing_tracks_a_tempo_change_made_mid_loop(
+    window, qtbot, repeat_ending_then_dc_al_coda_score
+):
+    """Reported live: speeding up (F, Ref 12) while a repeat-containing
+    passage was already looping in Preview left the loop-restart drifting
+    out of time - it kept using the span computed at whatever tempo was in
+    force when Enter was first pressed. iteration_ms/offset_ms (the loop-
+    restart's own timing) used to be computed once in _build_preview_run and
+    never touched again, unlike the lead-in count-in's own bpm, which was
+    already re-derived every iteration (see _start_preview_iteration's own
+    comment). _refresh_preview_span now reruns that same computation at the
+    top of every _start_preview_iteration call - simulated here the same
+    way a real loop repeat would trigger it, without waiting on a real
+    QTimer."""
+    load_and_wait(window, qtbot, repeat_ending_then_dc_al_coda_score)
+    no_lead_in(window, preview_bars=4, loop=True)
+    window.audition_phrase()
+
+    run = window.playback._preview
+    assert run.iteration_ms == 10000, "sanity check at the starting tempo (120bpm)"
+
+    window._music_data.tempo_bpm = 240  # double speed
+    window.playback._start_preview_iteration(with_lead_in=False)  # what a loop repeat triggers
+
+    assert run.iteration_ms == 5000, "must reflect the new tempo, not the stale one from Enter"
+
+
 # --- Alt+PageUp/PageDown: adjust preview length -------------------------
 
 def test_alt_page_up_and_down_adjust_the_preview_length_by_one_bar(

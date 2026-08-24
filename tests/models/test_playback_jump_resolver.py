@@ -11,6 +11,9 @@ Each fixture's own doc comment (tests/fixtures/*.musicxml) spells out the
 expected step sequence in prose; the assertions here just walk
 next_playback_index and check it matches.
 """
+from models.event_slice import EventSlice
+from models.music_data import MusicData
+from models.note_data import NoteData
 from models.playback_jump_state import PlaybackJumpState
 
 
@@ -172,6 +175,123 @@ def test_playback_span_ms_detects_a_jump_whose_trigger_is_exactly_end_index(
 
     assert flat == 4000, "sanity check on the flat (bug-reproducing) baseline"
     assert jump_aware == 8000, "must account for the repeat replaying measures 2-3"
+
+
+def test_playback_span_ms_waits_out_the_final_notes_real_ring_not_just_the_bar_line():
+    """Reported live: with Preview looping, the last note of the previewed
+    span was cut short - similar in spirit to the repeat-landing-on-
+    end_index bug above, but a plain single-pass case, no repeat involved.
+
+    playback_span_ms's tail used to be purely the tempo-based distance from
+    the final note's onset to the bar line (end_quarters), ignoring what
+    the note would actually ring for. A short final note (here a 32nd at
+    120bpm, nominally 62.5ms) is floored up to 100ms by _quarters_to_ms
+    (the same floor get_playback_events_for_indices' duration_ms applies) -
+    the REAL Sequencer run (whose ring_out_ms already uses that floored,
+    per-part-max duration - see get_ring_out_ms_for_index) keeps sounding
+    for 100ms after the note's onset, past the bar line. Preview's loop
+    restart used to fire at the bar line (2000ms), calling stop_all_notes()
+    and cutting that still-ringing note off early.
+
+    2037, not the arithmetically-exact 2038 (3.875 * 500 = 1937.5 + 100 ring
+    -out), because the leading step is truncated via int(), matching
+    Sequencer._delay_ms_to's own per-step truncation exactly (see
+    playback_span_ms's walk) rather than accumulating the unrounded float -
+    a separate reported-live bug (sped up ~40bpm from a score's default
+    tempo, a real repeat's loop-restart drifted audibly out of time; this
+    single-note fixture just happens to also exercise that truncation).
+    """
+    md = MusicData(
+        tempo_bpm=120,
+        timeline_slices=[
+            EventSlice(
+                measure=1,
+                beat_position=1.0,
+                quarter_length=3.875,
+                quarters_from_start=0.0,
+                notes=[
+                    NoteData(
+                        step_name="C",
+                        measure=1,
+                        beat_position=1.0,
+                        ts_duration=3.875,
+                        quarter_length=3.875,
+                        part_id="P1",
+                        part_name="Test",
+                        staff=1,
+                        voice=1,
+                        midi_pitch=60,
+                    )
+                ],
+            ),
+            EventSlice(
+                measure=1,
+                beat_position=3.875,
+                quarter_length=0.125,
+                quarters_from_start=3.875,
+                notes=[
+                    NoteData(
+                        step_name="D",
+                        measure=1,
+                        beat_position=3.875,
+                        ts_duration=0.125,
+                        quarter_length=0.125,
+                        part_id="P1",
+                        part_name="Test",
+                        staff=1,
+                        voice=1,
+                        midi_pitch=62,
+                    )
+                ],
+            ),
+        ],
+    )
+
+    bar_line_only = md.span_ms_to_quarters(0, 4.0)
+    assert bar_line_only == 2000, "sanity check on the bar-line-only (bug-reproducing) baseline"
+
+    assert md.get_ring_out_ms_for_index(1) == 100, "the 32nd note's real ring is floored to 100ms"
+    assert md.playback_span_ms(0, 1, 4.0) == 2037, "must wait out the floored ring, not just the bar line"
+
+
+def test_playback_span_ms_matches_a_real_sequencer_run_when_sped_up(
+    timeline, null_synth, repeats_and_endings_score
+):
+    """Reported live, follow-up to the two tests above: with Preview
+    looping on a passage containing a repeat, sped up ~40bpm from the
+    score's default, the repeat "didn't sync quite right" - the loop was
+    restarting a few ms later than the real Sequencer run it's meant to
+    predict, an audible gap right before each repeat.
+
+    Both playback_span_ms's per-step walk and its final tail used to
+    accumulate/compare un-truncated floats, while Sequencer._delay_ms_to
+    and get_ring_out_ms_for_index truncate every step via int() - fine at a
+    tempo where every interval happens to land on a whole ms (120bpm here),
+    but any tempo/subdivision combination that doesn't drifts the predicted
+    total away from what the real run actually takes. Directly compares
+    playback_span_ms's prediction against a real (FakeTimer-driven, so no
+    wall-clock wait) Sequencer run through the same jump-aware window, at
+    the default tempo and 40bpm faster.
+    """
+    from audio.sequencer import Sequencer
+    from tests.support.fake_timer import FakeTimer
+
+    def real_elapsed_ms(md, start_index, end_index):
+        timer = FakeTimer()
+        seq = Sequencer(md, null_synth, timer=timer)
+        seq.play_from(start_index, end_index=end_index)
+        total = 0
+        while timer.running:
+            total += timer.scheduled_ms[-1]
+            timer.fire()
+        return total
+
+    start_index, end_index, end_quarters = 1, 3, 12.0
+    for bpm in (120, 161):
+        md = timeline(repeats_and_endings_score, tempo_bpm=bpm)
+        predicted = md.playback_span_ms(start_index, end_index, end_quarters)
+        real = real_elapsed_ms(md, start_index, end_index)
+        assert predicted == real, f"drifted by {real - predicted}ms at {bpm}bpm"
 
 
 def test_jump_lower_bound_allows_an_in_window_repeat(

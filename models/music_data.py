@@ -2083,6 +2083,26 @@ class MusicData:
         quarter_length = self.timeline_slices[index].quarter_length
         return self._quarters_to_ms(quarter_length, index)
 
+    def get_ring_out_ms_for_index(self, index: int, events=None) -> int:
+        """How long the notes sounding at this index actually take to
+        finish ringing - the real per-part max (get_playback_events_for_
+        indices' duration_ms, A8/D-5), falling back to the slice-wide
+        get_duration_ms_for_index only when nothing sounds there (a rest
+        reached via the metronome's beat-marker stepping).
+
+        Shared by Sequencer._sound_current_step (the wait before a run
+        that reaches its own end naturally is considered finished) and
+        playback_span_ms (so a Preview loop-restart's stop_all_notes()
+        doesn't fire, and cut off, before the last previewed note has
+        actually finished ringing - see playback_span_ms's own comment).
+        Callers that already fetched events (Sequencer) pass them in to
+        avoid recomputing."""
+        if events is None:
+            events = self.get_playback_events_at_index(index)
+        if events:
+            return max(group[3] for group in events)
+        return self.get_duration_ms_for_index(index)
+
     def _quarters_to_ms(self, quarter_length: float, index: Optional[int]) -> int:
         ms = (quarter_length * 60000.0) / float(self.effective_tempo_bpm(index))
         return max(100, int(ms))
@@ -2344,20 +2364,57 @@ class MusicData:
             if jump_state.last_step_was_jump:
                 # A jump (backward repeat/D.C./D.S., or a forward
                 # ending-skip/To Coda) - the departing note still rings its
-                # own duration first regardless of which direction the jump
-                # moves in elapsed-quarters, the same jump-aware handling
-                # Sequencer._delay_ms_to applies for the real run.
-                total_ms += self.get_duration_ms_for_index(index)
-            elif next_quarters > position:
-                total_ms += (next_quarters - position) * 60000.0 / float(
-                    self.effective_tempo_bpm(index)
-                )
+                # own real duration first (get_ring_out_ms_for_index, not
+                # the slice-wide-minimum get_duration_ms_for_index - see
+                # Sequencer._delay_ms_to's own comment) regardless of which
+                # direction the jump moves in elapsed-quarters, the same
+                # jump-aware handling the real run applies.
+                total_ms += self.get_ring_out_ms_for_index(index)
+            else:
+                # Mirrors Sequencer._delay_ms_to's own non-jump formula
+                # exactly, int() truncation and 1ms floor included, rather
+                # than accumulating an un-rounded float per step - reported
+                # live: sped up ~40bpm from a score's default tempo, a
+                # repeated passage's loop-restart drifted noticeably out of
+                # time. Most tempo/subdivision combinations round a step's
+                # real ms down by a fraction; accumulating the exact float
+                # instead systematically over-estimated the real elapsed
+                # time by that lost fraction on every such step, compounding
+                # across a dense repeated passage into an audible late
+                # restart - small at any one step, but the real Sequencer
+                # run this predicts is exactly as choppy, and the two must
+                # agree exactly or the drift reappears each time this
+                # passage's density/tempo combination lands on another
+                # non-whole-ms step.
+                delta_quarters = next_quarters - position
+                total_ms += max(1, int(
+                    delta_quarters * 60000.0 / float(self.effective_tempo_bpm(index))
+                ))
             position = next_quarters
             index = next_index
-        if end_quarters > position:
-            total_ms += (end_quarters - position) * 60000.0 / float(
-                self.effective_tempo_bpm(index)
-            )
+        # The bar-line-anchored distance from the last simulated note's
+        # onset to end_quarters, OR that note's own real ring-out - whichever
+        # is longer. Ordinarily the bar line wins (a short final note
+        # followed by rests must not restart the loop early - see this
+        # method's own docstring); but a note written to ring PAST the bar
+        # line (e.g. tied into the next, unpreviewed bar) must still finish
+        # before Preview's loop-restart calls stop_all_notes(), or it gets
+        # cut short - reported live, the same "don't cut the last note
+        # short" bug class next_index-is-None handling already fixed for a
+        # repeat landing exactly on the window's last bar (see this
+        # method's own docstring).
+        # int()-truncated to match get_ring_out_ms_for_index's own precision
+        # (get_duration_ms_for_index -> _quarters_to_ms) - when the final
+        # note fills exactly to the bar line, both express the identical
+        # quarters-to-ms conversion, and comparing an untruncated float
+        # against a truncated int would let the float win by its own
+        # sub-1ms fraction even though they agree on the real duration,
+        # adding a spurious extra ms (reported live, same drift as the walk
+        # truncation above - this is the tail's own instance of it).
+        bar_line_ms = int(max(0.0, end_quarters - position) * 60000.0 / float(
+            self.effective_tempo_bpm(index)
+        ))
+        total_ms += max(bar_line_ms, self.get_ring_out_ms_for_index(index))
         return max(0, int(round(total_ms)))
 
     def get_status_bar_fields(self) -> List[str]:

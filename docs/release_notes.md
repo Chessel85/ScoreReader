@@ -1,5 +1,15 @@
 # Recall Score Release Notes
 
+
+## 2026.1.26
+
+* Fixed a bug where the preview loop prematurely restarted the lead in when looping at higher temporary tempos.
+
+## 2026.1.25
+
+* Support for speech control of playback and some navigation commands to allow hands free operation whilst practising.
+* Fixed bugs where, with Preview looping on, the last note of the previewed passage could be cut short before its full duration had played, a repeat inside the passage could drift out of time at a different tempo, and the loop restart could drift out of time if the tempo was changed while it was already looping.
+
 ## 2026.1.24
 
 * Added a find feature for attributes and performance indicators.  Use control+F to set up the find and then alt plus left and right arrow keys to find subsequent next and previous occurances.

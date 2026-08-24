@@ -1,7 +1,7 @@
 # audio/sequencer.py
 from typing import Optional
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 
 from audio.metronome import click_event_for_beat
 from audio.position_announcer import announcement_event_for_beat
@@ -33,7 +33,25 @@ class Sequencer(QObject):
         self.music_data = music_data
         self.synth = synth
 
-        self._timer = timer if timer is not None else QTimer(self)
+        if timer is None:
+            timer = QTimer(self)
+            # Reported live: at fast tempos (~200bpm+), Preview's loop
+            # restart - scheduled from playback_span_ms's ideal, zero-
+            # overhead prediction - was firing (and stop_all_notes()-ing)
+            # up to ~140ms before this Sequencer's own chained steps
+            # actually reached the end of the run, cutting the last note
+            # short and clashing audibly with the next loop's count-in.
+            # Diagnosed with real wall-clock logging: each step overshot
+            # its scheduled delay by ~15-20ms, not the sub-millisecond
+            # jitter a busy callback alone would cause - Qt's default
+            # QTimer type (CoarseTimer) is explicitly documented to keep
+            # only ~5%/up to ~20ms accuracy (coalesced against other
+            # timers to save power), which matches exactly. PreciseTimer
+            # asks Qt/the OS for millisecond accuracy instead - the
+            # per-step math itself (playback_span_ms, _delay_ms_to) was
+            # already exact; this is what makes the real timer honour it.
+            timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._timer = timer
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._advance)
 
@@ -162,12 +180,12 @@ class Sequencer(QObject):
             sound_events(
                 self.synth, self.music_data, events, retrigger=self._pending_retrigger, grace_events=grace_events
             )
-            # Groups carry their own durations, so the longest is what has
-            # to finish ringing before this step is done - which matters
-            # below when this is the run's final step.
-            ring_out_ms = max(group[3] for group in events)
-        else:
-            ring_out_ms = self.music_data.get_duration_ms_for_index(self._current_index)
+        # Groups carry their own durations, so the longest is what has to
+        # finish ringing before this step is done - which matters below
+        # when this is the run's final step. Shared with playback_span_ms
+        # (MusicData.get_ring_out_ms_for_index) so Preview's loop-restart
+        # timing agrees with what a real run actually waits out.
+        ring_out_ms = self.music_data.get_ring_out_ms_for_index(self._current_index, events=events)
 
         # Ref 14 AC1/AC2: the click layers on top of whatever sounds here
         # (or nothing), whenever the step is a whole beat. No separate
@@ -227,7 +245,19 @@ class Sequencer(QObject):
             # over unplayed content (an ending-skip/To Coda redirect, delta
             # > 0 - the plain formula would wrongly compute a real-time
             # pause for content that's never actually sounding).
-            return self.music_data.get_duration_ms_for_index(self._current_index)
+            #
+            # get_ring_out_ms_for_index, not the slice-wide-minimum
+            # get_duration_ms_for_index - reported live (bach-bourree-tab at
+            # 160bpm, metronome-only): the repeat's departing note was
+            # taken about half a beat early. That slice had a shorter note
+            # in one voice/part alongside the real melody note's longer
+            # one; the slice-wide MIN (get_duration_ms_for_index) let the
+            # shorter voice's duration govern the jump, silencing the
+            # melody note before ITS OWN duration had actually finished -
+            # the exact "duration_ms is per-group, not per-slice" bug class
+            # (see get_playback_events_for_indices' own docstring), just
+            # never applied to the jump-departure wait before now.
+            return self.music_data.get_ring_out_ms_for_index(self._current_index)
         current_slice = self.music_data.timeline_slices[self._current_index]
         next_slice = self.music_data.timeline_slices[next_index]
         delta_quarters = next_slice.quarters_from_start - current_slice.quarters_from_start
