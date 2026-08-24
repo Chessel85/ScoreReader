@@ -465,6 +465,15 @@ class PlaybackController(QObject):
         )
         self.status_text_changed.emit()
 
+    def set_preview_length_bars(self, bars: int) -> None:
+        """The voice command "loop length N" (Ref 19, audio/voice_commands.
+        LOOP_LENGTH) - sets the NEXT preview's length directly, unlike
+        adjust_preview_bars' relative +/-1 nudge. Clamped by PreviewSettings
+        itself, same as every other entry point (the dialog, Alt+PageUp/
+        PageDown)."""
+        self.preview_settings = self.preview_settings.with_preview_bars(bars)
+        self.status_text_changed.emit()
+
     def _build_preview_run(self) -> Optional["_PreviewRun"]:
         """Resolve where the preview starts and ends, in both index and
         real-time terms. Returns None when there is nothing to play."""

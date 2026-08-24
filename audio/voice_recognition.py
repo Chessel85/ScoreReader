@@ -33,8 +33,9 @@ machine's own speech-recognition configuration, so the feature behaves
 identically for every user.
 
 Grammar is a JSON phrase list (audio/voice_commands.py's COMMAND_PHRASES
-plus the current score's go_to_bar_phrases, plus Vosk's own recommended
-"[unk]" catch-all) sent to the worker, which passes it straight into
+plus the current score's go_to_bar_phrases, plus the fixed loop_length_
+phrases, plus Vosk's own recommended "[unk]" catch-all) sent to the worker,
+which passes it straight into
 KaldiRecognizer's constructor - a first-class Vosk feature, not a
 workaround. This is still the main accuracy lever: a small closed vocabulary
 gives Vosk's decoder nothing plausible to match the user's own instrument or
@@ -118,10 +119,12 @@ WORKER_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "voice_
 # since a model may emit it even when not offered as a grammar option.
 UNKNOWN_TOKEN = "[unk]"
 
-# (command_name, confidence_percent 0-100, measure_number) - the normalised
+# (command_name, confidence_percent 0-100, number_value) - the normalised
 # shape this module hands to its callback, mirroring audio/midi_input.py's
-# own "(status, pitch, velocity)" normalised-tuple convention. measure_number
-# is only meaningful (non-None) for voice_commands.GO_TO_BAR.
+# own "(status, pitch, velocity)" normalised-tuple convention. number_value
+# is only meaningful (non-None) for the two parameterized commands,
+# voice_commands.GO_TO_BAR (a measure number) and voice_commands.LOOP_LENGTH
+# (a bar count).
 RecognitionCallback = Callable[[str, float, Optional[int]], None]
 
 
@@ -151,15 +154,16 @@ def list_input_devices() -> List[str]:
 
 def _build_grammar_phrases(total_measures: int) -> List[str]:
     """Every fixed command phrase plus the current score's "go to bar N"/
-    "go to measure N" phrases - the phrase list sent to the worker to
-    restrict Vosk's recognition to just this vocabulary. Includes
-    UNKNOWN_TOKEN - see that constant's own comment for the live-testing
-    history behind this.
+    "go to measure N" phrases plus the fixed "loop length N" phrases - the
+    phrase list sent to the worker to restrict Vosk's recognition to just
+    this vocabulary. Includes UNKNOWN_TOKEN - see that constant's own
+    comment for the live-testing history behind this.
     Sent wholesale (never incrementally patched) whenever the vocabulary
     needs to change - cheap for Vosk (a fresh KaldiRecognizer), unlike the
     SAPI version's file-round-trip workaround."""
     phrases = list(voice_commands.COMMAND_PHRASES.keys())
     phrases.extend(phrase for phrase, _ in voice_commands.go_to_bar_phrases(total_measures))
+    phrases.extend(phrase for phrase, _ in voice_commands.loop_length_phrases())
     phrases.append(UNKNOWN_TOKEN)
     return phrases
 
@@ -404,7 +408,9 @@ class VoiceRecognitionManager:
         parsed = None
         if confidence >= self._confidence_threshold:
             parsed = voice_commands.parse_command(
-                heard_text, voice_commands.go_to_bar_reverse_lookup(self._total_measures)
+                heard_text,
+                voice_commands.go_to_bar_reverse_lookup(self._total_measures),
+                voice_commands.loop_length_reverse_lookup(),
             )
         accepted = parsed is not None
 
@@ -427,5 +433,5 @@ class VoiceRecognitionManager:
 
         if self._callback is None:
             return
-        command_name, measure_number = parsed
-        self._callback(command_name, confidence, measure_number)
+        command_name, number_value = parsed
+        self._callback(command_name, confidence, number_value)

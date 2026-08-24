@@ -42,9 +42,10 @@ class VoiceControlController(QObject):
     """
 
     connection_changed = Signal(bool)  # True once the recognizer is actually listening
-    # command_name, confidence_percent, measure_number (object: Optional[int]
-    # - internal, thread-marshaling only, same shape as LiveMidiInputController's
-    # _raw_note_on/_raw_note_off.
+    # command_name, confidence_percent, number_value (object: Optional[int] -
+    # a measure number for GO_TO_BAR, a bar count for LOOP_LENGTH, None for
+    # every other command) - internal, thread-marshaling only, same shape as
+    # LiveMidiInputController's _raw_note_on/_raw_note_off.
     _raw_command_recognized = Signal(str, float, object)
     # True once the worker actually finished loading the model and opened
     # the microphone (or failed to) - internal, thread-marshaling only, same
@@ -73,9 +74,9 @@ class VoiceControlController(QObject):
         self._raw_ready.connect(self._handle_ready, Qt.ConnectionType.QueuedConnection)
         self._edit_snapshot: Optional[VoiceControlSettings] = None
 
-        # command_name -> zero-arg callable. GO_TO_BAR is handled separately
-        # in _dispatch (it carries a measure number, unlike every other
-        # command) and is deliberately NOT a key here.
+        # command_name -> zero-arg callable. GO_TO_BAR and LOOP_LENGTH are
+        # handled separately in _dispatch (each carries a number, unlike
+        # every other command) and are deliberately NOT keys here.
         self._command_table: Dict[str, Callable[[], None]] = {
             voice_commands.PREVIEW: self.playback.audition_phrase,
             voice_commands.PLAY: self.playback.play_command,
@@ -220,17 +221,17 @@ class VoiceControlController(QObject):
     # --- recognizer callback thread -> Qt main thread -----------------
 
     def _on_raw_recognition(
-        self, command_name: str, confidence: float, measure_number: Optional[int]
+        self, command_name: str, confidence: float, number_value: Optional[int]
     ) -> None:
         """VoiceRecognitionManager's own background thread. Does nothing but
         emit - see class docstring on why."""
-        self._raw_command_recognized.emit(command_name, confidence, measure_number)
+        self._raw_command_recognized.emit(command_name, confidence, number_value)
 
     def _handle_command_recognized(
-        self, command_name: str, confidence: float, measure_number
+        self, command_name: str, confidence: float, number_value
     ) -> None:
         """Qt main thread only (see class docstring)."""
-        self._dispatch(command_name, measure_number)
+        self._dispatch(command_name, number_value)
 
     def _on_raw_ready(self, started: bool) -> None:
         """VoiceRecognitionManager's own background thread. Does nothing but
@@ -246,14 +247,18 @@ class VoiceControlController(QObject):
         if started:
             self.synth.play_voice_confirmation_cue(*voice_recognition_started_event())
 
-    def _dispatch(self, command_name: str, measure_number: Optional[int]) -> None:
+    def _dispatch(self, command_name: str, number_value: Optional[int]) -> None:
         """The single point every recognized command passes through -
         exactly one place to add per-command cue suppression later (see
         _SUPPRESSED_CUE_COMMANDS)."""
         if command_name == voice_commands.GO_TO_BAR:
-            if measure_number is None:
+            if number_value is None:
                 return
-            self.navigation.to_typed_measure(str(measure_number))
+            self.navigation.to_typed_measure(str(number_value))
+        elif command_name == voice_commands.LOOP_LENGTH:
+            if number_value is None:
+                return
+            self.playback.set_preview_length_bars(number_value)
         else:
             handler = self._command_table.get(command_name)
             if handler is None:

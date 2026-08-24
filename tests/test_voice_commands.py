@@ -10,6 +10,8 @@ from audio.voice_commands import (
     FASTER,
     GO_TO_BAR,
     HOME,
+    LOOP_LENGTH,
+    MAX_LOOP_LENGTH_BARS,
     NEXT_BAR,
     PAUSE,
     PLAY,
@@ -19,9 +21,12 @@ from audio.voice_commands import (
     STOP,
     go_to_bar_phrases,
     go_to_bar_reverse_lookup,
+    loop_length_phrases,
+    loop_length_reverse_lookup,
     number_to_words,
     parse_command,
 )
+from models.preview_settings import MIN_PREVIEW_BARS
 
 
 @pytest.mark.parametrize("n,words", [
@@ -95,3 +100,24 @@ def test_parse_command_returns_none_for_unrecognized_text():
 
 def test_parse_command_go_to_bar_without_lookup_is_unrecognized():
     assert parse_command("go to bar twelve") is None
+
+
+def test_loop_length_phrases_covers_min_through_max_bars():
+    phrases = loop_length_phrases()
+    numbers = sorted({n for _, n in phrases})
+    assert numbers == list(range(MIN_PREVIEW_BARS, MAX_LOOP_LENGTH_BARS + 1))
+    assert ("loop length four", 4) in phrases
+    assert ("loop length one", MIN_PREVIEW_BARS) in phrases
+
+
+def test_parse_command_resolves_loop_length_via_lookup():
+    lookup = loop_length_reverse_lookup()
+    assert parse_command("loop length four", loop_length_lookup=lookup) == (LOOP_LENGTH, 4)
+
+
+def test_parse_command_loop_length_without_lookup_is_unrecognized():
+    assert parse_command("loop length four") is None
+
+
+def test_parse_command_loop_length_out_of_range_is_unrecognized():
+    assert parse_command("loop length one hundred", loop_length_lookup=loop_length_reverse_lookup()) is None

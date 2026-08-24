@@ -509,6 +509,9 @@ The full list of recognized commands:
 - **end** - moves to the last note
 - **go to bar `<number>`** / **go to measure `<number>`** - jumps to a bar
   (only recognizes bar numbers that actually exist in the loaded score)
+- **loop length `<number>`** - sets how many bars Preview plays (the same
+  value as Playback > Preview Settings...'s "Preview length in bars" field,
+  or Alt+PageUp/PageDown), recognizing 1 through 32 bars
 - **slower** - reduces playback tempo
 - **faster** - increases playback tempo
 - **default speed** - resets playback tempo to the score's own tempo

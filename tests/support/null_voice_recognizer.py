@@ -73,10 +73,10 @@ class NullVoiceRecognizer:
         self.confidence_threshold = confidence_threshold
 
     def simulate_recognition(
-        self, command_name: str, confidence: float = 100.0, measure_number: Optional[int] = None
+        self, command_name: str, confidence: float = 100.0, number_value: Optional[int] = None
     ) -> None:
         if self._callback is not None:
-            self._callback(command_name, confidence, measure_number)
+            self._callback(command_name, confidence, number_value)
 
     def simulate_diagnostic(self, heard_text: str, confidence: float, accepted: bool) -> None:
         if self._diagnostic_callback is not None:

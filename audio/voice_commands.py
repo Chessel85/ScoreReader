@@ -16,9 +16,13 @@ the work.
 """
 from typing import Dict, List, Optional, Tuple
 
+from models.preview_settings import MIN_PREVIEW_BARS
+
 # Canonical command names dispatched by controllers/voice_control_controller.py.
-# GO_TO_BAR is parameterized (carries a measure number) and is therefore NOT
-# a key in COMMAND_PHRASES below - see go_to_bar_phrases()/parse_command().
+# GO_TO_BAR and LOOP_LENGTH are both parameterized (each carries a single
+# int - a measure number / a bar count respectively) and are therefore NOT
+# keys in COMMAND_PHRASES below - see go_to_bar_phrases()/loop_length_
+# phrases()/parse_command().
 PREVIEW = "preview"
 PLAY = "play"
 STOP = "stop"
@@ -33,6 +37,7 @@ GO_TO_BAR = "go_to_bar"
 SLOWER = "slower"
 FASTER = "faster"
 DEFAULT_SPEED = "default_speed"
+LOOP_LENGTH = "loop_length"
 
 # Every fixed (non-parameterized) spoken phrase, lowercase, mapped to its
 # canonical command name. Synonyms ("next bar"/"next measure") map to the
@@ -61,6 +66,19 @@ COMMAND_PHRASES: Dict[str, str] = {
 # go_to_bar_phrases() below, which pairs each prefix with every number word
 # up to the current score's own total_measures.
 GO_TO_BAR_PREFIXES: List[str] = ["go to bar", "go to measure"]
+
+# "loop length" precedes a spoken number - see loop_length_phrases() below.
+# Unlike go_to_bar, this isn't bounded by anything score-specific (a loop
+# length is just a bar count, not a real measure number), so the vocabulary
+# is fixed rather than rebuilt per score.
+LOOP_LENGTH_PREFIX = "loop length"
+
+# Bounds the spoken numeric vocabulary for "loop length N". PreviewSettings'
+# own MAX_PREVIEW_BARS (999) is a defensive clamp against a hand-edited
+# settings file, not a realistic spoken loop length - offering Vosk 999
+# numbers to match against would only hurt recognition accuracy for no real
+# benefit, so a much smaller, practice-realistic cap is used here instead.
+MAX_LOOP_LENGTH_BARS = 32
 
 _ONES = [
     "zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
@@ -120,23 +138,47 @@ def go_to_bar_phrases(total_measures: int) -> List[Tuple[str, int]]:
     return phrases
 
 
+def loop_length_phrases() -> List[Tuple[str, int]]:
+    """(phrase, bar_count) for every "loop length N" grammar entry, N
+    ranging over MIN_PREVIEW_BARS..MAX_LOOP_LENGTH_BARS - the voice-control
+    counterpart of Playback > Preview Settings...'s "Preview length in
+    bars" field / Alt+PageUp/PageDown (models/preview_settings.py,
+    controllers/playback_controller.py's adjust_preview_bars), letting a
+    player set that same value hands-free mid-practice.
+
+    Fixed, unlike go_to_bar_phrases() - a loop length has no real per-score
+    bound, so this list never needs rebuilding when a new score loads."""
+    return [
+        (f"{LOOP_LENGTH_PREFIX} {number_to_words(n)}", n)
+        for n in range(MIN_PREVIEW_BARS, MAX_LOOP_LENGTH_BARS + 1)
+    ]
+
+
 def parse_command(
-    heard_text: str, go_to_bar_lookup: Optional[Dict[str, int]] = None
+    heard_text: str,
+    go_to_bar_lookup: Optional[Dict[str, int]] = None,
+    loop_length_lookup: Optional[Dict[str, int]] = None,
 ) -> Optional[Tuple[str, Optional[int]]]:
-    """Resolves SAPI's recognized text to (command_name, measure_number).
-    measure_number is None for every command except GO_TO_BAR. Returns None
-    for anything unrecognized - a caller should treat that exactly like a
-    rejected/low-confidence result and never dispatch it.
+    """Resolves SAPI's recognized text to (command_name, number_value).
+    number_value is None for every command except GO_TO_BAR (a measure
+    number) and LOOP_LENGTH (a bar count) - the two parameterized commands.
+    Returns None for anything unrecognized - a caller should treat that
+    exactly like a rejected/low-confidence result and never dispatch it.
 
     go_to_bar_lookup is the reverse of go_to_bar_phrases() (phrase text ->
-    measure number) for whichever score is currently loaded. Omitted (or a
-    miss) simply means "go to bar" can't be resolved right now, e.g. before
-    any score has loaded - not an error."""
+    measure number) for whichever score is currently loaded. loop_length_
+    lookup is the reverse of loop_length_phrases() (phrase text -> bar
+    count) - fixed, so callers can pass loop_length_reverse_lookup()
+    unconditionally rather than tracking any per-score state for it. Either
+    omitted (or a miss) simply means that parameterized command can't be
+    resolved right now - not an error."""
     text = " ".join(heard_text.lower().split())
     if text in COMMAND_PHRASES:
         return COMMAND_PHRASES[text], None
     if go_to_bar_lookup and text in go_to_bar_lookup:
         return GO_TO_BAR, go_to_bar_lookup[text]
+    if loop_length_lookup and text in loop_length_lookup:
+        return LOOP_LENGTH, loop_length_lookup[text]
     return None
 
 
@@ -147,3 +189,9 @@ def go_to_bar_reverse_lookup(total_measures: int) -> Dict[str, int]:
     duplicates and all, to build <P> entries) while the recognition-side
     lookup wants the dict form - same underlying data, two shapes."""
     return dict(go_to_bar_phrases(total_measures))
+
+
+def loop_length_reverse_lookup() -> Dict[str, int]:
+    """phrase -> bar_count, for parse_command's loop_length_lookup. Same
+    list-vs-dict split as go_to_bar_reverse_lookup, above."""
+    return dict(loop_length_phrases())

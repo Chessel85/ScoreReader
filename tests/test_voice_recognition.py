@@ -11,7 +11,7 @@ Real recognition accuracy needs a live microphone, the real model, and the
 real worker process - see CLAUDE.md's own note on manual verification for
 this feature.
 """
-from audio.voice_commands import COMMAND_PHRASES, GO_TO_BAR, go_to_bar_phrases
+from audio.voice_commands import COMMAND_PHRASES, GO_TO_BAR, LOOP_LENGTH, go_to_bar_phrases, loop_length_phrases
 from audio.voice_recognition import (
     UNKNOWN_TOKEN,
     VoiceRecognitionManager,
@@ -42,6 +42,14 @@ def test_build_grammar_phrases_includes_go_to_bar_phrases_for_the_current_score(
 def test_build_grammar_phrases_has_no_go_to_bar_phrases_with_no_score_loaded():
     phrases = _build_grammar_phrases(total_measures=0)
     assert not any(p.startswith("go to bar") or p.startswith("go to measure") for p in phrases)
+
+
+def test_build_grammar_phrases_includes_loop_length_phrases_regardless_of_score():
+    """Fixed vocabulary, unlike go_to_bar - present even with no score
+    loaded."""
+    phrases = _build_grammar_phrases(total_measures=0)
+    for phrase, _ in loop_length_phrases():
+        assert phrase in phrases
 
 
 def test_confidence_percent_averages_per_word_confidence():
@@ -113,3 +121,15 @@ def test_handle_final_result_resolves_go_to_bar_with_the_measure_number():
 
     assert accepted == [(GO_TO_BAR, 90.0, 12)]
     assert diagnostics == [("go to bar twelve", 90.0, True)]
+
+
+def test_handle_final_result_resolves_loop_length_with_the_bar_count():
+    manager, accepted, diagnostics = _manager_with_recording_callbacks(confidence_threshold=0.0)
+
+    manager._handle_final_result({
+        "words": [{"conf": 0.9, "word": w} for w in ["loop", "length", "four"]],
+        "text": "loop length four",
+    })
+
+    assert accepted == [(LOOP_LENGTH, 90.0, 4)]
+    assert diagnostics == [("loop length four", 90.0, True)]

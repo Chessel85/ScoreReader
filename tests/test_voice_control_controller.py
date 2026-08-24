@@ -79,6 +79,9 @@ class _FakePlayback:
     def tempo_reset(self):
         self.calls.append("tempo_reset")
 
+    def set_preview_length_bars(self, bars):
+        self.calls.append(("set_preview_length_bars", bars))
+
 
 @pytest.fixture
 def synth():
@@ -238,7 +241,7 @@ def test_go_to_bar_dispatches_with_the_measure_number(
     QApplication.processEvents()
     synth.voice_confirmation_cues.clear()
 
-    voice_manager.simulate_recognition(voice_commands.GO_TO_BAR, confidence=90.0, measure_number=12)
+    voice_manager.simulate_recognition(voice_commands.GO_TO_BAR, confidence=90.0, number_value=12)
     QApplication.processEvents()
 
     assert navigation.calls == [("to_typed_measure", "12")]
@@ -256,10 +259,43 @@ def test_go_to_bar_with_no_measure_number_is_ignored(
     QApplication.processEvents()
     synth.voice_confirmation_cues.clear()
 
-    voice_manager.simulate_recognition(voice_commands.GO_TO_BAR, confidence=90.0, measure_number=None)
+    voice_manager.simulate_recognition(voice_commands.GO_TO_BAR, confidence=90.0, number_value=None)
     QApplication.processEvents()
 
     assert navigation.calls == []
+
+
+def test_loop_length_dispatches_with_the_bar_count(
+    synth, navigation, playback, voice_manager, qtbot
+):
+    controller = _controller(synth, navigation, playback, voice_manager, qtbot)
+    controller.settings.device_name = "My Microphone"
+    controller.toggle_enabled()
+    QApplication.processEvents()
+    synth.voice_confirmation_cues.clear()
+
+    voice_manager.simulate_recognition(voice_commands.LOOP_LENGTH, confidence=90.0, number_value=4)
+    QApplication.processEvents()
+
+    assert playback.calls == [("set_preview_length_bars", 4)]
+
+
+def test_loop_length_with_no_bar_count_is_ignored(
+    synth, navigation, playback, voice_manager, qtbot
+):
+    """Defensive: a real recognized LOOP_LENGTH always carries a bar count
+    (see audio/voice_commands.parse_command) - this only guards against a
+    malformed injected event."""
+    controller = _controller(synth, navigation, playback, voice_manager, qtbot)
+    controller.settings.device_name = "My Microphone"
+    controller.toggle_enabled()
+    QApplication.processEvents()
+    synth.voice_confirmation_cues.clear()
+
+    voice_manager.simulate_recognition(voice_commands.LOOP_LENGTH, confidence=90.0, number_value=None)
+    QApplication.processEvents()
+
+    assert playback.calls == []
 
 
 def test_recognized_command_plays_the_confirmation_cue(
