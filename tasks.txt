@@ -1253,8 +1253,29 @@ PHASE K - EDITING MODES                                   (2 tasks)
 PHASE L - VOICE CONTROL                                   (3 tasks)   Ref 19
 ###
 [ ] L1  Spike: Windows SAPI 5.4 / Windows.Media.SpeechRecognition - Ref 19
+        > OPENED 2026-08-24. Built a full working implementation against
+          classic SAPI 5.4 (SAPI.SpInprocRecognizer via pywin32) on branch
+          feature/voice-control, live-tested on the user's real machine.
+          Found and fixed several undocumented SAPI/win32com quirks (see
+          CLAUDE.md's "Known gaps" entry for the full technical write-up:
+          CmdLoadFromFile needed in place of a broken CmdLoadFromMemory, an
+          explicitly-wired SpMMAudioIn audio input, winmm-based device
+          enumeration since SAPI's own AudioInput token category is empty
+          on this Windows build, a CastTo fix for event-callback results) -
+          but the underlying engine's own accuracy proved inconsistent even
+          for this app's small command vocabulary once every plumbing bug
+          was fixed ("stop"/"pause"/"back" reliable, "play"/"preview"/
+          others frequently not recognized at all). Abandoned rather than
+          shipped - feature/voice-control is preserved (its own commit) for
+          reference only, not merged. Windows.Media.SpeechRecognition
+          (WinRT) was considered but not attempted, ruled out ahead of time
+          in favour of Vosk (see CLAUDE.md for the reasoning). Next attempt
+          is Vosk-based, on feature/voice-control-vosk - see L2.
 [ ] L2  Command grammar (Tab, Next, Previous, Next Bar, Play Bar...) plus the
         Ctrl+Shift+Enter toggle - Ref 19
+        > Now planned against Vosk (offline, open-source, Kaldi-based)
+          rather than SAPI 5.4 - see L1's 2026-08-24 follow-up and
+          CLAUDE.md's "Known gaps" entry for why.
 [ ] L3  macOS speech recognition equivalent - Ref 19, see D-4
 
 
