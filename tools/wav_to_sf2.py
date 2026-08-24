@@ -54,6 +54,14 @@ reader):
 - WAV files must be 16-bit PCM mono (e.g. exported that way from
   Audacity). Anything else is rejected with an explanation rather than
   silently down-mixed/converted.
+- A preset section may set `normalize = true` (default false, applies to
+  every zone in that preset) to scale each sample's own peak up to just
+  under full scale independently. Opt-in, not the default, so an existing
+  preset's bytes stay byte-identical unless a config explicitly asks for
+  this - added after a real recorded clip (a UI confirmation sound) came in
+  at 25-33% of full scale, 2-3x quieter than every other sound already in
+  this project's own soundfont, with no way to fix that short of re-
+  recording or boosting digitally at build time.
 
 OUTPUT: a single <output>.sf2 file - no sidecar metadata file. An earlier
 version also wrote a <output>.sf2.json listing each sample's own natural
@@ -132,12 +140,18 @@ class SampleZone:
         return base[:20]  # shdr name field is 20 bytes, truncate rather than fail
 
 
+# Just under the true 16-bit maximum (32767), so an already-borderline
+# sample can't round up past it after scaling.
+NORMALIZE_TARGET_PEAK = 32000
+
+
 @dataclass
 class Preset:
     name: str
     bank: int
     program: int
     zones: List[SampleZone]
+    normalize: bool = False
 
 
 def _read_wav_pcm16_mono(path: Path) -> Tuple[bytes, int, int]:
@@ -163,6 +177,23 @@ def _read_wav_pcm16_mono(path: Path) -> Tuple[bytes, int, int]:
             "Re-export as 16-bit PCM WAV."
         )
     return pcm, nframes, framerate
+
+
+def _normalize_pcm16(pcm: bytes, target_peak: int = NORMALIZE_TARGET_PEAK) -> bytes:
+    """Scales 16-bit PCM so its own peak sample reaches target_peak - a
+    silent (all-zero) clip is left untouched rather than dividing by zero.
+    Independent per file: this is for isolated one-shot UI sounds, not a
+    multi-track mix, so preserving relative loudness between two unrelated
+    recordings matters far less than each one individually being clearly
+    audible."""
+    sample_count = len(pcm) // 2
+    samples = struct.unpack(f"<{sample_count}h", pcm)
+    peak = max((abs(s) for s in samples), default=0)
+    if peak == 0:
+        return pcm
+    scale = target_peak / peak
+    scaled = [max(-32768, min(32767, round(s * scale))) for s in samples]
+    return struct.pack(f"<{sample_count}h", *scaled)
 
 
 def load_config(config_path: Path) -> Tuple[str, Optional[str], List[Preset]]:
@@ -208,10 +239,11 @@ def load_config(config_path: Path) -> Tuple[str, Optional[str], List[Preset]]:
                 f"[preset:{other}] - each preset needs its own bank/program combination"
             )
         used_bank_programs[(bank, program)] = preset_name
+        normalize = section.getboolean("normalize", fallback=False)
 
         zones: List[SampleZone] = []
         for key, value in section.items():
-            if key in ("bank", "program"):
+            if key in ("bank", "program", "normalize"):
                 continue
             note = parse_note(key)
             if (bank, program, note) in used_note_ids:
@@ -229,6 +261,8 @@ def load_config(config_path: Path) -> Tuple[str, Optional[str], List[Preset]]:
                     f"[{section_name}] note {note}: WAV file not found: {wav_path}"
                 )
             pcm, nframes, framerate = _read_wav_pcm16_mono(wav_path)
+            if normalize:
+                pcm = _normalize_pcm16(pcm)
             zones.append(SampleZone(
                 note=note, wav_path=wav_path, label=label,
                 pcm=pcm, frame_count=nframes, sample_rate=framerate,
@@ -237,7 +271,7 @@ def load_config(config_path: Path) -> Tuple[str, Optional[str], List[Preset]]:
         if not zones:
             raise ValueError(f"[{section_name}] has no note-to-WAV mappings")
         zones.sort(key=lambda z: z.note)
-        presets.append(Preset(name=preset_name, bank=bank, program=program, zones=zones))
+        presets.append(Preset(name=preset_name, bank=bank, program=program, zones=zones, normalize=normalize))
 
     if not presets:
         raise ValueError("Config has no [preset:...] sections")

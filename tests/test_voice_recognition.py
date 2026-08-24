@@ -26,11 +26,11 @@ def test_build_grammar_phrases_includes_every_fixed_phrase():
         assert phrase in phrases
 
 
-def test_build_grammar_phrases_never_includes_the_unknown_token():
-    """GOTCHA (see audio/voice_recognition.py's own comment): including
-    "[unk]" in the grammar broke Vosk finalization entirely on the model
-    this was built against - confirmed reproducible via live testing."""
-    assert UNKNOWN_TOKEN not in _build_grammar_phrases(total_measures=5)
+def test_build_grammar_phrases_includes_the_unknown_token():
+    """Re-enabled for the large-model A/B test - see UNKNOWN_TOKEN's own
+    comment in audio/voice_recognition.py for the history (broke
+    finalization on an earlier live test, not reproduced since)."""
+    assert UNKNOWN_TOKEN in _build_grammar_phrases(total_measures=5)
 
 
 def test_build_grammar_phrases_includes_go_to_bar_phrases_for_the_current_score():

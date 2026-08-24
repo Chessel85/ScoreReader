@@ -437,11 +437,7 @@ class MenuBuilder:
         # Ctrl+Shift+Return per the Product Definition Document's own stated
         # shortcut (not Ctrl+V - the single-Ctrl+letter family metronome/
         # announcer/live MIDI input already use - Return has no other
-        # window-level binding to collide with here). No fixed shortcut for
-        # the settings dialog, unlike Live MIDI Input's Ctrl+Shift+L pairing
-        # - every unclaimed Ctrl+Shift+letter was judged not worth
-        # memorising for a dialog opened rarely; menu-only, like Reorder
-        # Attributes/Reorder Parts below.
+        # window-level binding to collide with here).
         a.voice_control = self._action(
             "Toggle Voice &Control", self.slots.toggle_voice_control,
             checkable=True,
@@ -462,8 +458,17 @@ class MenuBuilder:
         ])
         options_menu.addAction(a.voice_control)
 
+        # GOTCHA, reported live: this item's own mnemonic ("&Settings" - E)
+        # collided with the top-level &Edit menu's mnemonic, so Alt+E while
+        # Options was open activated Edit instead of this item - a plain
+        # letter mnemonic isn't safe from top-level menu mnemonics, not just
+        # other items in the same menu. Given a fixed Ctrl+Shift+R shortcut
+        # instead of hunting for another free mnemonic letter - the user's
+        # own call, pending a later full review of this app's shortcut
+        # scoping (mnemonics vs. window-level shortcuts) generally.
         a.voice_control_settings = self._action(
             "Voice Control &Settings...", self.slots._show_voice_control_dialog,
+            "Ctrl+Shift+R",
             status_tip="Choose the microphone and confidence threshold for voice control",
         )
         options_menu.addAction(a.voice_control_settings)

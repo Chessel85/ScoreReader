@@ -15,7 +15,13 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 from audio import voice_commands
+from audio.voice_confirmation_cue import (
+    VOICE_CONTROL_CUE_CHANNEL,
+    VOICE_RECOGNITION_STARTED_PROGRAM,
+    VOICE_RECOGNITION_STOPPED_PROGRAM,
+)
 from controllers.voice_control_controller import VoiceControlController
+from models import mixer_settings
 from models.voice_control_settings import VoiceControlSettings
 from persistence import app_settings
 from tests.support.null_synth import NullSynth
@@ -147,6 +153,37 @@ def test_toggle_enabled_starts_and_stops_listening(synth, navigation, playback, 
     assert not controller.is_listening()
 
 
+def test_toggle_enabled_plays_a_distinct_tone_for_each_direction(
+    synth, navigation, playback, voice_manager, qtbot
+):
+    controller = _controller(synth, navigation, playback, voice_manager, qtbot)
+    controller.settings.device_name = "My Microphone"
+
+    controller.toggle_enabled()
+    QApplication.processEvents()  # the "started" tone fires async, once listening actually begins
+    assert [c["program"] for c in synth.voice_confirmation_cues] == [VOICE_RECOGNITION_STARTED_PROGRAM]
+
+    controller.toggle_enabled()  # "stopped" plays synchronously - no processEvents needed
+    assert [c["program"] for c in synth.voice_confirmation_cues] == [
+        VOICE_RECOGNITION_STARTED_PROGRAM, VOICE_RECOGNITION_STOPPED_PROGRAM,
+    ]
+
+
+def test_toggle_enabled_plays_no_started_tone_when_starting_fails(
+    synth, navigation, playback, voice_manager, qtbot
+):
+    """A device not present this session -> _connect fails silently (see
+    NullVoiceRecognizer.start/VoiceRecognitionManager.start) - the tone must
+    not claim listening started when it didn't."""
+    controller = _controller(synth, navigation, playback, voice_manager, qtbot)
+    controller.settings.device_name = "Unplugged Microphone"
+
+    controller.toggle_enabled()
+    QApplication.processEvents()
+
+    assert synth.voice_confirmation_cues == []
+
+
 @pytest.mark.parametrize("command_name,expected_call", [
     (voice_commands.PREVIEW, "audition_phrase"),
     (voice_commands.PLAY, "play_command"),
@@ -183,6 +220,8 @@ def test_navigation_commands_dispatch_to_the_right_method(
     controller = _controller(synth, navigation, playback, voice_manager, qtbot)
     controller.settings.device_name = "My Microphone"
     controller.toggle_enabled()
+    QApplication.processEvents()
+    synth.voice_confirmation_cues.clear()
 
     voice_manager.simulate_recognition(command_name, confidence=90.0)
     QApplication.processEvents()
@@ -196,6 +235,8 @@ def test_go_to_bar_dispatches_with_the_measure_number(
     controller = _controller(synth, navigation, playback, voice_manager, qtbot)
     controller.settings.device_name = "My Microphone"
     controller.toggle_enabled()
+    QApplication.processEvents()
+    synth.voice_confirmation_cues.clear()
 
     voice_manager.simulate_recognition(voice_commands.GO_TO_BAR, confidence=90.0, measure_number=12)
     QApplication.processEvents()
@@ -212,6 +253,8 @@ def test_go_to_bar_with_no_measure_number_is_ignored(
     controller = _controller(synth, navigation, playback, voice_manager, qtbot)
     controller.settings.device_name = "My Microphone"
     controller.toggle_enabled()
+    QApplication.processEvents()
+    synth.voice_confirmation_cues.clear()
 
     voice_manager.simulate_recognition(voice_commands.GO_TO_BAR, confidence=90.0, measure_number=None)
     QApplication.processEvents()
@@ -225,6 +268,8 @@ def test_recognized_command_plays_the_confirmation_cue(
     controller = _controller(synth, navigation, playback, voice_manager, qtbot)
     controller.settings.device_name = "My Microphone"
     controller.toggle_enabled()
+    QApplication.processEvents()
+    synth.voice_confirmation_cues.clear()
 
     voice_manager.simulate_recognition(voice_commands.STOP, confidence=90.0)
     QApplication.processEvents()
@@ -238,6 +283,8 @@ def test_unknown_command_name_is_ignored_and_plays_no_cue(
     controller = _controller(synth, navigation, playback, voice_manager, qtbot)
     controller.settings.device_name = "My Microphone"
     controller.toggle_enabled()
+    QApplication.processEvents()
+    synth.voice_confirmation_cues.clear()
 
     voice_manager.simulate_recognition("not_a_real_command", confidence=90.0)
     QApplication.processEvents()
@@ -254,6 +301,8 @@ def test_suppressed_cue_commands_skip_the_ding(synth, navigation, playback, voic
     controller = _controller(synth, navigation, playback, voice_manager, qtbot)
     controller.settings.device_name = "My Microphone"
     controller.toggle_enabled()
+    QApplication.processEvents()
+    synth.voice_confirmation_cues.clear()
     controller._SUPPRESSED_CUE_COMMANDS.add(voice_commands.PLAY)
     try:
         voice_manager.simulate_recognition(voice_commands.PLAY, confidence=90.0)
@@ -271,6 +320,8 @@ def test_commit_settings_edit_restarts_only_when_device_or_enabled_changes(
     controller = _controller(synth, navigation, playback, voice_manager, qtbot)
     controller.settings.device_name = "My Microphone"
     controller.toggle_enabled()
+    QApplication.processEvents()
+    synth.voice_confirmation_cues.clear()
     voice_manager.start_calls.clear()
 
     working = controller.begin_settings_edit()
@@ -299,7 +350,53 @@ def test_close_stops_the_manager(synth, navigation, playback, voice_manager, qtb
     controller = _controller(synth, navigation, playback, voice_manager, qtbot)
     controller.settings.device_name = "My Microphone"
     controller.toggle_enabled()
+    QApplication.processEvents()
+    synth.voice_confirmation_cues.clear()
 
     controller.close()
 
     assert voice_manager.stop_count == 1
+
+
+def test_construction_applies_the_saved_cue_levels(synth, navigation, playback, voice_manager, qtbot):
+    app_settings.set_voice_control_settings(
+        VoiceControlSettings(cue_volume_percent=50, cue_pan_percent=-100)
+    )
+    _controller(synth, navigation, playback, voice_manager, qtbot)
+
+    assert synth.volume_changes[-1] == (
+        VOICE_CONTROL_CUE_CHANNEL, mixer_settings.volume_percent_to_cc(50),
+    )
+    assert synth.pan_changes[-1] == (
+        VOICE_CONTROL_CUE_CHANNEL, mixer_settings.pan_percent_to_cc(-100),
+    )
+
+
+def test_preview_cue_volume_and_pan_set_cc_and_play_the_cue(
+    synth, navigation, playback, voice_manager, qtbot
+):
+    controller = _controller(synth, navigation, playback, voice_manager, qtbot)
+    synth.voice_confirmation_cues.clear()
+
+    controller.preview_cue_volume(25)
+    controller.preview_cue_pan(100)
+
+    assert synth.volume_changes[-1] == (VOICE_CONTROL_CUE_CHANNEL, mixer_settings.volume_percent_to_cc(25))
+    assert synth.pan_changes[-1] == (VOICE_CONTROL_CUE_CHANNEL, mixer_settings.pan_percent_to_cc(100))
+    assert len(synth.voice_confirmation_cues) == 2
+
+
+def test_cancel_settings_edit_reverts_previewed_cue_levels(
+    synth, navigation, playback, voice_manager, qtbot
+):
+    app_settings.set_voice_control_settings(
+        VoiceControlSettings(cue_volume_percent=100, cue_pan_percent=0)
+    )
+    controller = _controller(synth, navigation, playback, voice_manager, qtbot)
+
+    controller.begin_settings_edit()
+    controller.preview_cue_volume(10)  # simulates the dialog's live preview
+    controller.cancel_settings_edit()
+
+    assert synth.volume_changes[-1] == (VOICE_CONTROL_CUE_CHANNEL, mixer_settings.volume_percent_to_cc(100))
+    assert controller.settings.cue_volume_percent == 100

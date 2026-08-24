@@ -33,12 +33,17 @@ class VoiceControlDialog(QDialog):
     commit_settings_edit/cancel_settings_edit itself once exec() returns,
     the same shape _show_live_midi_input_dialog already has.
 
-    Unlike LiveMidiInputDialog, there is nothing to live-preview here (a
-    confidence threshold has no audible effect until a command is actually
-    spoken) - test_requested instead opens the separate practice/test
-    dialog (widgets/voice_control_test_dialog.py) with whatever device/
-    threshold is CURRENTLY SET IN THIS DIALOG (not yet committed), so the
-    user can try a setting before deciding to keep it.
+    A confidence threshold has no audible effect until a command is actually
+    spoken, so it has no live preview - test_requested instead opens the
+    separate practice/test dialog (widgets/voice_control_test_dialog.py)
+    with whatever device/threshold is CURRENTLY SET IN THIS DIALOG (not yet
+    committed), so the user can try a setting before deciding to keep it.
+
+    The confirmation cue's volume/pan DO live-preview, mirroring
+    LiveMidiInputDialog's volume_changed/pan_changed - each spin box change
+    plays the cue once at the new level (see VoiceControlController.
+    preview_cue_volume/preview_cue_pan), since it's a one-shot sound with
+    nothing already ringing to hear a plain CC change on.
 
     Same focus-on-show reasoning as every other dialog in this app:
     setFocus() before the native window exists never reaches NVDA, so it's
@@ -46,6 +51,8 @@ class VoiceControlDialog(QDialog):
 
     test_requested = Signal(str, float)  # device_name ("" for default), confidence_threshold
     refresh_requested = Signal()
+    cue_volume_changed = Signal(int)  # percent
+    cue_pan_changed = Signal(int)     # percent
 
     def __init__(
         self,
@@ -85,6 +92,36 @@ class VoiceControlDialog(QDialog):
         self.test_button = QPushButton("&Test...", self)
         self.test_button.clicked.connect(self._on_test_clicked)
 
+        # Constructed AFTER test_button, not just added to the layout after
+        # it - Qt's default Tab order follows widget CONSTRUCTION order, not
+        # layout-insertion order. An earlier version left these constructed
+        # up where the layout row happened to read easiest, only moved the
+        # layout.addLayout(...) call below test_button, and the visual
+        # position changed but Tab still landed on volume/pan before
+        # Test... (reported, live-tested) since construction order was
+        # untouched. reset_value/range mirror LiveMidiInputDialog's own
+        # volume/pan spin boxes exactly - same 0-100/-100..100 percent
+        # shape, converted to CC via models/mixer_settings.py at the
+        # controller (see that dialog for why this one doesn't import
+        # mixer_settings itself).
+        self.cue_volume_spin = RangeSpinBox(self, reset_value=100)
+        self.cue_volume_spin.setRange(0, 100)
+        self.cue_volume_spin.setSuffix("%")
+        self.cue_volume_spin.setValue(settings.cue_volume_percent)
+        self.cue_volume_spin.setKeyboardTracking(False)
+        self.cue_volume_spin.valueChanged.connect(self.cue_volume_changed)
+
+        self.cue_pan_spin = RangeSpinBox(self, reset_value=0)
+        self.cue_pan_spin.setRange(-100, 100)
+        self.cue_pan_spin.setSuffix("%")
+        self.cue_pan_spin.setValue(settings.cue_pan_percent)
+        self.cue_pan_spin.setKeyboardTracking(False)
+        self.cue_pan_spin.valueChanged.connect(self.cue_pan_changed)
+
+        cue_form = QFormLayout()
+        cue_form.addRow("Confirmation Sound &Volume:", self.cue_volume_spin)
+        cue_form.addRow("Confirmation Sound Pa&n:", self.cue_pan_spin)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self
         )
@@ -95,6 +132,7 @@ class VoiceControlDialog(QDialog):
         layout.addWidget(self.enabled_checkbox)
         layout.addLayout(form)
         layout.addWidget(self.test_button)
+        layout.addLayout(cue_form)
         layout.addWidget(buttons)
 
     def set_devices(self, devices: List[str], selected: Optional[str] = None) -> None:
@@ -125,6 +163,8 @@ class VoiceControlDialog(QDialog):
             enabled=self.enabled_checkbox.isChecked(),
             device_name=self.device_combo.currentData(),
             confidence_threshold=float(self.confidence_spin.value()),
+            cue_volume_percent=self.cue_volume_spin.value(),
+            cue_pan_percent=self.cue_pan_spin.value(),
         )
 
     def showEvent(self, event):

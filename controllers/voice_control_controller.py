@@ -4,8 +4,14 @@ from typing import Callable, Dict, List, Optional
 from PySide6.QtCore import QObject, Qt, Signal
 
 from audio import voice_commands
-from audio.voice_confirmation_cue import voice_confirmation_cue_event
+from audio.voice_confirmation_cue import (
+    VOICE_CONTROL_CUE_CHANNEL,
+    voice_confirmation_cue_event,
+    voice_recognition_started_event,
+    voice_recognition_stopped_event,
+)
 from audio.voice_recognition import VoiceRecognitionManager
+from models import mixer_settings
 from models.voice_control_settings import VoiceControlSettings
 from persistence import app_settings
 
@@ -40,6 +46,11 @@ class VoiceControlController(QObject):
     # - internal, thread-marshaling only, same shape as LiveMidiInputController's
     # _raw_note_on/_raw_note_off.
     _raw_command_recognized = Signal(str, float, object)
+    # True once the worker actually finished loading the model and opened
+    # the microphone (or failed to) - internal, thread-marshaling only, same
+    # reasoning as _raw_command_recognized. See VoiceRecognitionManager.
+    # set_ready_callback for why this is async rather than a return value.
+    _raw_ready = Signal(bool)
 
     # Suppressing the ding for individual commands (e.g. "play", where it
     # might interfere with noticing playback has actually started) is a
@@ -55,9 +66,11 @@ class VoiceControlController(QObject):
         self.settings: VoiceControlSettings = app_settings.load().voice_control
         self._manager = voice_manager if voice_manager is not None else VoiceRecognitionManager()
         self._manager.set_callback(self._on_raw_recognition)
+        self._manager.set_ready_callback(self._on_raw_ready)
         self._raw_command_recognized.connect(
             self._handle_command_recognized, Qt.ConnectionType.QueuedConnection
         )
+        self._raw_ready.connect(self._handle_ready, Qt.ConnectionType.QueuedConnection)
         self._edit_snapshot: Optional[VoiceControlSettings] = None
 
         # command_name -> zero-arg callable. GO_TO_BAR is handled separately
@@ -78,6 +91,7 @@ class VoiceControlController(QObject):
             voice_commands.FASTER: self.playback.tempo_faster,
             voice_commands.DEFAULT_SPEED: self.playback.tempo_reset,
         }
+        self._apply_cue_levels()
 
     # --- lifecycle ---------------------------------------------------
 
@@ -123,10 +137,19 @@ class VoiceControlController(QObject):
 
     def toggle_enabled(self) -> bool:
         """Flips enabled, starts/stops listening to match, persists, and
-        returns the new state for the menu action's checked display."""
+        returns the new state for the menu action's checked display.
+
+        Plays a distinct tone for each direction (reported: the user could
+        not otherwise tell by ear whether the toggle had actually taken
+        effect). "Stopped" plays right here, unconditionally, since stopping
+        never fails and is fast (no model to load). "Started" does NOT play
+        here - starting is asynchronous (see VoiceRecognitionManager.start),
+        so it plays from _handle_ready once listening has actually begun,
+        never claiming success before it's true."""
         if self.settings.enabled:
             self._disconnect()
             self.settings.enabled = False
+            self.synth.play_voice_confirmation_cue(*voice_recognition_stopped_event())
         else:
             self.settings.enabled = True
             self._connect(self.settings.device_name)
@@ -163,15 +186,36 @@ class VoiceControlController(QObject):
                 self._disconnect()
         elif self._manager.is_running:
             self._manager.set_confidence_threshold(self.settings.confidence_threshold)
+        self._apply_cue_levels()
         app_settings.set_voice_control_settings(self.settings)
         self._edit_snapshot = None
 
     def cancel_settings_edit(self) -> None:
-        """Cancel: nothing was live-previewed, so there is nothing to revert
-        on the recognizer - self.settings was never touched either. Kept as
-        its own method (rather than a no-op the caller skips) to mirror
-        LiveMidiInputController's edit-session shape exactly."""
+        """Cancel: nothing was live-previewed onto the recognizer itself
+        (self.settings was never touched), but the cue's volume/pan WAS
+        live-previewed straight onto the synth channel (see preview_cue_
+        volume/preview_cue_pan) - put that back exactly as it was before the
+        dialog opened, mirroring LiveMidiInputController.cancel_settings_edit."""
+        if self._edit_snapshot is not None:
+            self.settings = self._edit_snapshot
+            self._apply_cue_levels()
         self._edit_snapshot = None
+
+    def preview_cue_volume(self, percent: int) -> None:
+        """Live preview while the dialog is open: sets the cue channel's
+        volume AND plays the cue once, since it's a one-shot sound rather
+        than a held note - there is nothing already ringing to hear the new
+        level change on, unlike LiveMidiInputController's preview_volume."""
+        self.synth.set_channel_volume(
+            VOICE_CONTROL_CUE_CHANNEL, mixer_settings.volume_percent_to_cc(percent)
+        )
+        self.synth.play_voice_confirmation_cue(*voice_confirmation_cue_event())
+
+    def preview_cue_pan(self, percent: int) -> None:
+        self.synth.set_channel_pan(
+            VOICE_CONTROL_CUE_CHANNEL, mixer_settings.pan_percent_to_cc(percent)
+        )
+        self.synth.play_voice_confirmation_cue(*voice_confirmation_cue_event())
 
     # --- recognizer callback thread -> Qt main thread -----------------
 
@@ -187,6 +231,20 @@ class VoiceControlController(QObject):
     ) -> None:
         """Qt main thread only (see class docstring)."""
         self._dispatch(command_name, measure_number)
+
+    def _on_raw_ready(self, started: bool) -> None:
+        """VoiceRecognitionManager's own background thread. Does nothing but
+        emit - see class docstring on why."""
+        self._raw_ready.emit(started)
+
+    def _handle_ready(self, started: bool) -> None:
+        """Qt main thread only. Fires once the worker has actually finished
+        loading the model and opened the microphone (or failed to) - see
+        toggle_enabled's own note on why the "started" tone lives here
+        rather than right after requesting a connect."""
+        self.connection_changed.emit(started)
+        if started:
+            self.synth.play_voice_confirmation_cue(*voice_recognition_started_event())
 
     def _dispatch(self, command_name: str, measure_number: Optional[int]) -> None:
         """The single point every recognized command passes through -
@@ -207,12 +265,32 @@ class VoiceControlController(QObject):
     # --- internal -----------------------------------------------------
 
     def _connect(self, device_name: Optional[str]) -> bool:
-        started = self._manager.start(device_name, self.settings.confidence_threshold)
-        self.connection_changed.emit(started)
-        return started
+        """Returns whether the worker was LAUNCHED, not whether it is
+        actually listening yet - that arrives asynchronously via
+        _handle_ready (see VoiceRecognitionManager.start). Only a launch
+        failure is reported synchronously here; a real success/failure is
+        reported once, later, from _handle_ready."""
+        launched = self._manager.start(device_name, self.settings.confidence_threshold)
+        if not launched:
+            self.connection_changed.emit(False)
+        return launched
 
     def _disconnect(self) -> None:
         was_running = self._manager.is_running
         self._manager.stop()
         if was_running:
             self.connection_changed.emit(False)
+
+    def _apply_cue_levels(self) -> None:
+        """Sends the saved cue volume/pan to the synth - called at
+        construction (SynthEngine._load_click_soundfont otherwise leaves the
+        channel at its own fixed centre-pan/full-volume default) and after a
+        settings commit/cancel. The cue is a one-shot sound, so this only
+        needs to run when the settings actually change, never per-play -
+        MIDI channel CC state persists on its own until next changed."""
+        self.synth.set_channel_volume(
+            VOICE_CONTROL_CUE_CHANNEL, mixer_settings.volume_percent_to_cc(self.settings.cue_volume_percent)
+        )
+        self.synth.set_channel_pan(
+            VOICE_CONTROL_CUE_CHANNEL, mixer_settings.pan_percent_to_cc(self.settings.cue_pan_percent)
+        )

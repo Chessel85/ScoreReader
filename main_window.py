@@ -984,6 +984,8 @@ class MainWindow(QMainWindow):
             lambda: dialog.set_devices(self.voice_control.available_devices())
         )
         dialog.test_requested.connect(self._show_voice_control_test_dialog)
+        dialog.cue_volume_changed.connect(self.voice_control.preview_cue_volume)
+        dialog.cue_pan_changed.connect(self.voice_control.preview_cue_pan)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.voice_control.commit_settings_edit(dialog.result_settings())
         else:

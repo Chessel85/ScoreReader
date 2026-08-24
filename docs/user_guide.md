@@ -479,14 +479,18 @@ with no exact match of their own.
 
 For anyone whose hands are busy holding an instrument, spoken commands can
 control playback and navigation instead of the keyboard. Toggle it on or
-off with `Ctrl+Shift+Enter`, or **Options > Toggle Voice Control**.
+off with `Ctrl+Shift+Enter`, or **Options > Toggle Voice Control** - a
+distinct tone confirms whether listening actually started or stopped.
 
-**Options > Voice Control Settings...** chooses which microphone to listen
+**Options > Voice Control Settings...** (`Ctrl+Shift+R`) chooses which microphone to listen
 on and how confident a spoken command must be before it is acted on (the
-Confidence Threshold). Its **Test...** button opens a practice session
-that shows what was heard and whether it would have been accepted,
-without controlling the app for real - useful for checking your
-microphone and finding a threshold that suits your room.
+Confidence Threshold), plus the volume and pan of the confirmation sound
+described below - both are heard immediately as you adjust them. Its
+**Test...** button opens a practice session that shows what was heard and
+whether it would have been accepted, without controlling the app for real -
+useful for checking your microphone and finding a threshold that suits your
+room. A word that isn't one of the recognized commands is reported there as
+"Word not in dictionary - rejected".
 
 A short confirmation sound plays whenever a spoken command is recognized
 and acted on.

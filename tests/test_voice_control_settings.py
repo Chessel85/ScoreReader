@@ -26,9 +26,16 @@ def test_copy_is_independent():
 def test_to_dict_from_dict_round_trip():
     original = VoiceControlSettings(
         enabled=True, device_name="My Microphone", confidence_threshold=85.0,
+        cue_volume_percent=40, cue_pan_percent=-25,
     )
     restored = VoiceControlSettings.from_dict(original.to_dict())
     assert restored == original
+
+
+def test_cue_volume_and_pan_are_clamped():
+    settings = VoiceControlSettings(cue_volume_percent=500, cue_pan_percent=-500)
+    assert settings.cue_volume_percent == 100
+    assert settings.cue_pan_percent == -100
 
 
 def test_from_dict_missing_keys_fall_back_to_defaults():

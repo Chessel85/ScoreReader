@@ -52,3 +52,4 @@ packaging/version_info.txt
 # https://alphacephei.com/vosk/models and extract it to vosk_model/ at the
 # repo root.
 /vosk_model/
+/vosk_model_large/

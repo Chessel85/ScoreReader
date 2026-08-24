@@ -24,6 +24,7 @@ class NullVoiceRecognizer:
         self.available_devices: List[str] = list(available_devices or [])
         self._callback: Optional[Callable[[str, float, Optional[int]], None]] = None
         self._diagnostic_callback: Optional[Callable[[str, float, bool], None]] = None
+        self._ready_callback: Optional[Callable[[bool], None]] = None
         self._running: bool = False
         self.start_calls: List[tuple] = []
         self.stop_count: int = 0
@@ -36,16 +37,26 @@ class NullVoiceRecognizer:
     def set_diagnostic_callback(self, callback) -> None:
         self._diagnostic_callback = callback
 
+    def set_ready_callback(self, callback) -> None:
+        self._ready_callback = callback
+
     def list_devices(self) -> List[str]:
         return list(self.available_devices)
 
     def start(self, device_name: Optional[str], confidence_threshold: float) -> bool:
+        """Calls the ready callback synchronously (real VoiceRecognitionManager
+        calls it from its own background thread, later, once the worker
+        actually loads) - VoiceControlController routes it through a Queued
+        Signal either way, so a test still needs QApplication.processEvents()
+        to see its effect, exactly as it would against the real manager."""
         self.start_calls.append((device_name, confidence_threshold))
         self.confidence_threshold = confidence_threshold
-        if device_name is not None and device_name not in self.available_devices:
-            return False
-        self._running = True
-        return True
+        success = device_name is None or device_name in self.available_devices
+        if success:
+            self._running = True
+        if self._ready_callback is not None:
+            self._ready_callback(success)
+        return success
 
     def stop(self) -> None:
         self.stop_count += 1

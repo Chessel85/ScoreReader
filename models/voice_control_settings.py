@@ -23,6 +23,15 @@ instrument strum clears a volume gate as easily as a real command would),
 so it was never wired to anything and has been removed rather than kept as
 dead settings.
 
+cue_volume_percent/cue_pan_percent (added after live testing, 2026-08-24)
+control the confirmation "ding" (audio/voice_confirmation_cue.py) heard
+after every accepted command - plain 0-100/-100..100 percent ints, the same
+shape and reasoning as LiveMidiInputSettings.volume_percent/pan_percent:
+converted to CC via models/mixer_settings.py's volume_percent_to_cc/
+pan_percent_to_cc at the one place that actually needs Qt anyway (the
+controller) - this module does NOT import mixer_settings, same reasoning
+LiveMidiInputSettings gives for not doing so either.
+
 stdlib-only, like every other models/ module - see
 test_models_package_does_not_import_qt.
 """
@@ -45,6 +54,8 @@ class VoiceControlSettings:
     enabled: bool = False
     device_name: Optional[str] = None
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
+    cue_volume_percent: int = 100
+    cue_pan_percent: int = 0
 
     def __post_init__(self):
         self.enabled = bool(self.enabled)
@@ -52,6 +63,8 @@ class VoiceControlSettings:
         self.confidence_threshold = _clamp(
             self.confidence_threshold, 0.0, 100.0, DEFAULT_CONFIDENCE_THRESHOLD
         )
+        self.cue_volume_percent = int(_clamp(self.cue_volume_percent, 0, 100, 100))
+        self.cue_pan_percent = int(_clamp(self.cue_pan_percent, -100, 100, 0))
 
     def copy(self) -> "VoiceControlSettings":
         """An independent snapshot - the settings dialog's begin/commit/
@@ -62,6 +75,8 @@ class VoiceControlSettings:
             enabled=self.enabled,
             device_name=self.device_name,
             confidence_threshold=self.confidence_threshold,
+            cue_volume_percent=self.cue_volume_percent,
+            cue_pan_percent=self.cue_pan_percent,
         )
 
     def to_dict(self) -> dict:
@@ -69,6 +84,8 @@ class VoiceControlSettings:
             "enabled": self.enabled,
             "device_name": self.device_name,
             "confidence_threshold": self.confidence_threshold,
+            "cue_volume_percent": self.cue_volume_percent,
+            "cue_pan_percent": self.cue_pan_percent,
         }
 
     @classmethod
@@ -83,4 +100,6 @@ class VoiceControlSettings:
             enabled=data.get("enabled", defaults.enabled),
             device_name=data.get("device_name", defaults.device_name),
             confidence_threshold=data.get("confidence_threshold", defaults.confidence_threshold),
+            cue_volume_percent=data.get("cue_volume_percent", defaults.cue_volume_percent),
+            cue_pan_percent=data.get("cue_pan_percent", defaults.cue_pan_percent),
         )

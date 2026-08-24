@@ -89,24 +89,33 @@ VOSK_AVAILABLE = (
 # this same path with no code change; Vosk's own grammar-constraint feature
 # (see _build_grammar_phrases) means the small model's narrower general
 # vocabulary matters far less here than it would for open dictation.
-MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "vosk_model")
+#
+# TEMPORARY, under live A/B test (2026-08-24): pointed at vosk_model_large/
+# (vosk-model-en-us-0.22-lgraph, ~205MB - NOT the plain -0.22, which silently
+# ignores the grammar constraint entirely, confirmed live: it decoded random
+# noise as an open-vocabulary word instead of respecting the phrase list).
+# Only an "-lgraph" variant supports runtime/grammar graphs. Revert to
+# "vosk_model" if live mic testing doesn't show better false-accept rejection
+# than the small model - see git commit 7275d19 for the pre-large-model
+# checkpoint.
+MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "vosk_model_large")
 
 WORKER_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "voice_recognition_worker.py")
 
 # Vosk's own recommended catch-all - documented as letting the decoder say
 # "none of these phrases" instead of forcing the nearest wrong match.
 # GOTCHA, found via live testing on vosk-model-small-en-us-0.15: including
-# "[unk]" in the grammar list passed to KaldiRecognizer breaks finalization
-# completely - every result comes back as empty text, even for a clearly
-# spoken, otherwise-correctly-recognized command (confirmed by isolating a
-# grammar of just ["stop"] vs ["stop", "[unk]"] against the same speech: the
-# first recognizes "stop" at high confidence, the second returns nothing at
-# all, reproducibly). NOT included in _build_grammar_phrases below because
-# of this - the confidence threshold is this feature's only false-accept
-# safeguard here, not a grammar-level catch-all. UNKNOWN_TOKEN itself is
-# still checked for in _handle_final_result as a defensive no-op (in case a
-# future/different model ever does emit it), it's just never offered to the
-# decoder as a real option.
+# "[unk]" in the grammar list passed to KaldiRecognizer broke finalization
+# completely in that test - every result came back as empty text, even for a
+# clearly spoken command. NOT reproduced afterward in isolated testing
+# (clean synthesized-speech WAVs, both the small model and vosk_model_large,
+# with this exact grammar) - "[unk]" correctly absorbed out-of-vocabulary
+# words there instead of forcing a false match or breaking. Re-enabled
+# (2026-08-24) for live A/B testing against the large model; if real
+# microphone testing reproduces the original breakage, remove "[unk]" from
+# _build_grammar_phrases again and fall back to confidence-threshold-only
+# filtering. UNKNOWN_TOKEN is checked for in _handle_final_result either way,
+# since a model may emit it even when not offered as a grammar option.
 UNKNOWN_TOKEN = "[unk]"
 
 # (command_name, confidence_percent 0-100, measure_number) - the normalised
@@ -143,13 +152,15 @@ def list_input_devices() -> List[str]:
 def _build_grammar_phrases(total_measures: int) -> List[str]:
     """Every fixed command phrase plus the current score's "go to bar N"/
     "go to measure N" phrases - the phrase list sent to the worker to
-    restrict Vosk's recognition to just this vocabulary. Deliberately does
-    NOT include UNKNOWN_TOKEN - see that constant's own comment on why.
+    restrict Vosk's recognition to just this vocabulary. Includes
+    UNKNOWN_TOKEN - see that constant's own comment for the live-testing
+    history behind this.
     Sent wholesale (never incrementally patched) whenever the vocabulary
     needs to change - cheap for Vosk (a fresh KaldiRecognizer), unlike the
     SAPI version's file-round-trip workaround."""
     phrases = list(voice_commands.COMMAND_PHRASES.keys())
     phrases.extend(phrase for phrase, _ in voice_commands.go_to_bar_phrases(total_measures))
+    phrases.append(UNKNOWN_TOKEN)
     return phrases
 
 
@@ -176,6 +187,7 @@ class VoiceRecognitionManager:
     def __init__(self):
         self._callback: Optional[RecognitionCallback] = None
         self._diagnostic_callback: Optional[Callable[[str, float, bool], None]] = None
+        self._ready_callback: Optional[Callable[[bool], None]] = None
         self._confidence_threshold: float = 0.0
         self._process: Optional[subprocess.Popen] = None
         self._reader_thread: Optional[threading.Thread] = None
@@ -199,6 +211,18 @@ class VoiceRecognitionManager:
         the user what would and wouldn't have been accepted."""
         self._diagnostic_callback = callback
 
+    def set_ready_callback(self, callback: Optional[Callable[[bool], None]]) -> None:
+        """Fires exactly once per start() call, from this module's OWN
+        background thread (see class docstring) - True once the worker has
+        actually finished loading the model and opened the microphone,
+        False if it failed or the process exited before doing so. Exists so
+        start() itself can return immediately instead of blocking the
+        caller's thread on Vosk's own model-load time - reported live:
+        loading the ~200MB lgraph model took close to a second, and
+        start() used to block the whole Qt UI thread for that entire
+        duration (see start()'s own note)."""
+        self._ready_callback = callback
+
     def list_devices(self) -> List[str]:
         """Instance wrapper around the module-level list_input_devices(), so
         a test can override per-instance (a NullVoiceRecognizer) without
@@ -207,11 +231,23 @@ class VoiceRecognitionManager:
         return list_input_devices()
 
     def start(self, device_name: Optional[str], confidence_threshold: float) -> bool:
-        """Starts the worker child process and its stdout-reader thread.
-        Returns False (never raises) if vosk/sounddevice aren't available,
-        the model directory is missing, or the process fails to start - the
-        "degrade silently" behaviour every other optional resource in this
-        app already has."""
+        """Launches the worker child process and its stdout-reader thread,
+        then returns immediately - it does NOT wait for the worker to
+        actually finish loading the model and open the microphone (see
+        set_ready_callback for that). Returns False (never raises) only for
+        preconditions checkable without the worker at all: vosk/sounddevice
+        not available, the model directory missing, or the process itself
+        failing to spawn.
+
+        GOTCHA, reported live: this used to block here on self._ready_event.
+        wait(timeout=10.0), synchronously, on the CALLER's thread - which is
+        always the Qt main thread (VoiceControlController.toggle_enabled).
+        Loading vosk-model-en-us-0.22-lgraph (~200MB) from disk took close
+        to a second, during which the entire UI was frozen and the "started"
+        confirmation tone was delayed by exactly that long. A watchdog
+        thread below still reports failure via the ready callback if the
+        worker never becomes ready within 10s, mirroring the old timeout
+        without blocking anyone on it."""
         if not VOSK_AVAILABLE:
             print("[WARN] vosk/sounddevice not available; voice control disabled.")
             return False
@@ -246,8 +282,23 @@ class VoiceRecognitionManager:
             "cmd": "start", "device_name": device_name,
             "grammar": _build_grammar_phrases(self._total_measures), "model_dir": MODEL_DIR,
         })
-        self._ready_event.wait(timeout=10.0)
-        return self._started_ok
+        threading.Thread(
+            target=self._watch_for_ready_timeout, daemon=True, name="VoiceRecognitionManagerWatchdog",
+        ).start()
+        return True
+
+    def _watch_for_ready_timeout(self) -> None:
+        """Own background thread. If _read_worker_output never sees a
+        ready/error event (or the process exits without one) within 10s,
+        reports failure via the ready callback - this thread's wait()
+        returns True (doing nothing further) the moment that happens
+        normally, well under 10s in practice."""
+        if not self._ready_event.wait(timeout=10.0):
+            print("[WARN] Voice control worker did not become ready within 10s")
+            self._started_ok = False
+            self._ready_event.set()
+            if self._ready_callback is not None:
+                self._ready_callback(False)
 
     def stop(self) -> None:
         if self._process is None:
@@ -310,12 +361,25 @@ class VoiceRecognitionManager:
             if event == "ready":
                 self._started_ok = True
                 self._ready_event.set()
+                if self._ready_callback is not None:
+                    self._ready_callback(True)
             elif event == "error":
                 print(f"[WARN] Voice control worker error: {message.get('message')}")
                 self._started_ok = False
                 self._ready_event.set()
+                if self._ready_callback is not None:
+                    self._ready_callback(False)
             elif event == "result":
                 self._handle_final_result(message)
+        # stdout closed - a clean stop() already sets _ready_event itself via
+        # the "error"/"ready" path or was never waiting; but a worker that
+        # CRASHED before ever reporting either must still be reported as a
+        # failure, not leave the caller waiting forever.
+        if not self._ready_event.is_set():
+            self._started_ok = False
+            self._ready_event.set()
+            if self._ready_callback is not None:
+                self._ready_callback(False)
 
     def _handle_final_result(self, result: dict) -> None:
         """Drops anything below the configured confidence threshold,
@@ -349,9 +413,13 @@ class VoiceRecognitionManager:
 
         if not accepted:
             if confidence < self._confidence_threshold:
+                # .1f, not .0f: two genuinely different values (e.g. 49.6 vs
+                # 50.0) can both round to the same whole number, which read
+                # as "50 < 50" - a real number rejected correctly, printed
+                # as a message that looked like nonsense (reported live).
                 print(
                     f"[INFO] Voice control: rejected '{heard_text}' "
-                    f"(confidence {confidence:.0f} < threshold {self._confidence_threshold:.0f})"
+                    f"(confidence {confidence:.1f} < threshold {self._confidence_threshold:.1f})"
                 )
             else:
                 print(f"[INFO] Voice control: recognized text did not match a known command: '{heard_text}'")

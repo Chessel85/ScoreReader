@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from audio.voice_recognition import VoiceRecognitionManager
+from audio.voice_recognition import UNKNOWN_TOKEN, VoiceRecognitionManager
 
 
 class VoiceControlTestDialog(QDialog):
@@ -118,8 +118,17 @@ class VoiceControlTestDialog(QDialog):
         Silence is dropped rather than listed - audio/voice_recognition.py
         reports it as heard_text="(silence)" (see its own _handle_final_
         result), and listing one row per silent gap made the results list
-        hard to navigate for no useful information (reported)."""
+        hard to navigate for no useful information (reported).
+
+        Vosk's own catch-all UNKNOWN_TOKEN ("[unk]") means "something was
+        said that isn't in the vocabulary" - shown with a plain-language
+        message instead of the raw "[unk]" token, which read as unclear
+        jargon in testing (reported)."""
         if heard_text == "(silence)":
+            return
+        if heard_text == UNKNOWN_TOKEN:
+            self.results_list.addItem("Word not in dictionary - rejected")
+            self.results_list.scrollToBottom()
             return
         verdict = "accepted" if accepted else "rejected"
         self.results_list.addItem(f"Heard: '{heard_text}' - confidence {confidence:.0f}% ({verdict})")
