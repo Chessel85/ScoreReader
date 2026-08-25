@@ -23,6 +23,7 @@ from controllers.playback_controller import PlaybackController
 from controllers.region_presenter import RegionPresenter
 from controllers.score_persistence import ScorePersistenceController
 from controllers.score_session import ScoreSession
+from controllers.tuner_controller import TunerController
 from controllers.voice_control_controller import VoiceControlController
 from models.vocabulary import bar_word
 from parsers.ug_source import write_ug_source
@@ -47,6 +48,7 @@ from widgets.region5_list_widget import Region5ListWidget
 from widgets.status_bar_widget import StatusBarWidget
 from widgets.tempo_offset_dialog import TempoOffsetDialog
 from widgets.timeline_list_widget import TimelineListWidget
+from widgets.tuner_dialog import TunerDialog
 from widgets.ultimate_guitar_import_dialog import UltimateGuitarImportDialog
 from widgets.voice_control_dialog import VoiceControlDialog
 from widgets.voice_control_test_dialog import VoiceControlTestDialog
@@ -98,7 +100,7 @@ class MainWindow(QMainWindow):
 
     def __init__(
         self, synth=None, uk_terms: bool | None = None, live_midi_manager=None,
-        voice_control_manager=None,
+        voice_control_manager=None, tuner_manager=None,
     ):
         """Create the main window.
 
@@ -122,6 +124,11 @@ class MainWindow(QMainWindow):
         start / stop / is_running / rebuild_grammar / set_confidence_
         threshold). Tests pass a NullVoiceRecognizer stand-in so no real
         SAPI COM recognizer is touched - same reasoning as live_midi_manager.
+
+        tuner_manager: any object with the TunerCapture interface
+        (set_callback / set_target / list_devices / open / close / is_open /
+        device_name). Tests pass a NullTunerCapture stand-in so no real
+        microphone is touched - same reasoning as live_midi_manager.
         """
         super().__init__()
         self.setWindowTitle("Recall Score")
@@ -138,6 +145,7 @@ class MainWindow(QMainWindow):
         )
         self._live_midi_manager = live_midi_manager
         self._voice_control_manager = voice_control_manager
+        self._tuner_manager = tuner_manager
 
         self.setup_ui()
         self.setup_controllers()
@@ -274,6 +282,12 @@ class MainWindow(QMainWindow):
             voice_manager=self._voice_control_manager,
         )
         self.voice_control.start()
+        # Tools > Tuner (speculative feature - see the tuner plan):
+        # constructed once here for the same lifetime reasoning as
+        # live_midi/voice_control above, but does NOT auto-start listening -
+        # the dialog itself starts/stops capture on show/close (no explicit
+        # Start/Stop Listening control, per the plan's UI simplification).
+        self.tuner = TunerController(parent=self, capture=self._tuner_manager)
         self.focus = FocusController(self, regions, self.status_bar)
         self.presenter = RegionPresenter(
             self.session, self.region_1, self.region_2, self.region_3,
@@ -333,6 +347,7 @@ class MainWindow(QMainWindow):
         # on score load, same reasoning as live_midi_input above.
         self.voice_control_action.setChecked(self.voice_control.settings.enabled)
         self.attribute_order_action = actions.attribute_order
+        self.tuner_action = actions.tuner
         self.user_guide_action = actions.user_guide
         self.about_action = actions.about
 
@@ -994,6 +1009,63 @@ class MainWindow(QMainWindow):
         if previous_focus is not None:
             previous_focus.setFocus()
 
+    def _show_tuner_dialog(self):
+        """Tools > Tuner (speculative feature - see the tuner plan). Pure
+        view (see widgets/tuner_dialog.py's own docstring) - this method
+        wires its signals and decides commit vs. revert from exec()'s
+        result, the same shape _show_live_midi_input_dialog already has.
+        Unlike that dialog, listening starts/stops with the dialog itself
+        (listening_requested/listening_stopped, wired here) rather than
+        being a persistent toggle - needs no loaded score at all, the
+        feature is global, not per-score."""
+        previous_focus = self.focusWidget()
+        dialog = TunerDialog(
+            self,
+            devices=self.tuner.available_devices(),
+            settings=self.tuner.begin_settings_edit(),
+        )
+        dialog.target_changed.connect(self.tuner.set_target)
+        dialog.threshold_changed.connect(self.tuner.set_signal_threshold)
+        dialog.device_changed.connect(self.tuner.start_listening)
+        dialog.refresh_requested.connect(
+            lambda: dialog.set_devices(self.tuner.available_devices())
+        )
+        dialog.listening_requested.connect(self.tuner.start_listening)
+        dialog.listening_stopped.connect(self.tuner.stop_listening)
+        self.tuner.pitch_result_changed.connect(dialog.update_pitch_display)
+        # dialog.announce, not a controller-side QAccessible call - see
+        # controllers/tuner_controller.py's module docstring GOTCHA and
+        # widgets/tuner_dialog.py's own announce() for why: the controller
+        # has no widget of its own to target, and a QAccessibleAnnouncement
+        # Event aimed at a non-widget QObject was silently dropped. This was
+        # briefly left unconnected during accuracy testing (a plain ~1s
+        # throttle made the dialog hard to navigate with NVDA - talked over
+        # while trying to Tab around), but the controller now pushes a
+        # bounded WAITING/REPORTING sequence instead (see that module's
+        # THIRD/FOURTH live-testing reports), which doesn't have that
+        # problem - and, being a QAccessibleAnnouncementEvent, reaches NVDA
+        # regardless of which control currently has keyboard focus.
+        self.tuner.announcement_requested.connect(dialog.announce)
+        # Seeded explicitly, not left to TunerDialog.__init__'s own trailing
+        # target_changed emission - that emission fires BEFORE the connect()
+        # above runs (it happens during TunerDialog(...) construction, three
+        # lines up), so it was never actually received. Reported live: with
+        # no target ever reaching the controller, TunerCapture searched the
+        # wrong (stale default 440Hz) band and the old _handle_pitch_result
+        # skipped feedback entirely whenever _target_string was None -
+        # together those made the tuner look totally unresponsive. See
+        # controllers/tuner_controller.py's module docstring.
+        self.tuner.set_target(dialog.current_string(), dialog.current_offset(), dialog.current_a4_hz())
+        self.tuner.set_signal_threshold(dialog.current_threshold_percent())
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.tuner.commit_settings_edit(dialog.result_settings())
+        else:
+            self.tuner.cancel_settings_edit()
+        self.tuner.pitch_result_changed.disconnect(dialog.update_pitch_display)
+        self.tuner.announcement_requested.disconnect(dialog.announce)
+        if previous_focus is not None:
+            previous_focus.setFocus()
+
     def _show_voice_control_test_dialog(self, device_name: str, confidence_threshold: float):
         """Voice Control Settings' Test... button. Pauses the real listening
         session for the duration - VoiceControlTestDialog runs its own
@@ -1141,5 +1213,6 @@ class MainWindow(QMainWindow):
         # device.
         self.live_midi.close()
         self.voice_control.close()
+        self.tuner.stop_listening()
         self.synth.close()
         super().closeEvent(event)

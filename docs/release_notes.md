@@ -1,5 +1,9 @@
 # Recall Score Release Notes
 
+## 2026.1.28
+
+* Added a tuner in a new tools menu supporting multiple instruments
+
 ## 2026.1.27
 
 * Whenever moving to a new measure with control left/right arrow keys, the go to dialogue, typed numbers and enter, home and end, the new bar number is announced.

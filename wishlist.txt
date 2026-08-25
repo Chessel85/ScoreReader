@@ -1,16 +1,13 @@
 * Think the glitch i hear at start up is a real problem. is very noticeable when on speakers. and sometimes the quality of the midi rendering is crackly. or is this only when running from command prompt?
-* add a voice control command of loop length to set how many bars the preview plays for.
 * work with gemini on onstructions to give claude to make it write a good user manual
 * Write a new user guide before doing a new release.
 * there is something unintuitive about the pause and play feature though not sure exactly what the oddity is.
-* when looping the preview, the metronome comes in too soon on the repeat. the last note is not being allowed to play for its full length.
 * need to do a root and branch review of keystrokes to try and get some logicalness to it. 
 * Need to properly plan and organise the menus.
 * Need to review file formats; midi 0 and ultimate guitar need assumptions about bars revisiting.
-* nice to get the measure number announced when moving left or right by a whole bar but do not know how to do this 
 * can we have a guitar tuner feature?
 * when metronome is on, but moving up and down a chord, do not sound the metronome click.
-* A mute option so midi is not played.
+* A mute option so midi is not played. - can do this by setting score to 0 volume  in the mixer so wait to see if this feature is requested later by others
 * There are more performance indicators that need catering for.  speed up and slow down instructions over a period of time.  Fret position indicators whether just a one off or over a duration.  Related are barre instructions.  Perhaps chord indocators above the stave should fall into this category also.
 * Quick attribute look up.  Use control + number row to make screen reader announce that number attribute from the attribute list e.g. Pressing control + 2 announces octave.  Can the app push text to the screen reader?
 * Notes need to account for staff symbol e.g. a piano bass stave (without a treble) seems to play too high

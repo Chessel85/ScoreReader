@@ -61,6 +61,7 @@ class Actions:
     voice_control: Optional[QAction] = None
     voice_control_settings: Optional[QAction] = None
     attribute_order: Optional[QAction] = None
+    tuner: Optional[QAction] = None
     user_guide: Optional[QAction] = None
     about: Optional[QAction] = None
 
@@ -91,6 +92,7 @@ class MenuBuilder:
         self._navigation_menu(menu_bar, a)
         self._playback_menu(menu_bar, a)
         self._options_menu(menu_bar, a)
+        self._tools_menu(menu_bar, a)
         self._help_menu(menu_bar, a)
         return a
 
@@ -489,6 +491,23 @@ class MenuBuilder:
             "&Reorder Parts...", self.slots._show_part_order_dialog
         )
         options_menu.addAction(a.part_order)
+
+    def _tools_menu(self, menu_bar, a: Actions) -> None:
+        # New top-level menu (the user's own framing) - a microphone-based
+        # chromatic tuner for guitar/bass/violin/etc (see the tuner plan).
+        # Ctrl+Shift+T, matching every other Options/Edit dialog's own
+        # Ctrl+Shift+<letter> shortcut (Mixer/X, Instruments/I, Key
+        # Signature/K, Live MIDI Input/L, Voice Control/R) - reported live:
+        # with no real QAction shortcut, the item's own "&Tuner..." mnemonic
+        # (T) collided with the parent "&Tools" menu's own mnemonic (also
+        # T), so NVDA reading "Alt+T" against the item just opened the Tools
+        # menu instead of the dialog.
+        tools_menu = menu_bar.addMenu("&Tools")
+        a.tuner = self._action(
+            "&Tuner...", self.slots._show_tuner_dialog, "Ctrl+Shift+T",
+            status_tip="Tune a guitar, bass, violin or other stringed instrument by microphone",
+        )
+        tools_menu.addAction(a.tuner)
 
     def _help_menu(self, menu_bar, a: Actions) -> None:
         help_menu = menu_bar.addMenu("&Help")

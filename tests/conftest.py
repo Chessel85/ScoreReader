@@ -20,6 +20,7 @@ import pytest
 from models.music_data import MusicData
 from tests.support.null_live_midi_input import NullMidiInputManager
 from tests.support.null_synth import NullSynth
+from tests.support.null_tuner_capture import NullTunerCapture
 from tests.support.null_voice_recognizer import NullVoiceRecognizer
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -494,6 +495,14 @@ def null_voice_recognizer() -> NullVoiceRecognizer:
     return NullVoiceRecognizer()
 
 
+@pytest.fixture
+def null_tuner_capture() -> NullTunerCapture:
+    """Recording/injectable stand-in for audio.tuner_capture.TunerCapture.
+    Never touches a real microphone. Pass to MainWindow(tuner_manager=...)
+    for tests exercising Tools > Tuner behaviour."""
+    return NullTunerCapture()
+
+
 @pytest.fixture(autouse=True)
 def _isolate_persistence(monkeypatch, tmp_path):
     """Phase G: redirects app_settings/score_config's on-disk locations into
@@ -581,3 +590,31 @@ def _forbid_real_voice_recognition(monkeypatch):
 
     monkeypatch.setattr(voice_recognition.VoiceRecognitionManager, "start", _blocked_start)
     monkeypatch.setattr(voice_recognition, "list_input_devices", _blocked_list_devices)
+
+
+@pytest.fixture(autouse=True)
+def _forbid_real_tuner_capture(monkeypatch):
+    """Fail loudly if any test opens a real tuner audio input stream or
+    enumerates real audio input devices - the Tools > Tuner counterpart of
+    _forbid_real_midi_input/_forbid_real_voice_recognition above. A test
+    that needs this behaviour should inject a NullTunerCapture (the
+    null_tuner_capture fixture) via MainWindow(tuner_manager=...) instead.
+
+    Belt-and-braces alongside that injectable stand-in: a test could still
+    construct MainWindow(synth=null_synth) without ever passing
+    tuner_manager=, which would otherwise fall through to a real
+    TunerCapture()."""
+    from audio import tuner_capture
+
+    def _blocked_open(self, device_name):
+        raise AssertionError(
+            "This test tried to open a real tuner audio input device. "
+            "Inject a NullTunerCapture instead - see "
+            "tests/support/null_tuner_capture.py."
+        )
+
+    def _blocked_list_devices():
+        raise AssertionError("This test tried to enumerate real tuner audio input devices.")
+
+    monkeypatch.setattr(tuner_capture.TunerCapture, "open", _blocked_open)
+    monkeypatch.setattr(tuner_capture, "list_input_devices", _blocked_list_devices)
