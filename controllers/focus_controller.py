@@ -21,6 +21,7 @@ class FocusController:
 
     def __init__(self, window, regions: list, status_bar,
                  first_measure_action=None, last_measure_action=None,
+                 select_all_action=None, preview_action=None,
                  mute_action=None, solo_action=None,
                  unmute_all_action=None, unsolo_all_action=None):
         # `window` is kept specifically for window.focusWidget(), which is
@@ -33,6 +34,20 @@ class FocusController:
         self._status_bar = status_bar
         self.first_measure_action = first_measure_action
         self.last_measure_action = last_measure_action
+        # Edit > Select All - same "only meaningful in the Note region"
+        # reasoning as Home/End above; selecting every note at the cursor is
+        # what makes Shift+Space's "play them all together" audition
+        # meaningful, and it has no sensible target anywhere else.
+        self.select_all_action = select_all_action
+        # Playback > Preview (Enter/Return) - the INVERSE of the above:
+        # enabled everywhere EXCEPT the Note region, which owns Enter's
+        # dual behaviour itself (TimelineListWidget.keyPressEvent - jump to
+        # a typed bar number if one is pending, else this same phrase-
+        # preview toggle). Leaving this action enabled there too would let
+        # its WindowShortcut fire INSTEAD of that region-local handling
+        # (a QAction's shortcut is dispatched before an ordinary
+        # keyPressEvent), silently breaking the digit-then-Enter jump.
+        self.preview_action = preview_action
         # Playback menu's Mute/Solo/Unmute All/Unsolo All - only meaningful
         # with Region 2 focused, same "greyed out elsewhere" reasoning as
         # first_measure_action/last_measure_action above.
@@ -74,12 +89,14 @@ class FocusController:
             self.last_focused_region = now
         self.update_navigation_actions_enabled(now)
         self.update_region2_actions_enabled(now)
+        self.update_preview_action_enabled(now)
 
     def update_navigation_actions_enabled(self, focus_widget=None) -> None:
-        """Home/End only act on the Note region, so they are greyed out
-        elsewhere - otherwise pressing Home in Region 1 silently jumps the
-        timeline underneath what the user is reading. Called with no
-        argument at menu-build time, before any focusChanged has fired."""
+        """Home/End (and Select All) only act on the Note region, so they
+        are greyed out elsewhere - otherwise pressing Home in Region 1
+        silently jumps the timeline underneath what the user is reading.
+        Called with no argument at menu-build time, before any
+        focusChanged has fired."""
         if self.first_measure_action is None or self.last_measure_action is None:
             return
         if focus_widget is None:
@@ -87,6 +104,8 @@ class FocusController:
         in_note_region = focus_widget is self.note_region
         self.first_measure_action.setEnabled(in_note_region)
         self.last_measure_action.setEnabled(in_note_region)
+        if self.select_all_action is not None:
+            self.select_all_action.setEnabled(in_note_region)
 
     def update_region2_actions_enabled(self, focus_widget=None) -> None:
         """Mute/Solo/Unmute All/Unsolo All only act on Region 2's focused
@@ -116,6 +135,23 @@ class FocusController:
         for action in actions:
             if action is not None:
                 action.setEnabled(in_region_2)
+
+    def update_preview_action_enabled(self, focus_widget=None) -> None:
+        """Playback > Preview (Enter/Return) - enabled from any region or
+        the status bar EXCEPT the Note region, which handles Enter itself
+        (see the constructor comment on preview_action). User-requested
+        2026-08-26: "Enter should do the preview from anywhere - any
+        region or the status bar." Same "ignore a focus move into the menu
+        system itself" treatment as update_region2_actions_enabled, so
+        merely opening the Playback menu to look at this item doesn't
+        flip it disabled right as the user looks at it."""
+        if self.preview_action is None:
+            return
+        if focus_widget is None:
+            focus_widget = self._window.focusWidget()
+        if isinstance(focus_widget, (QMenuBar, QMenu)):
+            return
+        self.preview_action.setEnabled(focus_widget is not self.note_region)
 
     # --- the cycle ----------------------------------------------------
 

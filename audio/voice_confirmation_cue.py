@@ -29,7 +29,7 @@ VOICE_CONTROL_CUE_NOTE = 60
 # the source recording allows).
 VOICE_CONTROL_CUE_VELOCITY = 127
 
-# Toggle-on/off tones (Ctrl+Shift+Enter/Return, or the menu action) - a
+# Toggle-on/off tones (Ctrl+Enter/Return, or the menu action) - a
 # different sound from the per-command confirmation ding above, since that
 # one only ever fires once already listening. Share VOICE_CONTROL_CUE_CHANNEL
 # and SynthEngine.play_voice_confirmation_cue rather than a dedicated

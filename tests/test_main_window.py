@@ -201,6 +201,34 @@ def test_ctrl_number_beyond_the_attribute_count_does_nothing(
     assert announcements == []
 
 
+def test_alt_pageup_pagedown_announce_the_new_preview_length(
+    window, qtbot, monkeypatch, minimal_score
+):
+    """User-requested (2026-08-26): Alt+PageUp/PageDown change Preview's
+    length without moving focus off the Note region, so the only previous
+    trace of the new value was the status bar's own text - never heard by
+    someone not focused there. Wording follows the UK/US terminology
+    setting ("bar"/"measure"), same as every other bar-word label; the
+    `window` fixture runs with uk_terms=False (US), so "measure" here."""
+    announcements = []
+    monkeypatch.setattr(
+        region_presenter.QAccessible,
+        "updateAccessibility",
+        lambda event: announcements.append(event.message()),
+    )
+    load_and_wait(window, qtbot, minimal_score)
+    announcements.clear()
+
+    window.increase_preview_bars()  # 2 -> 3
+
+    assert announcements == ["Preview 3 measures."]
+
+    window.decrease_preview_bars()  # 3 -> 2
+    window.decrease_preview_bars()  # 2 -> 1 (MIN_PREVIEW_BARS)
+
+    assert announcements[-2:] == ["Preview 2 measures.", "Preview 1 measure."]
+
+
 def test_navigating_onto_a_single_note_slice_sets_a_current_row(window, qtbot, minimal_score):
     """Live-tested bug: selectAll() marks every row selected but leaves the
     view's own "current" item untouched, so a slice with exactly one note
@@ -860,27 +888,36 @@ def test_ctrl_f_shortcut_opens_the_find_dialog(window, qtbot, null_synth, minima
     assert opened == [True]
 
 
-def test_find_action_is_in_both_the_edit_and_navigation_menus(window):
-    """User-requested: Find... should be reachable from the Edit menu too,
-    alongside Performance Report/Instruments/Key Signature - as the SAME
-    QAction already in the Navigation menu, not a second one sharing
-    Ctrl+F, which would be a real ambiguous-shortcut conflict."""
-    # Top-level menu QActions (unlike the ones in Actions/menu_builder.py)
-    # are never held by any persistent Python attribute - menuBar().actions()
-    # hands back freshly (re)wrapped objects each call, and per this file's
-    # existing "Actions are held as attributes, never locals" gotcha,
-    # letting them go out of scope before use can leave even the still-
-    # parented C++ QMenu reading as deleted. Named locals kept alive for the
-    # rest of the function, not a throwaway generator/list comprehension.
+def test_find_action_lives_only_in_the_navigation_menu(window):
+    """User-requested 2026-08-26: Find... used to be the SAME QAction added
+    to both Edit and Navigation - "weird having find in the edit menu and
+    the find prev and find next in navigation" - so it now lives only in
+    Navigation, immediately before Find Next/Previous. This also fixes a
+    real bug: a QAction added to two different QMenus left NVDA silently
+    announcing nothing when arrowed onto in whichever menu built second
+    (Qt's accessibility bridge doesn't reliably expose one QAction's name
+    across two separate QMenu parents).
+
+    Top-level menu QActions (unlike the ones in Actions/menu_builder.py)
+    are never held by any persistent Python attribute - menuBar().actions()
+    hands back freshly (re)wrapped objects each call, and per this file's
+    existing "Actions are held as attributes, never locals" gotcha,
+    letting them go out of scope before use can leave even the still-
+    parented C++ QMenu reading as deleted. Named locals kept alive for the
+    rest of the function, not a throwaway generator/list comprehension."""
     top_level_actions = window.menuBar().actions()
     edit_action = [a for a in top_level_actions if a.text() == "&Edit"][0]
     navigation_action = [a for a in top_level_actions if a.text() == "&Navigation"][0]
     edit_menu = edit_action.menu()
     navigation_menu = navigation_action.menu()
 
-    assert window.find_action in edit_menu.actions()
+    assert window.find_action not in edit_menu.actions()
     assert window.find_action in navigation_menu.actions()
     assert window.find_action.shortcut().toString() == "Ctrl+F"
+
+    find_index = navigation_menu.actions().index(window.find_action)
+    assert navigation_menu.actions()[find_index + 1] is window.find_next_action
+    assert navigation_menu.actions()[find_index + 2] is window.find_previous_action
 
 
 def test_alt_right_and_alt_left_cycle_through_occurrences_of_the_armed_target(
@@ -1105,6 +1142,104 @@ def test_navigation_menu_items_use_home_and_end_shortcuts(window):
     assert window.move_to_performance_action.shortcut() == QKeySequence("B")
 
 
+def _mnemonic(text: str):
+    """The '&'-prefixed letter Qt uses as this action/menu's Alt-access
+    key, or None if it has none. '&&' is Qt's escape for a literal
+    ampersand, not a mnemonic marker, and must be skipped rather than
+    read as one."""
+    i = 0
+    while True:
+        i = text.find("&", i)
+        if i == -1:
+            return None
+        if text[i:i + 2] == "&&":
+            i += 2
+            continue
+        return text[i + 1].upper() if i + 1 < len(text) else None
+
+
+def test_reorder_and_performance_report_actions_have_global_dialog_shortcuts(window):
+    """User-requested 2026-08-26: these three open a dialog exactly like
+    Instruments/Key Signature/Mixer/etc, which all get a real
+    Ctrl+Shift+<letter> shortcut - but these three never had one, only an
+    Alt-only menu mnemonic that NVDA nonetheless announced as if it were a
+    real global shortcut. Now they have the real thing, and (see the next
+    test) no mnemonic to cause that confusion."""
+    assert window.attribute_order_action.shortcut() == QKeySequence("Ctrl+Shift+A")
+    assert window.part_order_action.shortcut() == QKeySequence("Ctrl+Shift+O")
+    assert window.performance_report_action.shortcut() == QKeySequence("Ctrl+Shift+P")
+
+
+def test_items_with_no_menu_mnemonic_have_no_ampersand(window):
+    """User-requested 2026-08-26: NVDA was announcing an "alt+<letter>"
+    hint for several items where that access key either duplicated a real
+    global shortcut's own letter with no added value (Reorder Attributes/
+    Parts, Performance Report - see the test above) or was never wanted at
+    all (UK/US: "the user just changes them with the menu"; Help menu:
+    "no shortcuts needed"). All of these must now have a literal "&"-free
+    label so Qt never registers a mnemonic for them."""
+    no_mnemonic_actions = [
+        window.attribute_order_action,
+        window.part_order_action,
+        window.performance_report_action,
+        window.uk_language_action,
+        window.us_language_action,
+        window.user_guide_action,
+        window.about_action,
+    ]
+    for action in no_mnemonic_actions:
+        assert "&" not in action.text(), f"{action.text()!r} still has a mnemonic"
+
+
+def test_no_menu_mnemonic_collisions(window):
+    """Regression guard for the 2026-08-26 mnemonic-collision sweep (see
+    'Menus and shortcuts.txt'): within every menu, each item's mnemonic
+    must be distinct from its siblings' AND from the menu's own top-level
+    mnemonic. Both collision classes caused real, live NVDA bugs before
+    being fixed (Tools > Tuner both "T"; several sibling pairs sharing a
+    letter, e.g. Playback's old &Mute/&Mixer both "M") - this walks every
+    menu (and one level into any submenu, e.g. Options > Language) rather
+    than hardcoding the fixed set found by hand, so a future menu item
+    that reintroduces either class of collision fails here instead of
+    waiting for another live report."""
+    for top_action in window.menuBar().actions():
+        menu = top_action.menu()
+        if menu is None:
+            continue
+        top_mnemonic = _mnemonic(top_action.text())
+        seen = {}
+        for action in menu.actions():
+            if action.isSeparator():
+                continue
+            mnemonic = _mnemonic(action.text())
+            if mnemonic is not None:
+                assert mnemonic != top_mnemonic, (
+                    f"{action.text()!r} in {top_action.text()!r} repeats "
+                    f"its own menu's mnemonic ({mnemonic})"
+                )
+                assert mnemonic not in seen, (
+                    f"{action.text()!r} and {seen.get(mnemonic)!r} in "
+                    f"{top_action.text()!r} both use mnemonic {mnemonic}"
+                )
+                seen[mnemonic] = action.text()
+
+            submenu = action.menu()
+            if submenu is None:
+                continue
+            sub_seen = {}
+            for sub_action in submenu.actions():
+                if sub_action.isSeparator():
+                    continue
+                sub_mnemonic = _mnemonic(sub_action.text())
+                if sub_mnemonic is None:
+                    continue
+                assert sub_mnemonic not in sub_seen, (
+                    f"{sub_action.text()!r} and {sub_seen.get(sub_mnemonic)!r} "
+                    f"in {action.text()!r} both use mnemonic {sub_mnemonic}"
+                )
+                sub_seen[sub_mnemonic] = sub_action.text()
+
+
 def test_first_and_last_note_actions_are_only_enabled_in_the_note_region(
     window, qtbot, null_synth, minimal_score
 ):
@@ -1127,6 +1262,75 @@ def test_first_and_last_note_actions_are_only_enabled_in_the_note_region(
     _focus(window.region_3)
     assert window.first_measure_action.isEnabled()
     assert window.last_measure_action.isEnabled()
+
+
+def test_preview_action_is_enabled_everywhere_except_the_note_region(
+    window, qtbot, null_synth, minimal_score
+):
+    """The INVERSE of the Home/End gating above: Enter/Return (Playback >
+    Preview) is user-requested (2026-08-26) to work from any region or the
+    status bar - except the Note region, which must keep owning Enter
+    itself (TimelineListWidget.keyPressEvent's jump-to-typed-bar-number/
+    phrase-preview dual behaviour). Enabling the global shortcut there too
+    would let it fire INSTEAD of that region-local handling."""
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+
+    for region in (window.region_1, window.region_2, window.region_4, window.region_5):
+        _focus(region)
+        assert window.preview_action.isEnabled()
+
+    _focus(window.status_bar.first_field())
+    assert window.preview_action.isEnabled()
+
+    _focus(window.region_3)
+    assert not window.preview_action.isEnabled()
+
+
+@pytest.mark.parametrize(
+    "focus_target",
+    ["region_1", "region_2", "region_4", "region_5", "status_bar"],
+)
+def test_enter_starts_and_stops_preview_from_any_region_or_the_status_bar(
+    window, qtbot, null_synth, minimal_score, focus_target
+):
+    """Functional counterpart of the enabled/disabled test above: pressing
+    Enter must actually start Preview, and pressing it again must stop it
+    early - the same toggle audition_phrase() already provides for the
+    Note region's own Enter handling, now reachable globally too."""
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+    target = (
+        window.status_bar.first_field() if focus_target == "status_bar"
+        else getattr(window, focus_target)
+    )
+    _focus(target)
+    assert window.playback.is_preview_active is False
+
+    qtbot.keyClick(window.focusWidget(), Qt.Key.Key_Return)
+    assert window.playback.is_preview_active is True
+
+    qtbot.keyClick(window.focusWidget(), Qt.Key.Key_Return)
+    assert window.playback.is_preview_active is False
+
+
+def test_enter_in_the_note_region_still_only_does_its_own_local_behaviour(
+    window, qtbot, null_synth, many_measures_score
+):
+    """Regression guard: with the global Enter/Return shortcut disabled in
+    the Note region (see test_preview_action_is_enabled_everywhere_except_
+    the_note_region), a typed bar number followed by Enter must still jump
+    to that bar rather than the global action firing and starting a
+    Preview instead."""
+    load_and_wait(window, qtbot, many_measures_score)
+    _show(window, qtbot)
+    _focus(window.region_3)
+
+    qtbot.keyClicks(window.region_3, "2")
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Return)
+
+    assert window.playback.is_preview_active is False
+    assert window._music_data.get_current_slice().measure == 2
 
 
 def test_move_to_notes_action_focuses_region_3_from_any_pane(
@@ -1174,6 +1378,51 @@ def test_move_to_region_actions_focus_their_region_from_any_pane(
         qtbot.keyClick(window.focusWidget(), key)
 
         assert window.focusWidget() is target
+
+
+def test_select_all_action_is_only_enabled_in_the_note_region(
+    window, qtbot, null_synth, minimal_score
+):
+    """Edit > Select All (Ctrl+A) - user-requested review, 2026-08-26: the
+    shortcut was already deliberate (selecting every note at the cursor is
+    what makes Shift+Space's "play them all together" audition meaningful),
+    but it used to be a bare QShortcut with no menu presence and no
+    focus-based gating at all. Now a real QAction, greyed out everywhere
+    except the Note region - same treatment as Move to First/Last Note."""
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+
+    for region in (window.region_1, window.region_2, window.region_4, window.region_5):
+        _focus(region)
+        assert not window.select_all_action.isEnabled()
+
+    _focus(window.status_bar.first_field())
+    assert not window.select_all_action.isEnabled()
+
+    _focus(window.region_3)
+    assert window.select_all_action.isEnabled()
+
+
+def test_ctrl_a_reselects_every_note_in_the_note_region_only(
+    window, qtbot, null_synth, chord_score
+):
+    """Functional counterpart of the enabled/disabled test above: Ctrl+A
+    must still actually reselect every note in the current chord when the
+    Note region has focus, and must be a silent no-op (the disabled
+    QAction's shortcut simply doesn't fire) everywhere else."""
+    load_and_wait(window, qtbot, chord_score)
+    _show(window, qtbot)
+    window.navigate_timeline_right()  # C -> the D+F chord
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Up)  # narrow to just row 0
+    assert [i.row() for i in window.region_3.selectedIndexes()] == [0]
+
+    _focus(window.region_1)
+    qtbot.keyClick(window.focusWidget(), Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+    assert [i.row() for i in window.region_3.selectedIndexes()] == [0]
+
+    _focus(window.region_3)
+    qtbot.keyClick(window.focusWidget(), Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+    assert sorted(i.row() for i in window.region_3.selectedIndexes()) == [0, 1]
 
 
 def test_goto_measure_dialog_shows_with_focus_on_the_edit_field(window, qtbot):
@@ -2022,19 +2271,36 @@ def test_instrument_dialog_does_nothing_with_no_score_loaded(window, qtbot):
     window._show_instrument_dialog()
 
 
-def test_f_s_d_shortcuts_fire_from_any_region(window, qtbot, minimal_score):
+@pytest.mark.parametrize(
+    "focus_target",
+    ["region_1", "region_2", "region_3", "region_4", "region_5", "status_bar"],
+)
+def test_f_s_d_shortcuts_fire_from_any_region_or_the_status_bar(
+    window, qtbot, minimal_score, focus_target
+):
+    """F/S/D (tempo) are WindowShortcut-context QShortcuts (main_window.
+    setup_shortcuts), so - like F6 and the Z/X/C/V/B region jumps - they
+    must fire no matter which widget currently holds real Qt focus,
+    including the status bar (none of Region 1-5's own keyPressEvent
+    overrides ever see a key pressed there). User-requested review
+    (2026-08-26): confirmed already true for every region; the status bar
+    case is added here since it wasn't previously covered by any test."""
     load_and_wait(window, qtbot, minimal_score)
     _show(window, qtbot)
-    _focus(window.region_1)
+    target = (
+        window.status_bar.first_field() if focus_target == "status_bar"
+        else getattr(window, focus_target)
+    )
+    _focus(target)
 
-    qtbot.keyClick(window, Qt.Key.Key_F)
+    qtbot.keyClick(window.focusWidget(), Qt.Key.Key_F)
     assert window._music_data.playback_tempo_offset == 10
 
-    qtbot.keyClick(window, Qt.Key.Key_S)
-    qtbot.keyClick(window, Qt.Key.Key_S)
+    qtbot.keyClick(window.focusWidget(), Qt.Key.Key_S)
+    qtbot.keyClick(window.focusWidget(), Qt.Key.Key_S)
     assert window._music_data.playback_tempo_offset == -10
 
-    qtbot.keyClick(window, Qt.Key.Key_D)
+    qtbot.keyClick(window.focusWidget(), Qt.Key.Key_D)
     assert window._music_data.playback_tempo_offset == 0
 
 
@@ -2710,12 +2976,16 @@ def test_position_announcer_word_plays_on_region_3_navigation(
 def test_playback_menu_shortcuts(window):
     assert window.play_stop_action.shortcut() == QKeySequence(Qt.Key.Key_Space)
     assert window.pause_resume_action.shortcut() == QKeySequence("Ctrl+Space")
-    assert window.preview_action.shortcut().isEmpty(), (
-        "Enter is handled locally by the Note region - a window shortcut here would conflict"
+    assert window.pause_resume_action.text() == "Pa&use", (
+        "user-requested 2026-08-26: this shortcut only ever pauses - "
+        "resuming is Space, not Ctrl+Space again - so 'Resume' in its own "
+        "name was misleading"
     )
-    assert window.preview_action.text().endswith("\tEnter"), (
-        "must still visibly show Enter as a hint, via text rather than a real shortcut"
-    )
+    # Enter/Return is now a real global shortcut (user-requested
+    # 2026-08-26), enabled everywhere except the Note region - see
+    # test_preview_action_is_enabled_everywhere_except_the_note_region.
+    assert window.preview_action.shortcut() == QKeySequence(Qt.Key.Key_Enter)
+    assert QKeySequence(Qt.Key.Key_Return) in window.preview_action.shortcuts()
     assert window.mute_action.shortcut() == QKeySequence(Qt.Key.Key_F8)
     assert window.solo_action.shortcut() == QKeySequence(Qt.Key.Key_F9)
     assert window.unmute_all_action.shortcut() == QKeySequence("Alt+F8")

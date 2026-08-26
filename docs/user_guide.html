@@ -327,9 +327,9 @@ Cue</a></li>
 <li><a href="#jumping-to-a-markings-start-or-end-ctrlhome-ctrlend"
 id="toc-jumping-to-a-markings-start-or-end-ctrlhome-ctrlend">8.3 Jumping
 to a Marking’s Start or End (Ctrl+Home / Ctrl+End)</a></li>
-<li><a href="#the-performance-report-edit-performance-report"
-id="toc-the-performance-report-edit-performance-report">8.4 The
-Performance Report (Edit &gt; Performance Report…)</a></li>
+<li><a href="#the-performance-report-tools-performance-report"
+id="toc-the-performance-report-tools-performance-report">8.4 The
+Performance Report (Tools &gt; Performance Report…)</a></li>
 </ul></li>
 <li><a href="#understanding-note-attributes"
 id="toc-understanding-note-attributes">9. Understanding Note
@@ -775,8 +775,14 @@ Between Notes in a Chord (Up / Down Arrow)</h3>
 <code>Left</code>/<code>Right Arrow</code> selects and plays all of them
 at once. <code>Up</code>/<code>Down Arrow</code> narrows the selection
 down to one note at a time, so you can hear and inspect each note in the
-chord individually. Press <code>Ctrl+A</code> at any point to reselect
-every note at the current position again.</p>
+chord individually. Press <code>Ctrl+A</code>, or choose Edit &gt;
+Select All, at any point to reselect every note at the current position
+again - this is also what makes <code>Shift+Space</code> (section 7.5)
+play the whole chord together rather than just the one note
+<code>Up</code>/<code>Down Arrow</code> last left you on. Select All
+only does anything useful from the Note region, so both the shortcut and
+the Edit &gt; Select All menu item are only active while it has
+focus.</p>
 <h3 id="boundary-sounds-what-the-doh-means">5.6 Boundary Sounds: What
 the “Doh” Means</h3>
 <p>A short, quiet, low note plays whenever you try to move past either
@@ -796,10 +802,9 @@ occurrences of a particular thing - a note attribute like string, fret
 or dynamic, or a performance marking like a repeat start, a Segno, or a
 key signature change - wherever it occurs in the score.</p>
 <ol type="1">
-<li>Press <code>Ctrl+F</code>, or choose Edit &gt; Find… or Navigation
-&gt; Find…, to open the Find dialog. It lists only attributes and
-markings that actually occur somewhere in the currently loaded
-score.</li>
+<li>Press <code>Ctrl+F</code>, or choose Navigation &gt; Find…, to open
+the Find dialog. It lists only attributes and markings that actually
+occur somewhere in the currently loaded score.</li>
 <li>Choose what to find and select OK. Recall Score jumps immediately to
 the nearest occurrence from your current position.</li>
 <li>Press <code>Alt+Right Arrow</code> (Find Next) or
@@ -861,11 +866,13 @@ piano and guitar) sounds both instruments together, not just one.</p>
 Piece (Play / Pause / Stop)</h3>
 <p><code>Space</code> starts playback from your current position, and
 also resumes playback if it’s currently paused. <code>Ctrl+Space</code>
-pauses playback (resume with <code>Space</code>, not
-<code>Ctrl+Space</code> again). Pausing updates the regions to reflect
-wherever playback stopped. Stopping playback - or letting it reach the
-end of the piece naturally - always returns your position to wherever
-playback originally started from, not to the last note heard.</p>
+(Playback &gt; Pause) pauses playback - resume with <code>Space</code>,
+not <code>Ctrl+Space</code> again, which is why the menu item is named
+just “Pause” rather than “Pause/Resume”. Pausing updates the regions to
+reflect wherever playback stopped. Stopping playback - or letting it
+reach the end of the piece naturally - always returns your position to
+wherever playback originally started from, not to the last note
+heard.</p>
 <p>Unlike stepping through the Note region with the arrow keys, real
 playback follows repeat barlines, 1st/2nd-time endings, and Segno/Coda/
 Da Capo/Dal Segno/Fine instructions exactly as notated - so what you
@@ -874,20 +881,27 @@ though those same bars are simply listed in order when you browse them
 with <code>Left</code>/<code>Right Arrow</code>.</p>
 <h3 id="auditioning-a-short-phrase-enter">7.3 Auditioning a Short Phrase
 (Enter)</h3>
-<p>With focus in the Note region and no bar number currently being typed
-(section 5.4), <code>Enter</code> plays a short phrase (Preview)
-starting from your current position and stops on its own once it reaches
-the end of the previewed passage. This is meant for hearing the
-immediate musical context around your position without committing to
+<p><code>Enter</code> (or Playback &gt; Preview) plays a short phrase
+(Preview) starting from your current position and stops on its own once
+it reaches the end of the previewed passage. This is meant for hearing
+the immediate musical context around your position without committing to
 full playback. Pressing <code>Enter</code> again while it’s still
 playing stops it early. Either way, your actual cursor position is left
 untouched. Preview also follows repeat/ending/Segno/Coda markings the
 same way full playback does, whenever they fall inside the previewed
 passage.</p>
+<p>Enter works this way from any region, or the status bar -
+<strong>except</strong> the Note region, where it has a second job: with
+a bar number currently being typed (section 5.4), Enter jumps to that
+bar instead of starting a Preview. Pressing Enter in the Note region
+with nothing typed still starts Preview exactly as everywhere else.</p>
 <p>While focus is in the Note region, <code>Alt+PageUp</code> and
 <code>Alt+PageDown</code> increase or decrease how many bars Preview
 covers by one bar at a time, a quick alternative to opening the Preview
-Settings dialog below just to change the length.</p>
+Settings dialog below just to change the length. Each press speaks the
+new length aloud (“Preview 3 bars” or “Preview 3 measures”, depending on
+your Terminology (UK/US) setting) since there’s otherwise no way to know
+the current value without starting a Preview and counting.</p>
 <h3 id="customising-preview-playback-preview-settings">7.4 Customising
 Preview (Playback &gt; Preview Settings…)</h3>
 <p>Playback &gt; Preview Settings… (<code>Ctrl+Shift+V</code>) controls
@@ -1002,9 +1016,9 @@ physically holding down on your keyboard.</p>
 <h3 id="hands-free-voice-control">7.12 Hands-Free Voice Control</h3>
 <p>For anyone whose hands are busy holding an instrument, spoken
 commands can control playback and navigation instead of the keyboard.
-Toggle it on or off with <code>Ctrl+Shift+Enter</code>, or Options &gt;
-Toggle Voice Control - a distinct tone confirms whether listening
-actually started or stopped.</p>
+Toggle it on or off with <code>Ctrl+Enter</code>, or Options &gt; Toggle
+Voice Control - a distinct tone confirms whether listening actually
+started or stopped.</p>
 <p>Options &gt; Voice Control Settings… (<code>Ctrl+Shift+R</code>)
 chooses which microphone to listen on and how confident a spoken command
 must be before it is acted on (the Confidence Threshold), plus the
@@ -1096,18 +1110,18 @@ to a Marking’s Start or End (Ctrl+Home / Ctrl+End)</h3>
 start; <code>Ctrl+End</code> moves it to the last sounding note of the
 marking’s end bar. Either jump plays the notes at the new position
 immediately, the same as any other timeline move.</p>
-<h3 id="the-performance-report-edit-performance-report">8.4 The
-Performance Report (Edit &gt; Performance Report…)</h3>
-<p>Edit &gt; Performance Report… opens a read-only summary of the whole
-piece, independent of whatever’s currently filtered in Region 2: title,
-composer, key, time signature and tempo (the same details Region 1
-shows), whether the piece has a pickup bar, its total number of bars, a
-note count for each instrument, and a list of every repeat, ending,
-dynamics hairpin, Segno, Coda and Fine mark and Da Capo/Dal Segno
-instruction in the score by bar number. It’s a single flat list you can
-read top to bottom with Up/Down Arrow. Close it with the Close button or
-<code>Escape</code>; focus returns to wherever it was before you opened
-it.</p>
+<h3 id="the-performance-report-tools-performance-report">8.4 The
+Performance Report (Tools &gt; Performance Report…)</h3>
+<p>Tools &gt; Performance Report… (<code>Ctrl+Shift+P</code>) opens a
+read-only summary of the whole piece, independent of whatever’s
+currently filtered in Region 2: title, composer, key, time signature and
+tempo (the same details Region 1 shows), whether the piece has a pickup
+bar, its total number of bars, a note count for each instrument, and a
+list of every repeat, ending, dynamics hairpin, Segno, Coda and Fine
+mark and Da Capo/Dal Segno instruction in the score by bar number. It’s
+a single flat list you can read top to bottom with Up/Down Arrow. Close
+it with the Close button or <code>Escape</code>; focus returns to
+wherever it was before you opened it.</p>
 <h2 id="understanding-note-attributes">9. Understanding Note
 Attributes</h2>
 <h3 id="whats-shown-by-default">9.1 What’s Shown by Default</h3>
@@ -1149,13 +1163,13 @@ scope you pick applies across every voice represented in that selection,
 not only the note you happened to open the menu from.</p>
 <h3 id="changing-the-order-attributes-are-read">9.4 Changing the Order
 Attributes Are Read</h3>
-<p>Options &gt; Reorder Attributes… opens a dialog scoped to whatever
-part, stave or voice is currently selected in Region 2, listing every
-attribute relevant there, whether it’s currently switched on or not. Use
-Move Up (<code>Alt+U</code>) and Move Down (<code>Alt+D</code>) to
-reorder them live. This order is a single setting that applies
-everywhere - both Region 3’s note labels and Region 4’s rows follow it -
-it isn’t a separate ordering per voice.</p>
+<p>Options &gt; Reorder Attributes… (<code>Ctrl+Shift+A</code>) opens a
+dialog scoped to whatever part, stave or voice is currently selected in
+Region 2, listing every attribute relevant there, whether it’s currently
+switched on or not. Use Move Up (<code>Alt+U</code>) and Move Down
+(<code>Alt+D</code>) to reorder them live. This order is a single
+setting that applies everywhere - both Region 3’s note labels and Region
+4’s rows follow it - it isn’t a separate ordering per voice.</p>
 <p>The Add/Remove… button switches the currently selected attribute on
 or off, offering the same voice/stave/part/score scope choice as the
 context menu in section 9.2 - a quicker way to switch on an attribute
@@ -1232,13 +1246,13 @@ embedded-MusicXML chords in section 10.6.</p>
 <p>Because Region 3’s currently-selected row is always the first one
 shown, whichever part is listed first in Region 2 is the one announced
 by default on every move. To hear the lyric first and the chord name
-second, or vice versa, use Options &gt; Reorder Parts…: a dialog listing
-Chords and Lyrics with Move Up (<code>Alt+U</code>) and Move Down
-(<code>Alt+D</code>) buttons, plus OK and Cancel. Moving Lyrics above
-Chords and selecting OK swaps which one is read first from then on,
-without affecting anything already muted or soloed in Region 2. This
-dialog works the same way for any multi-part score, not just an Ultimate
-Guitar import.</p>
+second, or vice versa, use Options &gt; Reorder Parts…
+(<code>Ctrl+Shift+O</code>): a dialog listing Chords and Lyrics with
+Move Up (<code>Alt+U</code>) and Move Down (<code>Alt+D</code>) buttons,
+plus OK and Cancel. Moving Lyrics above Chords and selecting OK swaps
+which one is read first from then on, without affecting anything already
+muted or soloed in Region 2. This dialog works the same way for any
+multi-part score, not just an Ultimate Guitar import.</p>
 <h3 id="saving-and-reopening-an-import">10.4 Saving and Reopening an
 Import</h3>
 <p>An imported song only exists for the current session until you save
@@ -1361,7 +1375,7 @@ reads the same way regardless of which terminology language is
 selected.</p>
 <h3 id="switching-terminology-language">12.2 Switching Terminology
 Language</h3>
-<p>Options &gt; Terminology Language offers UK and US as two mutually
+<p>Options &gt; Terminology (UK/US) offers UK and US as two mutually
 exclusive choices - exactly one is always selected at a time. This is a
 single preference that applies across the whole application, not tied to
 any individual score, so opening a different file mid-session never
@@ -1400,11 +1414,11 @@ score, not just one - they stay as you last set them no matter which
 file you open next.</p>
 <h3 id="clearing-saved-preferences-for-a-score">13.3 Clearing Saved
 Preferences for a Score</h3>
-<p>Edit &gt; Clear Preferences for <code>&lt;filename&gt;</code> deletes
+<p>File &gt; Clear Preferences for <code>&lt;filename&gt;</code> deletes
 just that one file’s saved settings, so it reverts to defaults the next
 time it’s opened. This menu item is disabled when no file is currently
 loaded.</p>
-<p>Edit &gt; Open Local Folder opens the folder on disk where these
+<p>File &gt; Open Local Folder opens the folder on disk where these
 saved settings actually live, in case you ever want to inspect or back
 them up directly (see also section 16.3).</p>
 <h2 id="menu-reference">14. Menu Reference</h2>
@@ -1449,6 +1463,19 @@ import to a file so it can be reopened later (section 10.4). Only
 meaningful when an Ultimate Guitar import is currently loaded.</td>
 </tr>
 <tr>
+<td style="text-align: left;">Open Local Folder</td>
+<td style="text-align: left;">-</td>
+<td style="text-align: left;">Opens the folder where saved preferences
+are stored.</td>
+</tr>
+<tr>
+<td style="text-align: left;">Clear Preferences for
+<code>&lt;filename&gt;</code></td>
+<td style="text-align: left;">-</td>
+<td style="text-align: left;">Deletes the currently loaded file’s saved
+settings. Disabled when no file is loaded.</td>
+</tr>
+<tr>
 <td style="text-align: left;">Exit</td>
 <td style="text-align: left;">-</td>
 <td style="text-align: left;">Closes Recall Score.</td>
@@ -1471,29 +1498,11 @@ meaningful when an Ultimate Guitar import is currently loaded.</td>
 </thead>
 <tbody>
 <tr>
-<td style="text-align: left;">Open Local Folder</td>
-<td style="text-align: left;">-</td>
-<td style="text-align: left;">Opens the folder where saved preferences
-are stored.</td>
-</tr>
-<tr>
-<td style="text-align: left;">Clear Preferences for
-<code>&lt;filename&gt;</code></td>
-<td style="text-align: left;">-</td>
-<td style="text-align: left;">Deletes the currently loaded file’s saved
-settings. Disabled when no file is loaded.</td>
-</tr>
-<tr>
-<td style="text-align: left;">Performance Report…</td>
-<td style="text-align: left;">-</td>
-<td style="text-align: left;">Opens a read-only summary of the whole
-piece (section 8.4).</td>
-</tr>
-<tr>
-<td style="text-align: left;">Find…</td>
-<td style="text-align: left;">Ctrl+F</td>
-<td style="text-align: left;">Opens the Find dialog to jump to
-occurrences of an attribute or performance marking (section 5.7).</td>
+<td style="text-align: left;">Select All</td>
+<td style="text-align: left;">Ctrl+A</td>
+<td style="text-align: left;">Reselects every note at the current
+position (section 5.5), so <code>Shift+Space</code> plays them all
+together. Only enabled while focus is in the Note region.</td>
 </tr>
 <tr>
 <td style="text-align: left;">Instruments…</td>
@@ -1547,8 +1556,7 @@ current bar, to jump to a specific bar number.</td>
 <tr>
 <td style="text-align: left;">Find…</td>
 <td style="text-align: left;">Ctrl+F</td>
-<td style="text-align: left;">Opens the Find dialog (section 5.7).
-Shared with the Edit menu’s own Find… entry - the same action.</td>
+<td style="text-align: left;">Opens the Find dialog (section 5.7).</td>
 </tr>
 <tr>
 <td style="text-align: left;">Find Next</td>
@@ -1616,16 +1624,18 @@ anywhere.</td>
 resumes from pause, or stops it (section 7.2).</td>
 </tr>
 <tr>
-<td style="text-align: left;">Pause/Resume</td>
+<td style="text-align: left;">Pause</td>
 <td style="text-align: left;">Ctrl+Space</td>
-<td style="text-align: left;">Pauses playback; resume with Space
-(section 7.2).</td>
+<td style="text-align: left;">Pauses playback; resume with Space, not
+Ctrl+Space again (section 7.2).</td>
 </tr>
 <tr>
 <td style="text-align: left;">Preview</td>
 <td style="text-align: left;">Enter</td>
 <td style="text-align: left;">Plays a short phrase around the current
-position, from the Note region (section 7.3).</td>
+position, or stops it early if already playing. Works from any region or
+the status bar; in the Note region, Enter also completes a typed bar
+number if one is pending (section 7.3).</td>
 </tr>
 <tr>
 <td style="text-align: left;">Preview Settings…</td>
@@ -1687,7 +1697,7 @@ instrument, the metronome and the position announcer (section 7.9).</td>
 including decimal values (section 7.6).</td>
 </tr>
 <tr>
-<td style="text-align: left;">Terminology Language</td>
+<td style="text-align: left;">Terminology (UK/US)</td>
 <td style="text-align: left;">-</td>
 <td style="text-align: left;">Submenu to choose UK or US wording
 (section 12.2).</td>
@@ -1718,7 +1728,7 @@ volume and pan for live input (section 7.11).</td>
 </tr>
 <tr>
 <td style="text-align: left;">Toggle Voice Control</td>
-<td style="text-align: left;">Ctrl+Shift+Enter</td>
+<td style="text-align: left;">Ctrl+Enter</td>
 <td style="text-align: left;">Turns hands-free voice control on or off
 (section 7.12).</td>
 </tr>
@@ -1730,14 +1740,14 @@ threshold for voice control (section 7.12).</td>
 </tr>
 <tr>
 <td style="text-align: left;">Reorder Attributes…</td>
-<td style="text-align: left;">-</td>
+<td style="text-align: left;">Ctrl+Shift+A</td>
 <td style="text-align: left;">Changes the order note attributes are read
 in, and switches attributes on or off, for the current Region 2 scope
 (section 9.4).</td>
 </tr>
 <tr>
 <td style="text-align: left;">Reorder Parts…</td>
-<td style="text-align: left;">-</td>
+<td style="text-align: left;">Ctrl+Shift+O</td>
 <td style="text-align: left;">Changes the order parts are listed in
 Region 2, and in turn the order their notes are listed in Region 3
 (section 10.3).</td>
@@ -1764,6 +1774,12 @@ Region 2, and in turn the order their notes are listed in Region 3
 <td style="text-align: left;">Ctrl+Shift+T</td>
 <td style="text-align: left;">Opens the microphone-based chromatic tuner
 (section 11).</td>
+</tr>
+<tr>
+<td style="text-align: left;">Performance Report…</td>
+<td style="text-align: left;">Ctrl+Shift+P</td>
+<td style="text-align: left;">Opens a read-only summary of the whole
+piece (section 8.4).</td>
 </tr>
 </tbody>
 </table>
@@ -1876,7 +1892,8 @@ anywhere</td>
 </tr>
 <tr>
 <td style="text-align: left;">Reselect every note at the current
-position <em>(Note region only)</em></td>
+position, so <code>Shift+Space</code> plays them all together <em>(Note
+region only, also Edit &gt; Select All)</em></td>
 <td style="text-align: left;">Ctrl+A</td>
 </tr>
 <tr>
@@ -1928,17 +1945,20 @@ position (also resumes from pause)</td>
 <td style="text-align: left;">Space</td>
 </tr>
 <tr>
-<td style="text-align: left;">Pause playback (resume with Space)</td>
+<td style="text-align: left;">Pause playback (resume with Space, not
+Ctrl+Space again)</td>
 <td style="text-align: left;">Ctrl+Space</td>
 </tr>
 <tr>
 <td style="text-align: left;">Play a preview phrase around the current
-position <em>(Note region, no bar number pending)</em></td>
+position, or stop it early if already playing (works from any region or
+the status bar; in the Note region, only when no bar number is
+pending)</td>
 <td style="text-align: left;">Enter</td>
 </tr>
 <tr>
 <td style="text-align: left;">Increase / decrease Preview’s length by
-one bar <em>(Note region only)</em></td>
+one bar, spoken aloud <em>(Note region only)</em></td>
 <td style="text-align: left;">Alt+PageUp / Alt+PageDown</td>
 </tr>
 <tr>
@@ -1948,12 +1968,12 @@ together</td>
 </tr>
 <tr>
 <td style="text-align: left;">Increase / decrease playback tempo by
-10bpm</td>
+10bpm <em>(works from any region or the status bar)</em></td>
 <td style="text-align: left;">F / S</td>
 </tr>
 <tr>
 <td style="text-align: left;">Reset playback tempo to the score’s own
-tempo</td>
+tempo <em>(works from any region or the status bar)</em></td>
 <td style="text-align: left;">D</td>
 </tr>
 <tr>
@@ -1979,7 +1999,7 @@ dialog</td>
 </tr>
 <tr>
 <td style="text-align: left;">Toggle voice control on/off</td>
-<td style="text-align: left;">Ctrl+Shift+Enter</td>
+<td style="text-align: left;">Ctrl+Enter</td>
 </tr>
 <tr>
 <td style="text-align: left;">Open the Voice Control Settings
@@ -2012,9 +2032,17 @@ dialog</td>
 <td style="text-align: left;">Ctrl+Shift+T</td>
 </tr>
 <tr>
+<td style="text-align: left;">Open the Reorder Attributes dialog</td>
+<td style="text-align: left;">Ctrl+Shift+A</td>
+</tr>
+<tr>
 <td style="text-align: left;">Move the selected attribute up / down
 <em>(Reorder Attributes dialog only)</em></td>
 <td style="text-align: left;">Alt+U / Alt+D</td>
+</tr>
+<tr>
+<td style="text-align: left;">Open the Reorder Parts dialog</td>
+<td style="text-align: left;">Ctrl+Shift+O</td>
 </tr>
 <tr>
 <td style="text-align: left;">Move the selected part up / down
@@ -2028,7 +2056,7 @@ Performance region entry <em>(Performance region only)</em></td>
 </tr>
 <tr>
 <td style="text-align: left;">Open the Performance Report</td>
-<td style="text-align: left;">Edit menu &gt; Performance Report…</td>
+<td style="text-align: left;">Ctrl+Shift+P</td>
 </tr>
 <tr>
 <td style="text-align: left;">Open a note attribute’s context menu
@@ -2059,7 +2087,7 @@ valid MusicXML, or isn’t one of the supported extensions (section 2.3):
 <code>.xml</code>, <code>.musicxml</code> or <code>.mxl</code>.</p>
 <h3 id="where-settings-are-stored-on-disk">16.3 Where Settings Are
 Stored on Disk</h3>
-<p>Edit &gt; Open Local Folder opens the storage location directly. Both
+<p>File &gt; Open Local Folder opens the storage location directly. Both
 your per-score settings (section 13.1) and your shared preferences
 (section 13.2) live under your own Windows user profile, entirely
 separate from where Recall Score itself is installed - reinstalling or

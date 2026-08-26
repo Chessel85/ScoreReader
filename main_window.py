@@ -215,12 +215,12 @@ class MainWindow(QMainWindow):
         - that causes ambiguous-shortcut conflicts between MainWindow
         instances alive in the same QApplication.
 
-        Ctrl+M/Ctrl+P/Ctrl+G/Ctrl+T have no QShortcut here: their menu
-        actions carry the shortcut themselves.
+        Ctrl+M/Ctrl+P/Ctrl+G/Ctrl+T/Ctrl+A have no QShortcut here: their menu
+        actions carry the shortcut themselves. Ctrl+A in particular used to
+        be a bare QShortcut right here with no menu presence at all - it's
+        now Edit > Select All (widgets/menu_builder.py), gated to the Note
+        region only by FocusController the same way Home/End already are.
         """
-        self.select_all_shortcut = QShortcut(QKeySequence("Ctrl+A"), self.region_3)
-        self.select_all_shortcut.activated.connect(self.select_all_region_3)
-
         def window_shortcut(sequence, slot):
             shortcut = QShortcut(QKeySequence(sequence), self)
             shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
@@ -326,6 +326,7 @@ class MainWindow(QMainWindow):
         self.mixer_action = actions.mixer
         self.instruments_action = actions.instruments
         self.key_signature_action = actions.key_signature
+        self.select_all_action = actions.select_all
         self.first_measure_action = actions.first_measure
         self.last_measure_action = actions.last_measure
         self.goto_measure_action = actions.goto_measure
@@ -354,6 +355,7 @@ class MainWindow(QMainWindow):
         # on score load, same reasoning as live_midi_input above.
         self.voice_control_action.setChecked(self.voice_control.settings.enabled)
         self.attribute_order_action = actions.attribute_order
+        self.part_order_action = actions.part_order
         self.tuner_action = actions.tuner
         self.user_guide_action = actions.user_guide
         self.about_action = actions.about
@@ -362,12 +364,15 @@ class MainWindow(QMainWindow):
         self.persistence.refresh_clear_action()
         self.focus.first_measure_action = actions.first_measure
         self.focus.last_measure_action = actions.last_measure
+        self.focus.select_all_action = actions.select_all
         self.focus.update_navigation_actions_enabled()
         self.focus.mute_action = actions.mute
         self.focus.solo_action = actions.solo
         self.focus.unmute_all_action = actions.unmute_all
         self.focus.unsolo_all_action = actions.unsolo_all
         self.focus.update_region2_actions_enabled()
+        self.focus.preview_action = actions.preview
+        self.focus.update_preview_action_enabled()
 
         self.recent_files_menu = actions.recent_files_menu
         self._refresh_recent_files_menu()
@@ -629,14 +634,18 @@ class MainWindow(QMainWindow):
     def increase_preview_bars(self):
         """Alt+PageUp in the Note region. Persisted globally right away,
         like Preview Settings' own OK - a bar count set this way is the
-        same practice habit, not a per-score value."""
+        same practice habit, not a per-score value. Announces the new
+        length aloud (user-requested 2026-08-26) since nothing else does -
+        see RegionPresenter.announce_preview_length."""
         self.playback.adjust_preview_bars(1)
         app_settings.set_preview_settings(self.playback.preview_settings)
+        self.presenter.announce_preview_length(self.playback.preview_settings.preview_bars)
 
     def decrease_preview_bars(self):
         """Alt+PageDown counterpart of increase_preview_bars."""
         self.playback.adjust_preview_bars(-1)
         app_settings.set_preview_settings(self.playback.preview_settings)
+        self.presenter.announce_preview_length(self.playback.preview_settings.preview_bars)
 
     def toggle_mute_current_region2_row(self):
         self.region_2.toggle_mute_current()

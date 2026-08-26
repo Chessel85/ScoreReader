@@ -29,6 +29,7 @@ class Actions:
     performance_report: Optional[QAction] = None
     instruments: Optional[QAction] = None
     key_signature: Optional[QAction] = None
+    select_all: Optional[QAction] = None
     first_measure: Optional[QAction] = None
     last_measure: Optional[QAction] = None
     goto_measure: Optional[QAction] = None
@@ -140,51 +141,46 @@ class MenuBuilder:
         )
         a.exit = self._action("E&xit", self.window.close, QKeySequence.Quit)
 
+        # Moved here from Edit (user-requested review, 2026-08-26): these are
+        # file-level housekeeping (where a file's saved settings live, and
+        # clearing them), not score-editing actions like Find/Instruments/Key
+        # Signature, which stayed in Edit. Mnemonic on &Local, not &Folder -
+        # &Folder would repeat this menu's own &File mnemonic.
+        a.open_folder = self._action(
+            "Open &Local Folder", self.slots._open_score_config_folder,
+            status_tip="Open the folder where saved preferences are stored",
+        )
+        a.clear_preferences = self._action(
+            self.slots._clear_preferences_action_text(),
+            self.slots._clear_current_score_preferences,
+        )
+
         file_menu.addAction(a.open)
         file_menu.addMenu(a.recent_files_menu)
         file_menu.addAction(a.import_from_ultimate_guitar)
         file_menu.addAction(a.save_ug_import)
         file_menu.addSeparator()
+        file_menu.addAction(a.open_folder)
+        file_menu.addAction(a.clear_preferences)
+        file_menu.addSeparator()
         file_menu.addAction(a.exit)
 
     def _edit_menu(self, menu_bar, a: Actions) -> None:
-        # Ref 27: users are meant to stay unaware .rsc files exist; these
-        # entries are a deliberate minimal escape hatch, not a settings UI.
         edit_menu = menu_bar.addMenu("&Edit")
 
-        a.open_folder = self._action(
-            "Open Local &Folder", self.slots._open_score_config_folder,
-            status_tip="Open the folder where saved preferences are stored",
+        # Ref 6/13: makes the existing Ctrl+A behaviour discoverable and
+        # gives it a real, greyable QAction - previously a bare QShortcut
+        # with no menu presence at all. Deliberately only enabled with the
+        # Note region focused (FocusController.update_navigation_actions_
+        # enabled, same "greyed out elsewhere" treatment as Move to First/
+        # Last Note): selecting every note at the cursor is what makes
+        # Shift+Space's "play them all together" audition meaningful, and
+        # it has no sensible target from any other region.
+        a.select_all = self._action(
+            "Select &All", self.slots.select_all_region_3, QKeySequence("Ctrl+A"),
+            status_tip="Select every note at the current position, so Shift+Space plays them all together",
         )
-        edit_menu.addAction(a.open_folder)
-
-        a.clear_preferences = self._action(
-            self.slots._clear_preferences_action_text(),
-            self.slots._clear_current_score_preferences,
-        )
-        edit_menu.addAction(a.clear_preferences)
-
-        # Ref 29: read-only whole-score summary - see
-        # widgets/performance_report_dialog.py.
-        a.performance_report = self._action(
-            "Performance &Report...", self.slots._show_performance_report_dialog
-        )
-        edit_menu.addAction(a.performance_report)
-
-        # Find (attributes like "articulation"/"string", and performance
-        # markings like repeat/ending/hairpin/Segno/Coda/D.C./D.S./key/
-        # time-sig/tempo changes): pick a target, jump to occurrences of it.
-        # Built here (not in _navigation_menu, which runs after this) so
-        # the SAME QAction - not a second one sharing the Ctrl+F shortcut,
-        # which would be a real Qt ambiguous-shortcut conflict - can be
-        # added to both the Edit and Navigation menus (user-requested: Edit
-        # is where Performance Report/Instruments/Key Signature already
-        # live, Navigation is where the other jump-to-position actions
-        # live). See _navigation_menu for Find Next/Find Previous.
-        a.find = self._action(
-            "Fin&d...", self.slots._show_find_dialog, QKeySequence("Ctrl+F"),
-        )
-        edit_menu.addAction(a.find)
+        edit_menu.addAction(a.select_all)
 
         # S5: per-part display-name/instrument override, for both MusicXML
         # and MIDI scores.
@@ -227,15 +223,33 @@ class MenuBuilder:
             goto_measure_action_text(self.uk_terms),
             self.slots._show_goto_measure_dialog, QKeySequence("Ctrl+G"),
         )
-        # a.find itself is built in _edit_menu (shared between both menus -
-        # see its own comment there). Find Next/Previous stay Navigation-
-        # only - once a target is armed, Alt+Right/Alt+Left (global - work
-        # regardless of which region has focus, like the tempo F/S/D
-        # shortcuts) cycle further occurrences without reopening the
-        # dialog. Alt+Page Up/Down was ruled out - already bound to the
-        # Note region's preview-length adjustment.
+        # Find (attributes like "articulation"/"string", and performance
+        # markings like repeat/ending/hairpin/Segno/Coda/D.C./D.S./key/
+        # time-sig/tempo changes): pick a target, jump to occurrences of it.
+        # Lives ONLY here, right before Find Next/Previous - moved out of
+        # Edit in this review (user-requested 2026-08-26: "weird having
+        # find in the edit menu and the find prev and find next in
+        # navigation"). This also fixes a real bug: the same QAction added
+        # to TWO different QMenus (its old home in Edit, plus here) left
+        # NVDA silently announcing nothing at all when arrowed onto in
+        # whichever menu built second - Qt's accessibility bridge doesn't
+        # reliably expose one QAction's name across two separate QMenu
+        # parents. A QAction now has exactly one menu home.
+        a.find = self._action(
+            "Fin&d...", self.slots._show_find_dialog, QKeySequence("Ctrl+F"),
+        )
+
+        # Find Next/Previous: once a target is armed, Alt+Right/Alt+Left
+        # (global - work regardless of which region has focus, like the
+        # tempo F/S/D shortcuts) cycle further occurrences without
+        # reopening the dialog. Alt+Page Up/Down was ruled out - already
+        # bound to the Note region's preview-length adjustment. Mnemonic
+        # on N&ext, not &Next - &Next would repeat this menu's own
+        # &Navigation mnemonic (the same class of bug once reported for
+        # Tools > &Tuner, both T). Not &X either ("Find Ne&xt") - X
+        # already belongs to Move to Parts List below in this same menu.
         a.find_next = self._action(
-            "Find &Next", self.slots.find_next, QKeySequence("Alt+Right"),
+            "Find N&ext", self.slots.find_next, QKeySequence("Alt+Right"),
         )
         a.find_previous = self._action(
             "Find Previo&us", self.slots.find_previous, QKeySequence("Alt+Left"),
@@ -282,13 +296,11 @@ class MenuBuilder:
         navigation_menu.addAction(a.move_to_performance)
 
     def _playback_menu(self, menu_bar, a: Actions) -> None:
-        """Consolidates the existing transport controls plus the new
-        mute/solo actions and the relocated Mixer entry (previously in
-        Edit). No functional change to Play/Stop, Pause/Resume, Preview or
-        Mixer - just a single place to find them and, for Play/Stop and
-        Pause/Resume, a QAction carrying the shortcut instead of a bare
-        QShortcut in main_window.py (same pattern Ctrl+M/Ctrl+P/Ctrl+G/
-        Ctrl+T already use), so Space/Ctrl+Space show up here too.
+        """The existing transport controls plus mute/solo and Mixer, all in
+        one menu - Play/Stop and Pause use a QAction carrying the shortcut
+        instead of a bare QShortcut in main_window.py (same pattern
+        Ctrl+M/Ctrl+P/Ctrl+G/Ctrl+T already use), so Space/Ctrl+Space show
+        up here too.
 
         Mute/Solo/Unmute All/Unsolo All act on Region 2's focused row -
         FocusController greys all four out unless Region 2 has focus, the
@@ -297,35 +309,49 @@ class MenuBuilder:
         """
         playback_menu = menu_bar.addMenu("&Playback")
 
+        # Mnemonic on St&op, not &Play/Stop - the latter would repeat this
+        # menu's own &Playback mnemonic (the same class of bug once reported
+        # for Tools > &Tuner, both T).
         a.play_stop = self._action(
-            "&Play/Stop", self.slots.toggle_play_stop, QKeySequence(Qt.Key.Key_Space),
+            "Play/St&op", self.slots.toggle_play_stop, QKeySequence(Qt.Key.Key_Space),
         )
         playback_menu.addAction(a.play_stop)
 
+        # Text shortened from "Pause/Resume" to plain "Pause" (user-requested
+        # 2026-08-26): Ctrl+Space only ever pauses - resuming is Space, the
+        # same key Play/Stop already uses - so "Resume" in this item's own
+        # name was misleading about what THIS shortcut does.
         a.pause_resume = self._action(
-            "Pa&use/Resume", self.slots.toggle_pause_resume, QKeySequence("Ctrl+Space"),
+            "Pa&use", self.slots.toggle_pause_resume, QKeySequence("Ctrl+Space"),
         )
         playback_menu.addAction(a.pause_resume)
 
-        # No QKeySequence/setShortcut: Enter is already handled inside the
-        # Note region's own keyPressEvent with dual behaviour (jump to a
-        # typed measure number vs. phrase preview) - a real window-level
-        # shortcut here would be ambiguous with that region-local handling.
-        # The embedded "\tEnter" is Qt's classic trick for showing a
-        # right-aligned shortcut-style hint in the menu text WITHOUT
-        # registering an actual QShortcut, so the item still visibly says
-        # "Enter" alongside every other item's real shortcut without the
-        # conflict a bound one would cause.
+        # Enter/Return now a real global shortcut (user-requested
+        # 2026-08-26: "Enter should do the preview from anywhere - any
+        # region or the status bar"), enabled everywhere EXCEPT the Note
+        # region - FocusController.update_preview_action_enabled disables
+        # it there so it never fires instead of TimelineListWidget's own
+        # keyPressEvent, which still owns Enter's dual behaviour (jump to a
+        # typed bar number if one is pending, else the same phrase preview
+        # toggle this action calls). Two shortcuts, not one - same numpad-
+        # Enter-vs-main-Return distinction already documented for Voice
+        # Control's Ctrl+Enter, with Key_Enter listed first so the menu
+        # displays "Enter" rather than "Return".
         a.preview = self._action(
-            "Pre&view\tEnter", self.slots.audition_phrase,
+            "Pre&view", self.slots.audition_phrase,
             status_tip=(
-                "Note region: Enter previews the current phrase; "
-                "Alt+PageUp/PageDown changes the preview length by one bar"
+                "Previews the current phrase, or stops it early if already "
+                "playing; in the Note region, also completes a typed bar "
+                "number if one is pending. Alt+PageUp/PageDown changes the "
+                "preview length by one bar"
             ),
         )
+        a.preview.setShortcuts([
+            QKeySequence(Qt.Key.Key_Enter), QKeySequence(Qt.Key.Key_Return),
+        ])
         playback_menu.addAction(a.preview)
 
-        # Mnemonic on T: P, u, v, M, S, A and l are already taken in this
+        # Mnemonic on T: O, u, v, M, S, A and l are already taken in this
         # menu. Ctrl+Shift+V alongside the other dialogs' Ctrl+Shift+I/K/X.
         a.preview_settings = self._action(
             "Preview Se&ttings...", self.slots._show_preview_settings_dialog,
@@ -361,9 +387,10 @@ class MenuBuilder:
         playback_menu.addSeparator()
 
         # Wishlist #4: volume/pan per instrument plus the click, position
-        # announcer and performance-cue channels.
+        # announcer and performance-cue channels. Mnemonic on Mi&xer, not
+        # &Mixer - &Mixer would collide with &Mute above in this same menu.
         a.mixer = self._action(
-            "&Mixer...", self.slots._show_mixer_dialog, "Ctrl+Shift+X",
+            "Mi&xer...", self.slots._show_mixer_dialog, "Ctrl+Shift+X",
             status_tip="Set volume and pan for each instrument and sound",
         )
         playback_menu.addAction(a.mixer)
@@ -372,26 +399,38 @@ class MenuBuilder:
         options_menu = menu_bar.addMenu("&Options")
 
         # Ctrl+T, same scope as Ctrl+G: fires anywhere in the window, not
-        # only when a particular region has focus.
+        # only when a particular region has focus. Mnemonic on Of&fset, not
+        # &Tempo Offset - freed up "T" for the Terminology submenu below,
+        # which reads better with its own first letter as its mnemonic.
         a.tempo_offset = self._action(
-            "&Tempo Offset...", self.slots._show_tempo_offset_dialog,
+            "Tempo Of&fset...", self.slots._show_tempo_offset_dialog,
             QKeySequence("Ctrl+T"),
         )
         options_menu.addAction(a.tempo_offset)
 
         # Two mutually exclusive checkable items rather than one toggle:
         # the user wants "at least one ticked" always visible, which a
-        # single checkable action can't convey as clearly.
-        terminology_menu = options_menu.addMenu("&Terminology Language")
+        # single checkable action can't convey as clearly. "Terminology
+        # (UK/US)" (user-requested 2026-08-26, reverting an earlier
+        # "Language (UK/US)" rename) - mnemonic freed up by moving Tempo
+        # Offset's own mnemonic above, rather than shortening this menu's
+        # own wording.
+        terminology_menu = options_menu.addMenu("&Terminology (UK/US)")
         a.terminology_group = QActionGroup(self.window)
         a.terminology_group.setExclusive(True)
 
-        a.uk_language = self._action("&UK", self.slots._select_uk_terms, checkable=True)
+        # No mnemonics at all (user-requested 2026-08-26): NVDA announces a
+        # QAction's "&"-mnemonic as its own "alt+<letter>" keyboard-shortcut
+        # hint even inside a two-item submenu reached purely by arrowing in
+        # - not a real global shortcut, just noise here, since switching
+        # terminology is something the user picks from this menu directly
+        # rather than needing a quick-jump letter for.
+        a.uk_language = self._action("UK", self.slots._select_uk_terms, checkable=True)
         a.uk_language.setChecked(self.uk_terms)
         a.terminology_group.addAction(a.uk_language)
         terminology_menu.addAction(a.uk_language)
 
-        a.us_language = self._action("&US", self.slots._select_us_terms, checkable=True)
+        a.us_language = self._action("US", self.slots._select_us_terms, checkable=True)
         a.us_language.setChecked(not self.uk_terms)
         a.terminology_group.addAction(a.us_language)
         terminology_menu.addAction(a.us_language)
@@ -418,8 +457,10 @@ class MenuBuilder:
         # single-Ctrl+letter family metronome/announcer already use),
         # Ctrl+Shift+L for the settings dialog (matching the Ctrl+Shift+
         # letter family Instruments/Key Signature/Mixer already use).
+        # Mnemonic on &Input, not &MIDI - &MIDI would collide with Toggle
+        # &Metronome above in this same menu.
         a.live_midi_input = self._action(
-            "Toggle Live &MIDI Input", self.slots.toggle_live_midi_input,
+            "Toggle Live MIDI &Input", self.slots.toggle_live_midi_input,
             QKeySequence("Ctrl+L"), checkable=True,
             status_tip="Play a connected MIDI keyboard live through Recall Score",
         )
@@ -436,59 +477,74 @@ class MenuBuilder:
         # "forward", "next bar", ...) call the same NavigationController/
         # PlaybackController methods a keyboard shortcut would, for a
         # musician whose hands are already busy holding their instrument.
-        # Ctrl+Shift+Return per the Product Definition Document's own stated
-        # shortcut (not Ctrl+V - the single-Ctrl+letter family metronome/
-        # announcer/live MIDI input already use - Return has no other
-        # window-level binding to collide with here).
+        # Ctrl+Enter (user-requested 2026-08-26, replacing the original
+        # Ctrl+Shift+Enter/Return): the other three background-feature
+        # toggles in this menu (Metronome, Position Announcer, Live MIDI
+        # Input) are all a single Ctrl+<key>, with Ctrl+Shift+<letter>
+        # reserved for opening a dialog - the old Ctrl+Shift+Enter broke
+        # that pattern by using the dialog-shortcut modifier combination for
+        # a toggle instead. Ctrl+Enter fits the single-Ctrl toggle family
+        # while still being distinct from every dialog's Ctrl+Shift+<letter>
+        # and every other single-Ctrl+<letter> binding.
         a.voice_control = self._action(
             "Toggle Voice &Control", self.slots.toggle_voice_control,
             checkable=True,
             status_tip="Control playback and navigation hands-free by voice",
         )
-        # Two shortcuts, not one: QKeySequence("Ctrl+Shift+Enter") parses to
-        # the NUMPAD Enter key (Qt::Key_Enter), not the main keyboard Return
-        # key the Product Definition Document actually specifies - reported,
-        # live-tested (NVDA reads a plain "Ctrl+Shift+Return" shortcut as
+        # Two shortcuts, not one: QKeySequence("Ctrl+Enter") parses to the
+        # NUMPAD Enter key (Qt::Key_Enter), not the main keyboard Return key
+        # - the same numpad-vs-main-keyboard distinction previously reported
+        # for Ctrl+Shift+Enter (NVDA reads a plain "Ctrl+Return" shortcut as
         # "Return", not "Enter", which doesn't match what's printed on a
         # real keyboard). setShortcuts() with Enter listed FIRST makes that
         # the primary/displayed shortcut (confirmed: .shortcut() then
-        # reports "Ctrl+Shift+Enter") while the main Return key - listed
-        # second - still triggers the action too, so both the real keyboard
-        # key and the numpad Enter key work.
+        # reports "Ctrl+Enter") while the main Return key - listed second -
+        # still triggers the action too, so both the real keyboard key and
+        # the numpad Enter key work.
         a.voice_control.setShortcuts([
-            QKeySequence("Ctrl+Shift+Enter"), QKeySequence("Ctrl+Shift+Return"),
+            QKeySequence("Ctrl+Enter"), QKeySequence("Ctrl+Return"),
         ])
         options_menu.addAction(a.voice_control)
 
-        # GOTCHA, reported live: this item's own mnemonic ("&Settings" - E)
-        # collided with the top-level &Edit menu's mnemonic, so Alt+E while
-        # Options was open activated Edit instead of this item - a plain
-        # letter mnemonic isn't safe from top-level menu mnemonics, not just
-        # other items in the same menu. Given a fixed Ctrl+Shift+R shortcut
-        # instead of hunting for another free mnemonic letter - the user's
-        # own call, pending a later full review of this app's shortcut
-        # scoping (mnemonics vs. window-level shortcuts) generally.
+        # Mnemonic on &Voice, not &Settings - &Settings collided with
+        # Live MIDI Input &Settings above in this same menu (an earlier
+        # version of this mnemonic, on a different letter, had also
+        # collided with the top-level &Edit menu's own mnemonic - each fix
+        # so far has moved the ampersand without checking the whole menu,
+        # which is what let it drift into a new collision each time).
         a.voice_control_settings = self._action(
-            "Voice Control &Settings...", self.slots._show_voice_control_dialog,
+            "&Voice Control Settings...", self.slots._show_voice_control_dialog,
             "Ctrl+Shift+R",
             status_tip="Choose the microphone and confidence threshold for voice control",
         )
         options_menu.addAction(a.voice_control_settings)
 
         # Ref 15 AC4: the ordering half of the attribute-display system;
-        # add/remove is Region 4's right-click menu.
+        # add/remove is Region 4's right-click menu. Given a real global
+        # Ctrl+Shift+A shortcut and NO mnemonic (user-requested
+        # 2026-08-26: these open a dialog like Instruments/Key Signature/
+        # Mixer/etc, which all get a Ctrl+Shift+<letter> shortcut, but this
+        # one never had - its only "shortcut" was an Alt+A mnemonic that
+        # only worked with the Options menu already open, which NVDA
+        # nonetheless announced as if it were a real global "alt+a").
+        # Removing the "&" stops that misleading announcement; the visible
+        # "Ctrl+Shift+A" Qt now appends automatically is the real thing.
         a.attribute_order = self._action(
-            "Reorder &Attributes...", self.slots._show_attribute_order_dialog
+            "Reorder Attributes...", self.slots._show_attribute_order_dialog,
+            QKeySequence("Ctrl+Shift+A"),
         )
         options_menu.addAction(a.attribute_order)
 
         # Reported: NVDA reads whichever part's row Region 3 lands on
         # first (always row 0) after every navigation step - this
-        # controls that order directly. Mnemonic on R, not P (Reorder
-        # &Attributes puts it on the noun, but P already belongs to
-        # Toggle &Position Announcer above in this same menu).
+        # controls that order directly. Same real-global-shortcut-instead-
+        # of-a-misleading-mnemonic treatment as Reorder Attributes above;
+        # Ctrl+Shift+P was already Toggle Position Announcer's single-Ctrl
+        # binding, a different modifier combination, so Ctrl+Shift+O is
+        # used here instead to avoid any risk of confusing the two.
         a.part_order = self._action(
-            "&Reorder Parts...", self.slots._show_part_order_dialog
+            "Reorder Parts...", self.slots._show_part_order_dialog,
+            QKeySequence("Ctrl+Shift+O"),
         )
         options_menu.addAction(a.part_order)
 
@@ -498,20 +554,41 @@ class MenuBuilder:
         # Ctrl+Shift+T, matching every other Options/Edit dialog's own
         # Ctrl+Shift+<letter> shortcut (Mixer/X, Instruments/I, Key
         # Signature/K, Live MIDI Input/L, Voice Control/R) - reported live:
-        # with no real QAction shortcut, the item's own "&Tuner..." mnemonic
-        # (T) collided with the parent "&Tools" menu's own mnemonic (also
-        # T), so NVDA reading "Alt+T" against the item just opened the Tools
-        # menu instead of the dialog.
+        # with no real QAction shortcut, the item's original "&Tuner..."
+        # mnemonic (T) collided with the parent "&Tools" menu's own
+        # mnemonic (also T), so NVDA reading "Alt+T" against the item just
+        # opened the Tools menu instead of the dialog. Worked around at the
+        # time by adding the Ctrl+Shift+T shortcut above rather than fixing
+        # the mnemonic itself; now actually fixed below (T&uner..., U) as
+        # part of a full mnemonic-collision sweep (2026-08-26).
         tools_menu = menu_bar.addMenu("&Tools")
         a.tuner = self._action(
-            "&Tuner...", self.slots._show_tuner_dialog, "Ctrl+Shift+T",
+            "T&uner...", self.slots._show_tuner_dialog, "Ctrl+Shift+T",
             status_tip="Tune a guitar, bass, violin or other stringed instrument by microphone",
         )
         tools_menu.addAction(a.tuner)
 
+        # Moved here from Edit (user-requested review, 2026-08-26): a
+        # read-only whole-score summary - see
+        # widgets/performance_report_dialog.py. Given a real global
+        # Ctrl+Shift+P shortcut and no mnemonic, same "an Alt-only mnemonic
+        # that NVDA announces as if it were a real global shortcut, for an
+        # item that opens a dialog like every other Ctrl+Shift+<letter>
+        # item, is misleading" reasoning as Reorder Attributes/Parts above.
+        tools_menu.addSeparator()
+        a.performance_report = self._action(
+            "Performance Report...", self.slots._show_performance_report_dialog,
+            QKeySequence("Ctrl+Shift+P"),
+        )
+        tools_menu.addAction(a.performance_report)
+
     def _help_menu(self, menu_bar, a: Actions) -> None:
+        # No mnemonics on either item (user-requested 2026-08-26: "false
+        # shortcuts being announced here, no shortcuts needed") - neither
+        # opens a dialog worth a global shortcut, so an Alt-only mnemonic
+        # here was pure noise for NVDA to announce.
         help_menu = menu_bar.addMenu("&Help")
-        a.user_guide = self._action("&User Guide...", self.slots._show_user_guide)
+        a.user_guide = self._action("User Guide...", self.slots._show_user_guide)
         help_menu.addAction(a.user_guide)
-        a.about = self._action("&About Recall Score...", self.slots._show_about_dialog)
+        a.about = self._action("About Recall Score...", self.slots._show_about_dialog)
         help_menu.addAction(a.about)

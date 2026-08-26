@@ -140,7 +140,7 @@ class VoiceControlController(QObject):
         numbers - see audio/voice_commands.go_to_bar_phrases."""
         self._manager.rebuild_grammar(total_measures)
 
-    # --- menu toggle (Ctrl+Shift+Return) ------------------------------
+    # --- menu toggle (Ctrl+Return) --------------------------------------
 
     def toggle_enabled(self) -> bool:
         """Flips enabled, starts/stops listening to match, persists, and

@@ -331,8 +331,13 @@ if you'd rather use a menu than type directly into the Note region.
 When several notes sound together at one position, `Left`/`Right Arrow`
 selects and plays all of them at once. `Up`/`Down Arrow` narrows the
 selection down to one note at a time, so you can hear and inspect each
-note in the chord individually. Press `Ctrl+A` at any point to reselect
-every note at the current position again.
+note in the chord individually. Press `Ctrl+A`, or choose Edit > Select
+All, at any point to reselect every note at the current position again -
+this is also what makes `Shift+Space` (section 7.5) play the whole chord
+together rather than just the one note `Up`/`Down Arrow` last left you
+on. Select All only does anything useful from the Note region, so both
+the shortcut and the Edit > Select All menu item are only active while
+it has focus.
 
 ### 5.6 Boundary Sounds: What the "Doh" Means
 
@@ -353,9 +358,9 @@ occurrences of a particular thing - a note attribute like string, fret
 or dynamic, or a performance marking like a repeat start, a Segno, or a
 key signature change - wherever it occurs in the score.
 
-1. Press `Ctrl+F`, or choose Edit > Find... or Navigation > Find..., to
-   open the Find dialog. It lists only attributes and markings that
-   actually occur somewhere in the currently loaded score.
+1. Press `Ctrl+F`, or choose Navigation > Find..., to open the Find
+   dialog. It lists only attributes and markings that actually occur
+   somewhere in the currently loaded score.
 2. Choose what to find and select OK. Recall Score jumps immediately to
    the nearest occurrence from your current position.
 3. Press `Alt+Right Arrow` (Find Next) or `Alt+Left Arrow` (Find
@@ -421,11 +426,13 @@ part's own instrument sound from the file. A chord spanning two parts
 ### 7.2 Playing the Whole Piece (Play / Pause / Stop)
 
 `Space` starts playback from your current position, and also resumes
-playback if it's currently paused. `Ctrl+Space` pauses playback (resume
-with `Space`, not `Ctrl+Space` again). Pausing updates the regions to
-reflect wherever playback stopped. Stopping playback - or letting it
-reach the end of the piece naturally - always returns your position to
-wherever playback originally started from, not to the last note heard.
+playback if it's currently paused. `Ctrl+Space` (Playback > Pause) pauses
+playback - resume with `Space`, not `Ctrl+Space` again, which is why the
+menu item is named just "Pause" rather than "Pause/Resume". Pausing
+updates the regions to reflect wherever playback stopped. Stopping
+playback - or letting it reach the end of the piece naturally - always
+returns your position to wherever playback originally started from, not
+to the last note heard.
 
 Unlike stepping through the Note region with the arrow keys, real
 playback follows repeat barlines, 1st/2nd-time endings, and Segno/Coda/
@@ -436,20 +443,28 @@ with `Left`/`Right Arrow`.
 
 ### 7.3 Auditioning a Short Phrase (Enter)
 
-With focus in the Note region and no bar number currently being typed
-(section 5.4), `Enter` plays a short phrase (Preview) starting from your
-current position and stops on its own once it reaches the end of the
-previewed passage. This is meant for hearing the immediate musical
-context around your position without committing to full playback.
-Pressing `Enter` again while it's still playing stops it early. Either
-way, your actual cursor position is left untouched. Preview also follows
-repeat/ending/Segno/Coda markings the same way full playback does,
-whenever they fall inside the previewed passage.
+`Enter` (or Playback > Preview) plays a short phrase (Preview) starting
+from your current position and stops on its own once it reaches the end
+of the previewed passage. This is meant for hearing the immediate
+musical context around your position without committing to full
+playback. Pressing `Enter` again while it's still playing stops it
+early. Either way, your actual cursor position is left untouched.
+Preview also follows repeat/ending/Segno/Coda markings the same way full
+playback does, whenever they fall inside the previewed passage.
+
+Enter works this way from any region, or the status bar - **except** the
+Note region, where it has a second job: with a bar number currently
+being typed (section 5.4), Enter jumps to that bar instead of starting a
+Preview. Pressing Enter in the Note region with nothing typed still
+starts Preview exactly as everywhere else.
 
 While focus is in the Note region, `Alt+PageUp` and `Alt+PageDown`
 increase or decrease how many bars Preview covers by one bar at a time,
 a quick alternative to opening the Preview Settings dialog below just to
-change the length.
+change the length. Each press speaks the new length aloud ("Preview 3
+bars" or "Preview 3 measures", depending on your Terminology (UK/US)
+setting) since there's otherwise no way to know the current value
+without starting a Preview and counting.
 
 ### 7.4 Customising Preview (Playback > Preview Settings...)
 
@@ -574,7 +589,7 @@ note you're still physically holding down on your keyboard.
 
 For anyone whose hands are busy holding an instrument, spoken commands can
 control playback and navigation instead of the keyboard. Toggle it on or
-off with `Ctrl+Shift+Enter`, or Options > Toggle Voice Control - a
+off with `Ctrl+Enter`, or Options > Toggle Voice Control - a
 distinct tone confirms whether listening actually started or stopped.
 
 Options > Voice Control Settings... (`Ctrl+Shift+R`) chooses which
@@ -682,9 +697,9 @@ timeline position to that marking's start; `Ctrl+End` moves it to the
 last sounding note of the marking's end bar. Either jump plays the notes
 at the new position immediately, the same as any other timeline move.
 
-### 8.4 The Performance Report (Edit > Performance Report...)
+### 8.4 The Performance Report (Tools > Performance Report...)
 
-Edit > Performance Report... opens a read-only summary of the whole
+Tools > Performance Report... (`Ctrl+Shift+P`) opens a read-only summary of the whole
 piece, independent of whatever's currently filtered in Region 2: title,
 composer, key, time signature and tempo (the same details Region 1
 shows), whether the piece has a pickup bar, its total number of bars, a
@@ -738,7 +753,7 @@ only the note you happened to open the menu from.
 
 ### 9.4 Changing the Order Attributes Are Read
 
-Options > Reorder Attributes... opens a dialog scoped to whatever part,
+Options > Reorder Attributes... (`Ctrl+Shift+A`) opens a dialog scoped to whatever part,
 stave or voice is currently selected in Region 2, listing every
 attribute relevant there, whether it's currently switched on or not. Use
 Move Up (`Alt+U`) and Move Down (`Alt+D`) to reorder them live. This
@@ -836,7 +851,7 @@ chords in section 10.6.
 Because Region 3's currently-selected row is always the first one shown,
 whichever part is listed first in Region 2 is the one announced by
 default on every move. To hear the lyric first and the chord name
-second, or vice versa, use Options > Reorder Parts...: a dialog listing
+second, or vice versa, use Options > Reorder Parts... (`Ctrl+Shift+O`): a dialog listing
 Chords and Lyrics with Move Up (`Alt+U`) and Move Down (`Alt+D`) buttons,
 plus OK and Cancel. Moving Lyrics above Chords and selecting OK swaps
 which one is read first from then on, without affecting anything already
@@ -979,7 +994,7 @@ the same way regardless of which terminology language is selected.
 
 ### 12.2 Switching Terminology Language
 
-Options > Terminology Language offers UK and US as two mutually
+Options > Terminology (UK/US) offers UK and US as two mutually
 exclusive choices - exactly one is always selected at a time. This is a
 single preference that applies across the whole application, not tied to
 any individual score, so opening a different file mid-session never
@@ -1020,11 +1035,11 @@ file you open next.
 
 ### 13.3 Clearing Saved Preferences for a Score
 
-Edit > Clear Preferences for `<filename>` deletes just that one file's
+File > Clear Preferences for `<filename>` deletes just that one file's
 saved settings, so it reverts to defaults the next time it's opened.
 This menu item is disabled when no file is currently loaded.
 
-Edit > Open Local Folder opens the folder on disk where these saved
+File > Open Local Folder opens the folder on disk where these saved
 settings actually live, in case you ever want to inspect or back them up
 directly (see also section 16.3).
 
@@ -1038,16 +1053,15 @@ directly (see also section 16.3).
 | Recent Files | - | Submenu listing the last 8 files you've opened, most recent first, for quick reopening. |
 | Import from Ultimate Guitar... | - | Imports chords and lyrics from an Ultimate Guitar tab page URL (section 10). |
 | Save Ultimate Guitar Import As... | - | Saves the currently loaded Ultimate Guitar import to a file so it can be reopened later (section 10.4). Only meaningful when an Ultimate Guitar import is currently loaded. |
+| Open Local Folder | - | Opens the folder where saved preferences are stored. |
+| Clear Preferences for `<filename>` | - | Deletes the currently loaded file's saved settings. Disabled when no file is loaded. |
 | Exit | - | Closes Recall Score. |
 
 ### 14.2 Edit Menu
 
 | Item | Shortcut | What it does |
 | :--- | :--- | :--- |
-| Open Local Folder | - | Opens the folder where saved preferences are stored. |
-| Clear Preferences for `<filename>` | - | Deletes the currently loaded file's saved settings. Disabled when no file is loaded. |
-| Performance Report... | - | Opens a read-only summary of the whole piece (section 8.4). |
-| Find... | Ctrl+F | Opens the Find dialog to jump to occurrences of an attribute or performance marking (section 5.7). |
+| Select All | Ctrl+A | Reselects every note at the current position (section 5.5), so `Shift+Space` plays them all together. Only enabled while focus is in the Note region. |
 | Instruments... | Ctrl+Shift+I | Renames a part, changes its instrument, or edits individual percussion sounds (section 7.10). |
 | Key Signature... | Ctrl+Shift+K | Overrides the whole piece's key signature - a single choice from a list of all major and minor keys, or "use the file's own key". Mainly for MIDI files, which often carry no key signature at all. |
 
@@ -1058,7 +1072,7 @@ directly (see also section 16.3).
 | Move to First Note | Home | Jumps to the first active note. Only enabled while focus is already in the Note region. |
 | Move to Last Note | End | Jumps to the last active note. Only enabled while focus is already in the Note region. |
 | Go to Measure... | Ctrl+G | Opens a dialog, pre-filled with the current bar, to jump to a specific bar number. |
-| Find... | Ctrl+F | Opens the Find dialog (section 5.7). Shared with the Edit menu's own Find... entry - the same action. |
+| Find... | Ctrl+F | Opens the Find dialog (section 5.7). |
 | Find Next | Alt+Right Arrow | Jumps to the next occurrence of whatever Find last armed (section 5.7). |
 | Find Previous | Alt+Left Arrow | Jumps to the previous occurrence of whatever Find last armed (section 5.7). |
 | Move to Info | Z | Jumps focus to the Score Info (metadata) region from anywhere. |
@@ -1072,8 +1086,8 @@ directly (see also section 16.3).
 | Item | Shortcut | What it does |
 | :--- | :--- | :--- |
 | Play/Stop | Space | Starts playback from the current position, resumes from pause, or stops it (section 7.2). |
-| Pause/Resume | Ctrl+Space | Pauses playback; resume with Space (section 7.2). |
-| Preview | Enter | Plays a short phrase around the current position, from the Note region (section 7.3). |
+| Pause | Ctrl+Space | Pauses playback; resume with Space, not Ctrl+Space again (section 7.2). |
+| Preview | Enter | Plays a short phrase around the current position, or stops it early if already playing. Works from any region or the status bar; in the Note region, Enter also completes a typed bar number if one is pending (section 7.3). |
 | Preview Settings... | Ctrl+Shift+V | Sets Preview's lead-in, length and looping (section 7.4). |
 | Mute | F8 | Mutes or unmutes the focused row in the Parts region (section 6.3). |
 | Solo | F9 | Solos or unsolos the focused row in the Parts region (section 6.3). |
@@ -1086,21 +1100,22 @@ directly (see also section 16.3).
 | Item | Shortcut | What it does |
 | :--- | :--- | :--- |
 | Tempo Offset... | Ctrl+T | Sets an exact playback tempo offset, including decimal values (section 7.6). |
-| Terminology Language | - | Submenu to choose UK or US wording (section 12.2). |
+| Terminology (UK/US) | - | Submenu to choose UK or US wording (section 12.2). |
 | Toggle Metronome | Ctrl+M | Turns the beat click on or off (section 7.7). |
 | Toggle Position Announcer | Ctrl+P | Turns the spoken beat-position announcer on or off (section 7.8). |
 | Toggle Live MIDI Input | Ctrl+L | Turns a connected MIDI keyboard's live playback through Recall Score on or off (section 7.11). |
 | Live MIDI Input Settings... | Ctrl+Shift+L | Chooses the MIDI device, instrument, volume and pan for live input (section 7.11). |
-| Toggle Voice Control | Ctrl+Shift+Enter | Turns hands-free voice control on or off (section 7.12). |
+| Toggle Voice Control | Ctrl+Enter | Turns hands-free voice control on or off (section 7.12). |
 | Voice Control Settings... | Ctrl+Shift+R | Chooses the microphone and confidence threshold for voice control (section 7.12). |
-| Reorder Attributes... | - | Changes the order note attributes are read in, and switches attributes on or off, for the current Region 2 scope (section 9.4). |
-| Reorder Parts... | - | Changes the order parts are listed in Region 2, and in turn the order their notes are listed in Region 3 (section 10.3). |
+| Reorder Attributes... | Ctrl+Shift+A | Changes the order note attributes are read in, and switches attributes on or off, for the current Region 2 scope (section 9.4). |
+| Reorder Parts... | Ctrl+Shift+O | Changes the order parts are listed in Region 2, and in turn the order their notes are listed in Region 3 (section 10.3). |
 
 ### 14.6 Tools Menu
 
 | Item | Shortcut | What it does |
 | :--- | :--- | :--- |
 | Tuner... | Ctrl+Shift+T | Opens the microphone-based chromatic tuner (section 11). |
+| Performance Report... | Ctrl+Shift+P | Opens a read-only summary of the whole piece (section 8.4). |
 
 ### 14.7 Help Menu
 
@@ -1126,7 +1141,7 @@ directly (see also section 16.3).
 | Type a bar number, then jump to it *(Note region only)* | 0-9, then Enter |
 | Clear a typed bar number without moving *(Note region only)* | Escape |
 | Move between notes within a chord *(Note region only)* | Up Arrow / Down Arrow |
-| Reselect every note at the current position *(Note region only)* | Ctrl+A |
+| Reselect every note at the current position, so `Shift+Space` plays them all together *(Note region only, also Edit > Select All)* | Ctrl+A |
 | Speak the Nth row of the Note Attributes region without moving focus *(Note region only)* | Ctrl+1 - Ctrl+9 |
 | Open the Go to Measure dialog | Ctrl+G |
 | Open the Find dialog | Ctrl+F |
@@ -1137,18 +1152,18 @@ directly (see also section 16.3).
 | Clear every mute in the score *(Parts List region only)* | Alt+F8 |
 | Clear every solo in the score *(Parts List region only)* | Alt+F9 |
 | Play / stop playback from the current position (also resumes from pause) | Space |
-| Pause playback (resume with Space) | Ctrl+Space |
-| Play a preview phrase around the current position *(Note region, no bar number pending)* | Enter |
-| Increase / decrease Preview's length by one bar *(Note region only)* | Alt+PageUp / Alt+PageDown |
+| Pause playback (resume with Space, not Ctrl+Space again) | Ctrl+Space |
+| Play a preview phrase around the current position, or stop it early if already playing (works from any region or the status bar; in the Note region, only when no bar number is pending) | Enter |
+| Increase / decrease Preview's length by one bar, spoken aloud *(Note region only)* | Alt+PageUp / Alt+PageDown |
 | Play every note at the current position together | Shift+Space |
-| Increase / decrease playback tempo by 10bpm | F / S |
-| Reset playback tempo to the score's own tempo | D |
+| Increase / decrease playback tempo by 10bpm *(works from any region or the status bar)* | F / S |
+| Reset playback tempo to the score's own tempo *(works from any region or the status bar)* | D |
 | Open the Tempo Offset dialog | Ctrl+T |
 | Toggle the metronome on/off | Ctrl+M |
 | Toggle the position announcer on/off | Ctrl+P |
 | Toggle live MIDI input on/off | Ctrl+L |
 | Open the Live MIDI Input Settings dialog | Ctrl+Shift+L |
-| Toggle voice control on/off | Ctrl+Shift+Enter |
+| Toggle voice control on/off | Ctrl+Enter |
 | Open the Voice Control Settings dialog | Ctrl+Shift+R |
 | Open the Mixer dialog | Ctrl+Shift+X |
 | Play a short preview from the Mixer dialog *(Mixer dialog only)* | Alt+W |
@@ -1156,10 +1171,12 @@ directly (see also section 16.3).
 | Open the Key Signature dialog | Ctrl+Shift+K |
 | Open the Preview Settings dialog | Ctrl+Shift+V |
 | Open the Tuner dialog | Ctrl+Shift+T |
+| Open the Reorder Attributes dialog | Ctrl+Shift+A |
 | Move the selected attribute up / down *(Reorder Attributes dialog only)* | Alt+U / Alt+D |
+| Open the Reorder Parts dialog | Ctrl+Shift+O |
 | Move the selected part up / down *(Reorder Parts dialog only)* | Alt+U / Alt+D |
 | Jump to the start / end of the focused Performance region entry *(Performance region only)* | Ctrl+Home / Ctrl+End |
-| Open the Performance Report | Edit menu > Performance Report... |
+| Open the Performance Report | Ctrl+Shift+P |
 | Open a note attribute's context menu *(Note Attributes region only)* | right-click, or Menu key / Shift+F10 |
 | Open a score file | Ctrl+O |
 
@@ -1185,7 +1202,7 @@ or isn't one of the supported extensions (section 2.3): `.xml`,
 
 ### 16.3 Where Settings Are Stored on Disk
 
-Edit > Open Local Folder opens the storage location directly. Both your
+File > Open Local Folder opens the storage location directly. Both your
 per-score settings (section 13.1) and your shared preferences (section
 13.2) live under your own Windows user profile, entirely separate from
 where Recall Score itself is installed - reinstalling or moving the

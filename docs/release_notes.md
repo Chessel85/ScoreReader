@@ -1,5 +1,9 @@
 # Recall Score Release Notes
 
+## 2026.1.35
+
+* Improved menu layout and shortcuts.
+
 ## 2026.1.30
 
 * Attribute quick lookup feature by pressing control and a digit when in the note region to announce from the attribute list without moving focus 
