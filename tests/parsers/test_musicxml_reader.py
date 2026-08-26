@@ -27,7 +27,7 @@ def test_reader_captures_part_structure(minimal_score):
 
 
 @pytest.mark.slow
-def test_reader_keeps_a_non_ascii_part_name_instead_of_discarding_it(score_bourree):
+def test_reader_keeps_a_non_ascii_part_name_instead_of_discarding_it(score_bourree_full):
     """Reported bug: parts_info's own part-list parse used to replace any
     non-ASCII part name with the hardcoded "Classical Guitar" fallback -
     this fixture's real <part-name> is Korean ("클래식 기타 ", itself the
@@ -36,7 +36,7 @@ def test_reader_keeps_a_non_ascii_part_name_instead_of_discarding_it(score_bourr
     diverged and every part_name-keyed lookup against parts_info (e.g. the
     Performance Report's per-instrument note counts) silently found nothing
     - the report showed "0 notes" for a real, fully-noted part."""
-    data = MusicXMLReader(score_bourree).load()
+    data = MusicXMLReader(score_bourree_full).load()
 
     assert len(data.parts_info) == 1
     assert data.parts_info[0].name == "클래식 기타"

@@ -231,21 +231,6 @@ def score_three_blind_mice() -> str:
 
 
 @pytest.fixture
-def score_bourree() -> str:
-    """4/4 guitar score: notation staff plus a TAB staff duplicating it.
-
-    Pickup is exported as number="1", so measure re-indexing applies.
-
-    Unlike the other real-file fixtures below, this one has no surviving
-    replacement to repoint to - both the loose extracted copy and its own
-    "bach-bourree-tab short.mxl" were pruned from files/, with nothing left
-    carrying this exact ("short") content. Tests depending on this fixture
-    correctly skip via _require rather than fail.
-    """
-    return _require(SCORES_DIR / "bach-bourree-tab short" / "score.xml")
-
-
-@pytest.fixture
 def score_bourree_full() -> str:
     """The full (not "short") bach-bourree-tab score - two real repeat +
     1st/2nd-ending passages (measures 1-8 and 10-25, Ref 29). The MIDI import
@@ -256,6 +241,14 @@ def score_bourree_full() -> str:
     Points at the compressed .mxl - the loose extracted META-INF/score.xml
     copy this used to point at was pruned from files/ as redundant (the
     .mxl already carries the identical content).
+
+    Also now the fixture for what used to be the separate "short" sample
+    (score_bourree, removed): "short" turned out to just be a truncated copy
+    of this same piece with an identical opening - same one-beat pickup
+    (measure 0, beat 4.0, notation+TAB E/E/G/G) and the same Korean
+    <part-name> ("클래식 기타 ") - once its own files were pruned with no
+    surviving replacement, every test that only needed those shared
+    characteristics was repointed here instead of staying skipped.
     """
     return _require(SCORES_DIR / "bach-bourree-tab.mxl")
 

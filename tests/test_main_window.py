@@ -240,14 +240,14 @@ def test_gm_program_is_converted_to_zero_based_on_the_wire(
 
 
 def test_toggling_the_tab_staff_off_removes_the_duplicate_notes(
-    window, qtbot, null_synth, score_bourree
+    window, qtbot, null_synth, score_bourree_full
 ):
     """B4, Ref 7/Ref 8: the Bourree sample has a notation staff and a TAB
     staff duplicating it, so the first slice shows E,E,G,G today - highest
     pitch first (E4 over G2), the two staves' duplicate E4s and G2s each
     kept adjacent by the stable sort. Muting the TAB staff in Region 2
     (F8) must filter Region 3 down to just the notation staff's E,G."""
-    load_and_wait(window, qtbot, score_bourree)
+    load_and_wait(window, qtbot, score_bourree_full)
 
     assert [
         window.region_3.item(i).text() for i in range(window.region_3.count())
@@ -2215,16 +2215,16 @@ def test_phrase_audition_from_the_last_measure_plays_to_the_end_of_the_piece(
 
 
 def test_preview_lead_in_counts_through_a_whole_bar_before_a_pickup_plays(
-    window, qtbot, null_synth, score_bourree
+    window, qtbot, null_synth, score_bourree_full
 ):
     """Reported from real practice use, then corrected: previewing from
-    inside score_bourree's anacrusis (a one-beat pickup in 4/4, its one real
-    note notated at beat 4 - see tests/conftest.py's score_bourree) must
-    play the requested lead-in bar in FULL ("1, 2, 3, 4"), then keep
+    inside score_bourree_full's anacrusis (a one-beat pickup in 4/4, its one
+    real note notated at beat 4 - see tests/conftest.py's score_bourree_full)
+    must play the requested lead-in bar in FULL ("1, 2, 3, 4"), then keep
     counting through the beats needed to complete the anacrusis into a
     whole bar ("1, 2, 3") before the pickup note itself sounds - never
     landing the count-in on the pickup's own notated beat straight away."""
-    load_and_wait(window, qtbot, score_bourree)
+    load_and_wait(window, qtbot, score_bourree_full)
     window.playback.set_preview_settings(PreviewSettings(lead_in_bars=1, lead_in_beats=0))
     assert window._music_data.active_event_index == 0  # already inside the pickup
 
@@ -2246,13 +2246,13 @@ def test_preview_lead_in_counts_through_a_whole_bar_before_a_pickup_plays(
 
 
 def test_preview_lead_in_pads_a_fractional_pickup_with_a_silent_remainder(
-    window, qtbot, null_synth, score_bourree
+    window, qtbot, null_synth, score_bourree_full
 ):
     """A pickup that starts mid-beat can't have its remainder clicked -
     audio/metronome.py's click_event_for_beat only fires on whole beats -
     so after the whole completing beats are counted, the leftover fraction
     of a beat is a silent wait before the note itself, not another click."""
-    load_and_wait(window, qtbot, score_bourree)
+    load_and_wait(window, qtbot, score_bourree_full)
     window.playback.set_preview_settings(PreviewSettings(lead_in_bars=1, lead_in_beats=0))
     md = window._music_data
     md.timeline_slices[0].beat_position = 2.5  # a 1.5-beat pickup in 4/4
