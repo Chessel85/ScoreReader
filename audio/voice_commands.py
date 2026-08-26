@@ -19,10 +19,11 @@ from typing import Dict, List, Optional, Tuple
 from models.preview_settings import MIN_PREVIEW_BARS
 
 # Canonical command names dispatched by controllers/voice_control_controller.py.
-# GO_TO_BAR and LOOP_LENGTH are both parameterized (each carries a single
-# int - a measure number / a bar count respectively) and are therefore NOT
-# keys in COMMAND_PHRASES below - see go_to_bar_phrases()/loop_length_
-# phrases()/parse_command().
+# GO_TO_BAR, LOOP_LENGTH and ATTRIBUTE are all parameterized (each carries a
+# single int - a measure number / a bar count / a Region 4 row number
+# respectively) and are therefore NOT keys in COMMAND_PHRASES below - see
+# go_to_bar_phrases()/loop_length_phrases()/attribute_phrases()/
+# parse_command().
 PREVIEW = "preview"
 PLAY = "play"
 STOP = "stop"
@@ -38,6 +39,7 @@ SLOWER = "slower"
 FASTER = "faster"
 DEFAULT_SPEED = "default_speed"
 LOOP_LENGTH = "loop_length"
+ATTRIBUTE = "attribute"
 
 # Every fixed (non-parameterized) spoken phrase, lowercase, mapped to its
 # canonical command name. Synonyms ("next bar"/"next measure") map to the
@@ -79,6 +81,17 @@ LOOP_LENGTH_PREFIX = "loop length"
 # numbers to match against would only hurt recognition accuracy for no real
 # benefit, so a much smaller, practice-realistic cap is used here instead.
 MAX_LOOP_LENGTH_BARS = 32
+
+# "attribute" precedes a spoken number - see attribute_phrases() below. The
+# hands-free counterpart of Ctrl+1..Ctrl+9 in the Note region
+# (widgets/timeline_list_widget.py), which speaks Region 4's Nth row without
+# moving focus off Region 3 - see controllers/region_presenter.py's
+# announce_attribute_by_number. Bounded to the same 1-9 range as that
+# keystroke (a single digit), not per-score like go_to_bar - Region 4's row
+# count depends on which attributes are switched on, not on the score
+# itself, so there's no meaningful score-derived bound to use instead.
+ATTRIBUTE_PREFIX = "attribute"
+MAX_ATTRIBUTE_NUMBER = 9
 
 _ONES = [
     "zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
@@ -158,20 +171,23 @@ def parse_command(
     heard_text: str,
     go_to_bar_lookup: Optional[Dict[str, int]] = None,
     loop_length_lookup: Optional[Dict[str, int]] = None,
+    attribute_lookup: Optional[Dict[str, int]] = None,
 ) -> Optional[Tuple[str, Optional[int]]]:
     """Resolves SAPI's recognized text to (command_name, number_value).
     number_value is None for every command except GO_TO_BAR (a measure
-    number) and LOOP_LENGTH (a bar count) - the two parameterized commands.
-    Returns None for anything unrecognized - a caller should treat that
-    exactly like a rejected/low-confidence result and never dispatch it.
+    number), LOOP_LENGTH (a bar count) and ATTRIBUTE (a Region 4 row
+    number) - the three parameterized commands. Returns None for anything
+    unrecognized - a caller should treat that exactly like a rejected/
+    low-confidence result and never dispatch it.
 
     go_to_bar_lookup is the reverse of go_to_bar_phrases() (phrase text ->
     measure number) for whichever score is currently loaded. loop_length_
-    lookup is the reverse of loop_length_phrases() (phrase text -> bar
-    count) - fixed, so callers can pass loop_length_reverse_lookup()
-    unconditionally rather than tracking any per-score state for it. Either
-    omitted (or a miss) simply means that parameterized command can't be
-    resolved right now - not an error."""
+    lookup and attribute_lookup are the reverse of loop_length_phrases()/
+    attribute_phrases() (phrase text -> bar count / row number) - both
+    fixed, so callers can pass loop_length_reverse_lookup()/attribute_
+    reverse_lookup() unconditionally rather than tracking any per-score
+    state for them. Any of the three omitted (or a miss) simply means that
+    parameterized command can't be resolved right now - not an error."""
     text = " ".join(heard_text.lower().split())
     if text in COMMAND_PHRASES:
         return COMMAND_PHRASES[text], None
@@ -179,6 +195,8 @@ def parse_command(
         return GO_TO_BAR, go_to_bar_lookup[text]
     if loop_length_lookup and text in loop_length_lookup:
         return LOOP_LENGTH, loop_length_lookup[text]
+    if attribute_lookup and text in attribute_lookup:
+        return ATTRIBUTE, attribute_lookup[text]
     return None
 
 
@@ -195,3 +213,21 @@ def loop_length_reverse_lookup() -> Dict[str, int]:
     """phrase -> bar_count, for parse_command's loop_length_lookup. Same
     list-vs-dict split as go_to_bar_reverse_lookup, above."""
     return dict(loop_length_phrases())
+
+
+def attribute_phrases() -> List[Tuple[str, int]]:
+    """(phrase, row_number) for every "attribute N" grammar entry, N
+    ranging 1..MAX_ATTRIBUTE_NUMBER - the voice-control counterpart of
+    Ctrl+1..Ctrl+9 in the Note region, replicating that same quick
+    attribute lookup hands-free. Fixed, like loop_length_phrases - not
+    bound by anything score-specific, unlike go_to_bar_phrases."""
+    return [
+        (f"{ATTRIBUTE_PREFIX} {number_to_words(n)}", n)
+        for n in range(1, MAX_ATTRIBUTE_NUMBER + 1)
+    ]
+
+
+def attribute_reverse_lookup() -> Dict[str, int]:
+    """phrase -> row_number, for parse_command's attribute_lookup. Same
+    list-vs-dict split as go_to_bar_reverse_lookup, above."""
+    return dict(attribute_phrases())

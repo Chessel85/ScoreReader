@@ -54,6 +54,14 @@ class _FakeNavigation:
         self.calls.append(("to_typed_measure", digits))
 
 
+class _FakePresenter:
+    def __init__(self):
+        self.calls = []
+
+    def announce_attribute_by_number(self, number):
+        self.calls.append(("announce_attribute_by_number", number))
+
+
 class _FakePlayback:
     def __init__(self):
         self.calls = []
@@ -296,6 +304,66 @@ def test_loop_length_with_no_bar_count_is_ignored(
     QApplication.processEvents()
 
     assert playback.calls == []
+
+
+def test_attribute_dispatches_with_the_row_number(
+    synth, navigation, playback, voice_manager, qtbot
+):
+    presenter = _FakePresenter()
+    controller = VoiceControlController(
+        synth, navigation, playback, voice_manager=voice_manager, presenter=presenter,
+    )
+    controller.settings.device_name = "My Microphone"
+    controller.toggle_enabled()
+    QApplication.processEvents()
+    synth.voice_confirmation_cues.clear()
+
+    voice_manager.simulate_recognition(voice_commands.ATTRIBUTE, confidence=90.0, number_value=3)
+    QApplication.processEvents()
+
+    assert presenter.calls == [("announce_attribute_by_number", 3)]
+    assert len(synth.voice_confirmation_cues) == 1
+
+
+def test_attribute_with_no_row_number_is_ignored(
+    synth, navigation, playback, voice_manager, qtbot
+):
+    """Defensive: a real recognized ATTRIBUTE always carries a row number
+    (see audio/voice_commands.parse_command) - this only guards against a
+    malformed injected event."""
+    presenter = _FakePresenter()
+    controller = VoiceControlController(
+        synth, navigation, playback, voice_manager=voice_manager, presenter=presenter,
+    )
+    controller.settings.device_name = "My Microphone"
+    controller.toggle_enabled()
+    QApplication.processEvents()
+    synth.voice_confirmation_cues.clear()
+
+    voice_manager.simulate_recognition(voice_commands.ATTRIBUTE, confidence=90.0, number_value=None)
+    QApplication.processEvents()
+
+    assert presenter.calls == []
+    assert synth.voice_confirmation_cues == []
+
+
+def test_attribute_does_nothing_without_a_presenter(
+    synth, navigation, playback, voice_manager, qtbot
+):
+    """presenter defaults to None (RegionPresenter doesn't exist yet at
+    controller-construction time in main_window.py - see the controller's
+    own comment) - a recognized ATTRIBUTE must degrade silently, not
+    crash, until main_window.py wires the real presenter in."""
+    controller = _controller(synth, navigation, playback, voice_manager, qtbot)
+    controller.settings.device_name = "My Microphone"
+    controller.toggle_enabled()
+    QApplication.processEvents()
+    synth.voice_confirmation_cues.clear()
+
+    voice_manager.simulate_recognition(voice_commands.ATTRIBUTE, confidence=90.0, number_value=3)
+    QApplication.processEvents()  # must not raise
+
+    assert synth.voice_confirmation_cues == []
 
 
 def test_recognized_command_plays_the_confirmation_cue(

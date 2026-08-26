@@ -297,6 +297,13 @@ class MainWindow(QMainWindow):
         )
         self.attributes = AttributeController(self.session, self.presenter, self)
         self.persistence = ScorePersistenceController(self.session, self.region_2)
+        # Wired here rather than through VoiceControlController's own
+        # constructor: RegionPresenter doesn't exist yet at that point in
+        # this method (see its own construction above). The "attribute N"
+        # voice command dispatches through this reference - see
+        # VoiceControlController._dispatch and RegionPresenter.
+        # announce_attribute_by_number.
+        self.voice_control.presenter = self.presenter
 
         self.focus.connect_tracking()
 
@@ -604,6 +611,9 @@ class MainWindow(QMainWindow):
 
     def find_previous(self):
         self.navigation.find_previous()
+
+    def announce_region_4_attribute(self, number: int):
+        self.presenter.announce_attribute_by_number(number)
 
     # --- playback (delegators) ----------------------------------------
 

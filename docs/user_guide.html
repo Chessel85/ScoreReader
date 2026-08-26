@@ -353,6 +353,9 @@ Attributes Are Read</a></li>
 <li><a href="#grace-notes-and-ornaments"
 id="toc-grace-notes-and-ornaments">9.5 Grace Notes and
 Ornaments</a></li>
+<li><a href="#quick-lookup-by-number-ctrl1-through-ctrl9"
+id="toc-quick-lookup-by-number-ctrl1-through-ctrl9">9.6 Quick Lookup by
+Number (Ctrl+1 through Ctrl+9)</a></li>
 </ul></li>
 <li><a href="#chords-and-lyrics" id="toc-chords-and-lyrics">10. Chords
 and Lyrics</a>
@@ -1035,6 +1038,11 @@ plays (the same value as Playback &gt; Preview Settings…’s “Preview
 length in bars” field, or
 <code>Alt+PageUp</code>/<code>Alt+PageDown</code>), recognizing 1
 through 32 bars</li>
+<li>attribute <code>&lt;number&gt;</code> - speaks the Nth row of the
+Note Attributes region for the currently selected note(s) without moving
+focus (the same lookup as <code>Ctrl+1</code> through
+<code>Ctrl+9</code> in the Note region - see section 9.6), recognizing 1
+through 9</li>
 <li>slower - reduces playback tempo</li>
 <li>faster - increases playback tempo</li>
 <li>default speed - resets playback tempo to the score’s own tempo</li>
@@ -1160,6 +1168,19 @@ note it decorates, rather than skipped. Region 3 reads it as, for
 example, “B grace A”: the grace note’s own name, the word “grace”, then
 the main note’s name. It’s briefly sounded just before the main note
 plays, so the ornament itself is audible, not only described.</p>
+<h3 id="quick-lookup-by-number-ctrl1-through-ctrl9">9.6 Quick Lookup by
+Number (Ctrl+1 through Ctrl+9)</h3>
+<p>While focus is on a note in Region 3, pressing <code>Ctrl+1</code>
+through <code>Ctrl+9</code> speaks that numbered row from Region 4 - “1”
+for the first row, “5” for the fifth, and so on - without moving focus
+away from the Note region. It’s a fast way to check one detail (say, the
+fret number or a dynamic marking) mid-navigation, rather than tabbing
+over to Region 4 and back. The number always matches Region 4’s rows as
+currently displayed, so it reflects whichever attributes are switched on
+and in whatever order section 9.4 has them in. Pressing a number beyond
+how many rows are currently showing does nothing - there’s simply
+nothing there to read. The “attribute <code>&lt;number&gt;</code>” voice
+command (section 7.12) does the same thing hands-free.</p>
 <h2 id="chords-and-lyrics">10. Chords and Lyrics</h2>
 <h3 id="what-this-feature-is-for">10.1 What This Feature Is For</h3>
 <p>Alongside notated scores (section 2.3), Recall Score can import a
@@ -1857,6 +1878,11 @@ anywhere</td>
 <td style="text-align: left;">Reselect every note at the current
 position <em>(Note region only)</em></td>
 <td style="text-align: left;">Ctrl+A</td>
+</tr>
+<tr>
+<td style="text-align: left;">Speak the Nth row of the Note Attributes
+region without moving focus <em>(Note region only)</em></td>
+<td style="text-align: left;">Ctrl+1 - Ctrl+9</td>
 </tr>
 <tr>
 <td style="text-align: left;">Open the Go to Measure dialog</td>

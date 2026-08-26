@@ -1,5 +1,9 @@
 # Recall Score Release Notes
 
+## 2026.1.30
+
+* Attribute quick lookup feature by pressing control and a digit when in the note region to announce from the attribute list without moving focus 
+
 ## 2026.1.29
 
 * Introduced concept of stave text as a peer to voices 

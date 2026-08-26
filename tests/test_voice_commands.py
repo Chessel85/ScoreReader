@@ -4,6 +4,7 @@ Qt/COM involved at all."""
 import pytest
 
 from audio.voice_commands import (
+    ATTRIBUTE,
     COMMAND_PHRASES,
     DEFAULT_SPEED,
     END,
@@ -11,6 +12,7 @@ from audio.voice_commands import (
     GO_TO_BAR,
     HOME,
     LOOP_LENGTH,
+    MAX_ATTRIBUTE_NUMBER,
     MAX_LOOP_LENGTH_BARS,
     NEXT_BAR,
     PAUSE,
@@ -19,6 +21,8 @@ from audio.voice_commands import (
     PREVIOUS_BAR,
     SLOWER,
     STOP,
+    attribute_phrases,
+    attribute_reverse_lookup,
     go_to_bar_phrases,
     go_to_bar_reverse_lookup,
     loop_length_phrases,
@@ -121,3 +125,24 @@ def test_parse_command_loop_length_without_lookup_is_unrecognized():
 
 def test_parse_command_loop_length_out_of_range_is_unrecognized():
     assert parse_command("loop length one hundred", loop_length_lookup=loop_length_reverse_lookup()) is None
+
+
+def test_attribute_phrases_covers_one_through_max():
+    phrases = attribute_phrases()
+    numbers = sorted({n for _, n in phrases})
+    assert numbers == list(range(1, MAX_ATTRIBUTE_NUMBER + 1))
+    assert ("attribute one", 1) in phrases
+    assert ("attribute five", 5) in phrases
+
+
+def test_parse_command_resolves_attribute_via_lookup():
+    lookup = attribute_reverse_lookup()
+    assert parse_command("attribute five", attribute_lookup=lookup) == (ATTRIBUTE, 5)
+
+
+def test_parse_command_attribute_without_lookup_is_unrecognized():
+    assert parse_command("attribute five") is None
+
+
+def test_parse_command_attribute_out_of_range_is_unrecognized():
+    assert parse_command("attribute ten", attribute_lookup=attribute_reverse_lookup()) is None

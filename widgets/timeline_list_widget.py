@@ -67,6 +67,13 @@ class TimelineListWidget(RegionFocusCycleMixin, QListWidget):
         elif key == Qt.Key.Key_PageDown and alt:
             main_win.decrease_preview_bars()
             return
+        elif ctrl and Qt.Key.Key_1 <= key <= Qt.Key.Key_9:
+            # Quick attribute lookup: speaks Region 4's Nth row without
+            # moving focus off Region 3 - see RegionPresenter.
+            # announce_attribute_by_number, which silently no-ops if N
+            # exceeds the currently displayed attribute list.
+            main_win.announce_region_4_attribute(key - Qt.Key.Key_0)
+            return
 
         if self._pending_digits:
             self._pending_digits = ""

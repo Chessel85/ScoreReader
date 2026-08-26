@@ -608,6 +608,10 @@ The full list of recognized commands:
 - loop length `<number>` - sets how many bars Preview plays (the same
   value as Playback > Preview Settings...'s "Preview length in bars" field,
   or `Alt+PageUp`/`Alt+PageDown`), recognizing 1 through 32 bars
+- attribute `<number>` - speaks the Nth row of the Note Attributes region
+  for the currently selected note(s) without moving focus (the same lookup
+  as `Ctrl+1` through `Ctrl+9` in the Note region - see section 9.6),
+  recognizing 1 through 9
 - slower - reduces playback tempo
 - faster - increases playback tempo
 - default speed - resets playback tempo to the score's own tempo
@@ -756,6 +760,20 @@ note it decorates, rather than skipped. Region 3 reads it as, for
 example, "B grace A": the grace note's own name, the word "grace", then
 the main note's name. It's briefly sounded just before the main note
 plays, so the ornament itself is audible, not only described.
+
+### 9.6 Quick Lookup by Number (Ctrl+1 through Ctrl+9)
+
+While focus is on a note in Region 3, pressing `Ctrl+1` through `Ctrl+9`
+speaks that numbered row from Region 4 - "1" for the first row, "5" for
+the fifth, and so on - without moving focus away from the Note region.
+It's a fast way to check one detail (say, the fret number or a dynamic
+marking) mid-navigation, rather than tabbing over to Region 4 and back.
+The number always matches Region 4's rows as currently displayed, so it
+reflects whichever attributes are switched on and in whatever order
+section 9.4 has them in. Pressing a number beyond how many rows are
+currently showing does nothing - there's simply nothing there to read.
+The "attribute `<number>`" voice command (section 7.12) does the same
+thing hands-free.
 
 ## 10. Chords and Lyrics
 
@@ -1109,6 +1127,7 @@ directly (see also section 16.3).
 | Clear a typed bar number without moving *(Note region only)* | Escape |
 | Move between notes within a chord *(Note region only)* | Up Arrow / Down Arrow |
 | Reselect every note at the current position *(Note region only)* | Ctrl+A |
+| Speak the Nth row of the Note Attributes region without moving focus *(Note region only)* | Ctrl+1 - Ctrl+9 |
 | Open the Go to Measure dialog | Ctrl+G |
 | Open the Find dialog | Ctrl+F |
 | Jump to the next / previous occurrence of the current Find target | Alt+Right Arrow / Alt+Left Arrow |

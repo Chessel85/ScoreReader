@@ -59,11 +59,17 @@ class VoiceControlController(QObject):
     # today: the ding plays for every recognized command.
     _SUPPRESSED_CUE_COMMANDS: set = set()
 
-    def __init__(self, synth, navigation, playback, parent=None, voice_manager=None):
+    def __init__(self, synth, navigation, playback, parent=None, voice_manager=None, presenter=None):
         super().__init__(parent)
         self.synth = synth
         self.navigation = navigation
         self.playback = playback
+        # Optional and settable after construction (main_window.py's
+        # setup_controllers builds RegionPresenter after this controller) -
+        # only needed for the ATTRIBUTE command below. None degrades
+        # silently, the same "absence isn't an error" convention every
+        # other optional resource in this app follows.
+        self.presenter = presenter
         self.settings: VoiceControlSettings = app_settings.load().voice_control
         self._manager = voice_manager if voice_manager is not None else VoiceRecognitionManager()
         self._manager.set_callback(self._on_raw_recognition)
@@ -259,6 +265,10 @@ class VoiceControlController(QObject):
             if number_value is None:
                 return
             self.playback.set_preview_length_bars(number_value)
+        elif command_name == voice_commands.ATTRIBUTE:
+            if number_value is None or self.presenter is None:
+                return
+            self.presenter.announce_attribute_by_number(number_value)
         else:
             handler = self._command_table.get(command_name)
             if handler is None:

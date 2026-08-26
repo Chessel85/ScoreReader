@@ -177,6 +177,30 @@ class RegionPresenter(QObject):
 
         self.on_region_3_selection_changed()
 
+    def announce_attribute_by_number(self, number: int) -> None:
+        """Ctrl+<number> in the Note region (TimelineListWidget.
+        keyPressEvent) and the "attribute <number>" voice command
+        (VoiceControlController) both land here: speaks Region 4's Nth row
+        - the attribute list exactly as currently displayed for whichever
+        note(s) are selected in Region 3 - without moving focus off Region
+        3. A quick attribute lookup mid-navigation, the same one-shot
+        QAccessibleAnnouncementEvent mechanism _announce_measure_change
+        uses. number is 1-based, matching the row's displayed position.
+        Out of range (including no score loaded, or fewer attributes than
+        requested) is a silent no-op, never an error - "the number relates
+        to the attribute list as it is displayed" means there is simply
+        nothing at that position to read."""
+        if not self.music_data:
+            return
+        rows = self.music_data.get_region_4_rows_for_indices(self.selected_region_3_indices())
+        if number < 1 or number > len(rows):
+            return
+        display_key, _attribute_key, value = rows[number - 1]
+        message = f"{display_key}: {value}"
+        event = QAccessibleAnnouncementEvent(self.region_3, message)
+        event.setPoliteness(QAccessible.AnnouncementPoliteness.Assertive)
+        QAccessible.updateAccessibility(event)
+
     def refresh_region_5(self) -> None:
         """Ref 29: recomputes Region 5's rows for the current position.
 

@@ -34,7 +34,8 @@ identically for every user.
 
 Grammar is a JSON phrase list (audio/voice_commands.py's COMMAND_PHRASES
 plus the current score's go_to_bar_phrases, plus the fixed loop_length_
-phrases, plus Vosk's own recommended "[unk]" catch-all) sent to the worker,
+phrases and attribute_phrases, plus Vosk's own recommended "[unk]"
+catch-all) sent to the worker,
 which passes it straight into
 KaldiRecognizer's constructor - a first-class Vosk feature, not a
 workaround. This is still the main accuracy lever: a small closed vocabulary
@@ -154,16 +155,17 @@ def list_input_devices() -> List[str]:
 
 def _build_grammar_phrases(total_measures: int) -> List[str]:
     """Every fixed command phrase plus the current score's "go to bar N"/
-    "go to measure N" phrases plus the fixed "loop length N" phrases - the
-    phrase list sent to the worker to restrict Vosk's recognition to just
-    this vocabulary. Includes UNKNOWN_TOKEN - see that constant's own
-    comment for the live-testing history behind this.
+    "go to measure N" phrases plus the fixed "loop length N" and
+    "attribute N" phrases - the phrase list sent to the worker to restrict
+    Vosk's recognition to just this vocabulary. Includes UNKNOWN_TOKEN - see
+    that constant's own comment for the live-testing history behind this.
     Sent wholesale (never incrementally patched) whenever the vocabulary
     needs to change - cheap for Vosk (a fresh KaldiRecognizer), unlike the
     SAPI version's file-round-trip workaround."""
     phrases = list(voice_commands.COMMAND_PHRASES.keys())
     phrases.extend(phrase for phrase, _ in voice_commands.go_to_bar_phrases(total_measures))
     phrases.extend(phrase for phrase, _ in voice_commands.loop_length_phrases())
+    phrases.extend(phrase for phrase, _ in voice_commands.attribute_phrases())
     phrases.append(UNKNOWN_TOKEN)
     return phrases
 
@@ -411,6 +413,7 @@ class VoiceRecognitionManager:
                 heard_text,
                 voice_commands.go_to_bar_reverse_lookup(self._total_measures),
                 voice_commands.loop_length_reverse_lookup(),
+                voice_commands.attribute_reverse_lookup(),
             )
         accepted = parsed is not None
 

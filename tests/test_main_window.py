@@ -159,6 +159,48 @@ def test_note_by_note_navigation_does_not_announce_a_bar_number(
     assert announcements == []
 
 
+def test_ctrl_number_in_note_region_announces_the_nth_region_4_attribute(
+    window, qtbot, monkeypatch, minimal_score
+):
+    """The quick attribute lookup: Ctrl+1 in the Note region must speak
+    Region 4's first row for the current selection ("step: C" for
+    minimal_score's opening note) without moving focus or changing Region
+    3's own row text."""
+    announcements = []
+    monkeypatch.setattr(
+        region_presenter.QAccessible,
+        "updateAccessibility",
+        lambda event: announcements.append(event.message()),
+    )
+    load_and_wait(window, qtbot, minimal_score)
+    announcements.clear()
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_1, Qt.KeyboardModifier.ControlModifier)
+
+    assert announcements == ["step: C"]
+    assert window.region_3.item(0).text() == "C"
+
+
+def test_ctrl_number_beyond_the_attribute_count_does_nothing(
+    window, qtbot, monkeypatch, minimal_score
+):
+    """"If the number exceeds the number of entries in the list, do
+    nothing" - a silent no-op, not an error, matching every other
+    out-of-range convention in this app."""
+    announcements = []
+    monkeypatch.setattr(
+        region_presenter.QAccessible,
+        "updateAccessibility",
+        lambda event: announcements.append(event.message()),
+    )
+    load_and_wait(window, qtbot, minimal_score)
+    announcements.clear()
+
+    window.announce_region_4_attribute(99)
+
+    assert announcements == []
+
+
 def test_navigating_onto_a_single_note_slice_sets_a_current_row(window, qtbot, minimal_score):
     """Live-tested bug: selectAll() marks every row selected but leaves the
     view's own "current" item untouched, so a slice with exactly one note
