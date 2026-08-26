@@ -80,10 +80,14 @@ from typing import Callable, List, Optional
 
 from audio import voice_commands
 
-VOSK_AVAILABLE = (
-    importlib.util.find_spec("vosk") is not None
-    and importlib.util.find_spec("sounddevice") is not None
-)
+# Frozen builds (packaging/RecallScore.spec) never bundle vosk/sounddevice
+# into the MAIN app process at all - only into the separate worker
+# executable (packaging/VoiceWorker.spec, see that spec's own comment on
+# why). find_spec("vosk") would therefore always report unavailable in a
+# packaged build even when voice control is fully installed - so frozen
+# availability is instead just "does the worker exe exist", checked below
+# once WORKER_EXE is known.
+FROZEN = getattr(sys, "frozen", False)
 
 # The model this feature was built and tested against (vosk-model-small-en-
 # us-0.15, ~40MB, Apache-2.0) - not pip-installable, not tracked in git (see
@@ -102,7 +106,47 @@ VOSK_AVAILABLE = (
 # checkpoint.
 MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "vosk_model_large")
 
+# Dev-only launch target: sys.executable <this script>, a real python.exe
+# interpreting a real .py file. Neither exists once frozen - see WORKER_EXE.
 WORKER_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "voice_recognition_worker.py")
+
+# Frozen-only launch target: packaging/VoiceWorker.spec's own build, bundled
+# into this app's own bundle at voice_worker/ by packaging/RecallScore.spec
+# (Tree(..., prefix="voice_worker")) - sys._MEIPASS is this app's own bundle
+# root here (the same __file__-faking trick RecallScore.spec's header
+# comment documents for audio/synth_engine.py's PROJECT_ROOT, which is also
+# how MODEL_DIR above resolves correctly with no frozen-specific code).
+WORKER_EXE = os.path.join(
+    getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "voice_worker", "RecallScoreVoiceWorker.exe",
+)
+
+if FROZEN:
+    VOSK_AVAILABLE = os.path.isfile(WORKER_EXE)
+else:
+    VOSK_AVAILABLE = (
+        importlib.util.find_spec("vosk") is not None
+        and importlib.util.find_spec("sounddevice") is not None
+    )
+
+
+def _worker_command() -> List[str]:
+    """The subprocess.Popen argv for launching the worker - a real python.exe
+    running the worker script in dev, the worker's own standalone executable
+    once frozen (see WORKER_EXE/WORKER_SCRIPT above)."""
+    if FROZEN:
+        return [WORKER_EXE]
+    return [sys.executable, "-u", WORKER_SCRIPT]
+
+
+# CREATE_NO_WINDOW (Windows-only subprocess.Popen creationflags): the worker
+# is built console=True (see VoiceWorker.spec) so it gets real stdin/stdout
+# pipes once frozen, which would otherwise flash a console window on screen
+# every time voice control starts - this suppresses that window without
+# affecting the pipes themselves. Harmless to pass in dev too (python.exe
+# spawned from an already-console-attached parent doesn't open a new window
+# either way), so it's applied unconditionally rather than only when FROZEN.
+_POPEN_CREATIONFLAGS = subprocess.CREATE_NO_WINDOW
 
 # Vosk's own recommended catch-all - documented as letting the decoder say
 # "none of these phrases" instead of forcing the nearest wrong match.
@@ -141,8 +185,9 @@ def list_input_devices() -> List[str]:
         return []
     try:
         result = subprocess.run(
-            [sys.executable, WORKER_SCRIPT, "--list-devices"],
+            _worker_command() + ["--list-devices"],
             capture_output=True, text=True, timeout=10,
+            creationflags=_POPEN_CREATIONFLAGS,
         )
         if result.returncode != 0:
             print(f"[WARN] Failed to enumerate voice control input devices: {result.stderr.strip()}")
@@ -271,9 +316,9 @@ class VoiceRecognitionManager:
         self._started_ok = False
         try:
             self._process = subprocess.Popen(
-                [sys.executable, "-u", WORKER_SCRIPT],
+                _worker_command(),
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                text=True, bufsize=1,
+                text=True, bufsize=1, creationflags=_POPEN_CREATIONFLAGS,
             )
         except Exception as e:
             print(f"[WARN] Failed to start voice control worker process: {e}")

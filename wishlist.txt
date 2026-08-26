@@ -1,9 +1,6 @@
 * Think the glitch i hear at start up is a real problem. is very noticeable when on speakers. and sometimes the quality of the midi rendering is crackly. or is this only when running from command prompt?
 * work with gemini on onstructions to give claude to make it write a good user manual
 * Write a new user guide before doing a new release.
-* there is something unintuitive about the pause and play feature though not sure exactly what the oddity is.
-* need to do a root and branch review of keystrokes to try and get some logicalness to it. 
-* Need to properly plan and organise the menus.
 * Need to review file formats; midi 0 and ultimate guitar need assumptions about bars revisiting.
 * do we need to do the task on making file open robust against file formats that are not understood
 * when metronome is on, but moving up and down a chord, do not sound the metronome click.

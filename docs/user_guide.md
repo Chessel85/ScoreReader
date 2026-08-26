@@ -173,6 +173,12 @@ voice, shown with the chord name, beat position and stroke direction by
 default - the same treatment a MusicXML score's embedded chord symbols
 get (section 10.6).
 
+A stave carrying free-text directions written into the score - a
+guitar's left-hand position marks, or a tempo/technique instruction some
+notation programs write as plain text - gains an extra Stave Text voice,
+listed first among that stave's voices; section 9.7 covers what it looks
+and sounds like.
+
 For a MIDI file, or an imported song's Chords/Lyrics rows (section 10),
 the tree stops at the part level: MIDI has no real stave or voice
 concept, and a Chords or Lyrics row has no notated structure underneath
@@ -789,6 +795,27 @@ section 9.4 has them in. Pressing a number beyond how many rows are
 currently showing does nothing - there's simply nothing there to read.
 The "attribute `<number>`" voice command (section 7.12) does the same
 thing hands-free.
+
+### 9.7 Position Marks and Other Stave Text
+
+Some scores carry free-text directions written directly into the file
+alongside the real notes - a guitar's left-hand position marks (Roman
+numerals), or a tempo or technique instruction some notation programs
+write as plain text rather than a proper marking. Recall Score surfaces
+this as its own event in the Note region, on whichever stave it's
+actually written against, rather than leaving it out. It reads as just
+the text itself, with nothing sounded - a position mark is a label to
+read, not a note to hear - and it always comes first among that stave's
+items, in both the Note region and Region 2, matching where a mark like
+this sits above the stave on a printed page.
+
+Region 4 shows a shorter set of detail for one of these than for an
+ordinary note: the text itself, its measure, beat position, part and
+stave - never a duration or a voice number, since a direction like
+"Allegro" has no length of its own, and there's only ever one Stave Text
+item per stave, so a voice number wouldn't distinguish anything. This
+appears automatically wherever the source file includes it; there's no
+setting to turn it on or off.
 
 ## 10. Chords and Lyrics
 

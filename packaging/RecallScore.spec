@@ -77,6 +77,35 @@ datas += collect_data_files(
     excludes=["corpus/**", "test/**", "languageExcerpts/**"],
 )
 
+# Hands-free voice control (Ref 19) - the worker process (audio/
+# voice_recognition_worker.py) is built as its OWN separate PyInstaller
+# executable by packaging/VoiceWorker.spec (run that FIRST - see its own
+# header comment for why: vosk/sounddevice's DLLs would collide with
+# FluidSynth's if bundled into this same process/folder, and a windowed
+# build can't give the worker real stdin/stdout pipes). Bundled here as a
+# voice_worker/ subfolder so packaging/installer.nsi's plain recursive
+# `File /r` copy needs no changes to pick it up. Guarded like icon_path/
+# has_icon below: missing it degrades to "voice control unavailable" (the
+# same warning VOSK_AVAILABLE already prints when vosk/sounddevice aren't
+# installed at all) rather than failing this build - voice control is a
+# supplementary feature, the app is fully usable without it.
+voice_worker_dist = os.path.join(REPO_ROOT, "dist", "RecallScoreVoiceWorker")
+has_voice_worker = os.path.isdir(voice_worker_dist)
+if not has_voice_worker:
+    print(
+        f"[WARN] {voice_worker_dist} not found - build packaging\\VoiceWorker.spec "
+        "first if you want voice control in this installer. Continuing without it."
+    )
+
+# The Vosk speech model (audio/voice_recognition.py's MODEL_DIR) - gitignored,
+# ~205MB, not pip-installable (see .gitignore's own note on where to get
+# one). Guarded the same way as the worker exe above - missing it also just
+# means no voice control in this build, not a build failure.
+vosk_model_dir = os.path.join(REPO_ROOT, "vosk_model_large")
+has_vosk_model = os.path.isdir(vosk_model_dir)
+if not has_vosk_model:
+    print(f"[WARN] {vosk_model_dir} not found - continuing without voice control's speech model.")
+
 # Dropped in by the user (see main.py's _app_icon_path()) - optional, the
 # build works without it.
 icon_path = os.path.join(PACKAGING_DIR, "RecallScore.ico")
@@ -143,6 +172,15 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+# Added post-Analysis (not to datas above) since Tree() needs the already-
+# built `a` TOC to extend - see the voice_worker_dist/vosk_model_dir
+# comments above for why each is guarded rather than required.
+if has_voice_worker:
+    a.datas += Tree(voice_worker_dist, prefix="voice_worker")
+if has_vosk_model:
+    a.datas += Tree(vosk_model_dir, prefix="vosk_model_large")
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
