@@ -898,3 +898,139 @@ def test_simultaneous_percussion_hits_share_one_event_slice(timeline, score_hit_
     multi_hit_slice = next(s for s in md.timeline_slices if len(s.notes) > 1)
     assert len(multi_hit_slice.notes) >= 2
     assert all(n.octave is None for n in multi_hit_slice.notes)
+
+
+# Generic stave text (parsers/timeline_builder.py's STAVE_TEXT_VOICE_ID): a
+# fabricated voice on whichever real part/staff a <direction><words> mark is
+# physically found in - not sticky, not merged across parts. See
+# tests/fixtures/stave_text.musicxml and CLAUDE.md.
+
+def _stave_text_notes(md, part_id):
+    from parsers.timeline_builder import STAVE_TEXT_VOICE_ID
+
+    return [
+        n for s in md.timeline_slices for n in s.notes
+        if n.part_id == part_id and n.voice == STAVE_TEXT_VOICE_ID
+    ]
+
+
+def test_stave_text_sorts_before_the_real_notes_it_shares_a_slice_with(timeline, score_etude_1_tablature):
+    """User-requested: reads first in Region 3 - "III" landing at the same
+    (measure, offset) as the note it marks (bar 29) must not fall into the
+    ordinary midi_pitch-is-None tiebreak a silent rest gets (which sorts
+    last); it should read above the real voices, matching how it's already
+    listed above them in Region 2."""
+    from parsers.timeline_builder import STAVE_TEXT_VOICE_ID
+
+    md = timeline(score_etude_1_tablature)
+
+    slice_with_iii = next(
+        s for s in md.timeline_slices
+        if any(n.step_name == "III" and n.voice == STAVE_TEXT_VOICE_ID for n in s.notes)
+    )
+    assert slice_with_iii.notes[0].voice == STAVE_TEXT_VOICE_ID
+    assert slice_with_iii.notes[0].step_name == "III"
+    assert any(n.midi_pitch is not None for n in slice_with_iii.notes[1:]), (
+        "sanity check: this slice really does share real sounding notes, not just other stave text"
+    )
+
+
+def test_stave_text_word_becomes_its_own_event_on_the_originating_part(timeline, stave_text_score):
+    md = timeline(stave_text_score)
+
+    notes = _stave_text_notes(md, "P1")
+    assert [n.step_name for n in notes] == ["Allegro", "III"], (
+        "verbatim - a generic tempo word and a position mark are captured "
+        "the same way, and roman numerals are never converted to digits"
+    )
+    assert [n.beat_position for n in notes] == [1.0, 2.0]
+    assert all(n.midi_pitch is None for n in notes), "stave text is silent, like the Lyrics part"
+
+
+def test_stave_text_does_not_repeat_on_later_notes(timeline, stave_text_score):
+    """Not sticky: "III" is printed once, before note 2, and must appear
+    exactly once - never inferred forward onto notes 3 or 4."""
+    notes = _stave_text_notes(timeline(stave_text_score), "P1")
+    assert [n.step_name for n in notes].count("III") == 1
+
+
+def test_stave_text_never_leaks_onto_a_part_with_no_words_of_its_own(timeline, stave_text_score):
+    """The guitar-duet/flute+guitar-duet stress case: P2 has real notes but
+    no <direction> at all, so it must get zero Stave Text entries even
+    though P1 (the score's other part) has several."""
+    assert _stave_text_notes(timeline(stave_text_score), "P2") == []
+
+
+def test_smufl_glyph_only_words_produce_no_stave_text_entry(timeline, stave_text_score):
+    notes = _stave_text_notes(timeline(stave_text_score), "P1")
+    assert [n.step_name for n in notes] == ["Allegro", "III"], (
+        "the SMuFL Private-Use-Area-only <words> before note 3 must not appear"
+    )
+
+
+def test_stave_text_attribute_pairs_use_text_not_step_and_omit_duration_and_voice(timeline, stave_text_score):
+    """User feedback after trying the feature live: "step" is the wrong
+    label for free text (it isn't a pitch step); "duration" can't be
+    claimed for a mark whose real extent depends on unwritten later
+    instructions countermanding it; "voice" is a meaningless fabricated
+    number (STAVE_TEXT_VOICE_ID) since there's only ever one Stave Text
+    voice per staff."""
+    md = timeline(stave_text_score)
+    note = _stave_text_notes(md, "P1")[1]  # "III"
+
+    pairs = md._note_attribute_pairs(note)
+    assert pairs == {
+        "text": "III",
+        "measure": "1",
+        "beat position": "2.0",
+        "part": "Classical Guitar",
+        "stave": "Standard stave",
+    }
+
+    # Region 3's inline text leads with the words themselves, unprefixed,
+    # exactly like a real note leads with its step name. The "audible
+    # immediately" default itself is only wired up in MusicXMLReader.load()
+    # (see test_reader_adds_a_stave_text_voice_to_the_real_part_that_carries_it
+    # in tests/parsers/test_musicxml_reader.py) - the fast timeline() path
+    # used here has no parts_info/reader pass at all, so it's set explicitly.
+    md.voice_display_attributes[("P1", 1, note.voice)] = {
+        "text", "measure", "beat position", "part", "stave",
+    }
+    assert md._format_note_for_region_3(note) == (
+        "III, measure 1, beat position 2.0, part Classical Guitar, stave Standard stave"
+    )
+
+
+def test_jump_mark_words_are_excluded_from_stave_text_but_still_register_as_a_jump(timeline, stave_text_score):
+    md = timeline(stave_text_score)
+
+    notes = _stave_text_notes(md, "P1")
+    assert "D.S." not in [n.step_name for n in notes]
+    assert len(md.navigation_jumps) == 1
+    assert md.navigation_jumps[0].kind == "dalsegno"
+
+
+def test_no_stave_text_on_an_ordinary_score(timeline, minimal_score):
+    """Negative case: a score with no <direction><words> at all must add no
+    Stave Text voice/entries anywhere - no regression to ordinary scores."""
+    md = timeline(minimal_score)
+    notes = [n for s in md.timeline_slices for n in s.notes]
+    assert notes
+    assert _stave_text_notes(md, "P1") == []
+
+
+def test_stave_text_against_the_real_etude_file(timeline, score_etude_1_tablature):
+    """files/etude 1 tablature.mxl is the real file this feature was built
+    against: 10 roman-numeral position marks plus "Allegro"/"Staccato" (12
+    real words), and separately 12 SMuFL-glyph-only <words> (fingering-mark
+    font glyphs) that must be filtered out, all on P1. P2 (the tab staff)
+    has none of its own."""
+    md = timeline(score_etude_1_tablature)
+
+    p1_notes = _stave_text_notes(md, "P1")
+    assert len(p1_notes) == 12, "10 position marks + Allegro + Staccato - the 12 glyph-only <words> must not appear"
+    step_names = [n.step_name for n in p1_notes]
+    assert step_names[:2] == ["Allegro", "Staccato"]
+    assert set(step_names[2:]) == {"III", "IV", "V", "VIII"}, "verbatim roman numerals, never converted to digits"
+
+    assert _stave_text_notes(md, "P2") == []

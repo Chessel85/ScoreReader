@@ -128,6 +128,54 @@ def test_reader_defaults_the_chords_part_to_show_beat_position_and_strum(chords_
 
 
 @pytest.mark.slow
+def test_reader_adds_a_stave_text_voice_to_the_real_part_that_carries_it(stave_text_score):
+    """Generic stave text (parsers/timeline_builder.py's STAVE_TEXT_VOICE_ID)
+    is a fabricated voice on the SAME real part its <direction><words> was
+    found on - P1 here - never a new top-level part, and never P2 (which has
+    no <direction> of its own, the guitar-duet cross-contamination case)."""
+    from parsers.timeline_builder import STAVE_TEXT_VOICE_ID, STAVE_TEXT_VOICE_NAME
+
+    data = MusicXMLReader(stave_text_score).load()
+
+    names = [p.name for p in data.parts_info]
+    assert names == ["Classical Guitar", "Second Guitar"], "no new top-level part is added"
+
+    p1 = next(p for p in data.parts_info if p.part_id == "P1")
+    assert p1.staves_voices[1][0] == STAVE_TEXT_VOICE_ID, (
+        "user-requested: Stave Text is listed first, above the real voices, "
+        "matching how a position mark sits above the stave on the printed score"
+    )
+    assert p1.voice_names[(1, STAVE_TEXT_VOICE_ID)] == STAVE_TEXT_VOICE_NAME
+
+    p2 = next(p for p in data.parts_info if p.part_id == "P2")
+    assert STAVE_TEXT_VOICE_ID not in p2.staves_voices.get(1, [])
+
+    # Region 3's default is minimal - just the text itself, same as an
+    # ordinary note's bare "step" default. Region 4 shows the fuller
+    # measure/beat position/part/stave breakdown regardless of this toggle
+    # (see test_stave_text_attribute_pairs_use_text_not_step_and_omit_duration_and_voice).
+    assert data.voice_display_attributes[("P1", 1, STAVE_TEXT_VOICE_ID)] == {"text"}
+    assert ("P1", 1, 1) not in data.voice_display_attributes, "the real notation voice's default is untouched"
+
+
+@pytest.mark.slow
+def test_stave_text_region_3_default_shows_only_the_text(stave_text_score):
+    """Reported: the richer default (text+measure+beat position+part+stave)
+    put every one of those fields into Region 3's single row, which read as
+    "all the attributes crammed onto one entry" - Region 3 must show just
+    the words themselves by default, same as any other note's bare step."""
+    from parsers.timeline_builder import STAVE_TEXT_VOICE_ID
+
+    data = MusicXMLReader(stave_text_score).load()
+
+    note = next(
+        n for s in data.timeline_slices for n in s.notes
+        if n.part_id == "P1" and n.voice == STAVE_TEXT_VOICE_ID and n.step_name == "III"
+    )
+    assert data._format_note_for_region_3(note) == "III"
+
+
+@pytest.mark.slow
 def test_guitar_notes_play_the_guitar_program_not_the_piano_program(score_duet):
     """A8, Ref 8: reported bug - Chessel Duet's guitar (P2) used to play as
     piano because playback always read parts_info[0]'s program."""

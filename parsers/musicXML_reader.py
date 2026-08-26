@@ -13,7 +13,10 @@ from parsers.timeline_builder import (
     CHORDS_PART_NAME,
     LYRICS_PART_ID,
     LYRICS_PART_NAME,
+    STAVE_TEXT_VOICE_ID,
+    STAVE_TEXT_VOICE_NAME,
     _percussion_instrument_map,
+    _stave_text_staves_for_part,
     has_harmony_elements,
     has_lyric_elements,
 )
@@ -71,6 +74,23 @@ class MusicXMLReader:
             music_data.voice_display_attributes[(CHORDS_PART_ID, 1, 1)] = {
                 "step", "beat position", "strum",
             }
+
+        # Generic stave text default: just the text itself in Region 3's
+        # inline row, same minimal "plain content, nothing else" convention
+        # DEFAULT_DISPLAY_ATTRIBUTES uses for an ordinary note's bare "step".
+        # Reported: setting this to the fuller {"text", "measure", ...} set
+        # (mirroring GP/MusicXML Chords' richer default) put every one of
+        # those fields into Region 3's single row too, which read as "all
+        # the attributes crammed onto one entry" - not what was wanted.
+        # Region 4 is unaffected either way: _region_4_rows always shows
+        # every key _note_attribute_pairs actually returns (measure/beat
+        # position/part/stave included) regardless of this toggle - it is
+        # not gated by voice_display_attributes at all, unlike Region 3's
+        # inline text - so the full breakdown stays available there.
+        for p in etree_parts_info:
+            for staff_id, voice_ids in p.staves_voices.items():
+                if STAVE_TEXT_VOICE_ID in voice_ids:
+                    music_data.voice_display_attributes[(p.part_id, staff_id, STAVE_TEXT_VOICE_ID)] = {"text"}
 
         return music_data
 
@@ -317,6 +337,26 @@ class MusicXMLReader:
 
                 p_info.staves_clefs = staves_clefs
                 p_info.staves_voices = staves_voices
+
+                # Generic stave text (see timeline_builder.py's
+                # STAVE_TEXT_VOICE_ID): a fabricated voice added to
+                # whichever of THIS part's own staves actually carries a
+                # qualifying <direction><words> mark - never any other
+                # part, so a guitar duet's two independent fret-position
+                # tracks (or a flute+guitar duet's guitar-only fret text)
+                # can never cross-contaminate. Inserted at index 0 - added
+                # AFTER the real voices are already sorted above, so this is
+                # what keeps it first in Region 2 rather than sorting after
+                # every real voice (STAVE_TEXT_VOICE_ID's value is far
+                # higher than any real voice number). User-requested: this
+                # matches how a position mark is shown visually on a score,
+                # above the stave rather than as one more voice within it.
+                for staff_num in _stave_text_staves_for_part(part_elem):
+                    p_info.staves_voices.setdefault(staff_num, [])
+                    if STAVE_TEXT_VOICE_ID not in p_info.staves_voices[staff_num]:
+                        p_info.staves_voices[staff_num].insert(0, STAVE_TEXT_VOICE_ID)
+                    p_info.voice_names[(staff_num, STAVE_TEXT_VOICE_ID)] = STAVE_TEXT_VOICE_NAME
+
                 parts_list.append(p_info)
 
             # A real notated score (piano/guitar lead sheet, e.g.) can carry

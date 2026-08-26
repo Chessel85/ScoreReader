@@ -1917,10 +1917,10 @@ def test_bar_bounds_follow_a_mid_score_time_signature_change(timeline, ts_change
     assert md.bar_bounds_quarters(8) == (7.0, 11.0)
 
 
-def test_bar_bounds_of_a_pickup_bar_end_on_the_real_bar_line(timeline):
+def test_bar_bounds_of_a_pickup_bar_end_on_the_real_bar_line(timeline, score_bourree_full):
     """Ref 17: a pickup's notional bar starts before the piece does. The
     END is what Preview's loop needs, and it is the real bar line."""
-    md = timeline("files/bach-bourree-tab/score.xml")
+    md = timeline(score_bourree_full)
 
     start, end = md.bar_bounds_quarters(0)
     assert md.timeline_slices[0].measure == 0

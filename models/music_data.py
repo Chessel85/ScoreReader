@@ -24,7 +24,7 @@ from models.tempo_change import TempoChange
 from models.to_coda_mark import ToCodaMark
 from parsers.gp_timeline_builder import GpTimelineBuilder
 from parsers.midi_timeline_builder import MidiTimelineBuilder, _spell_pitch
-from parsers.timeline_builder import CHORDS_PART_ID, LYRICS_PART_ID, TimelineBuilder
+from parsers.timeline_builder import CHORDS_PART_ID, LYRICS_PART_ID, STAVE_TEXT_VOICE_ID, TimelineBuilder
 from parsers.ug_source import strum_directions
 from parsers.ug_timeline_builder import UgTimelineBuilder
 
@@ -735,8 +735,14 @@ class MusicData:
     # extra attributes and Region 4's rows - every fresh MusicData starts
     # attribute_order (see __post_init__) as a copy of this. F2's
     # attribute-order dialog mutates that live copy, never this constant.
+    # "text" sits right before "measure" rather than beside "step" - it and
+    # "step"/"octave"/"midi" are mutually exclusive per note (an ordinary
+    # note never has "text", a stave text event never has step/octave/midi),
+    # so its exact position among those three doesn't affect rendering
+    # either way; placed here instead so it doesn't disturb the "step"/
+    # "octave" adjacency and "strum is last" behaviour existing tests pin.
     DISPLAY_ATTRIBUTE_ORDER = [
-        "step", "octave", "midi", "measure", "beat position", "duration",
+        "step", "octave", "midi", "text", "measure", "beat position", "duration",
         "part", "stave", "voice", "string", "fret",
         "dynamic", "articulation", "fingering", "pluck", "strum",
     ]
@@ -765,7 +771,21 @@ class MusicData:
 
         Only keys the note actually has a value for are included (a rest has
         no octave or midi). That absence is the mechanism that stops either
-        region rendering a row for data that doesn't exist."""
+        region rendering a row for data that doesn't exist.
+
+        A generic stave text event (voice == STAVE_TEXT_VOICE_ID) is not an
+        ordinary note and gets three deliberate deviations, all user-
+        requested after trying the feature live: its text goes under "text"
+        rather than "step" (it isn't a pitch step, and Region 4 needs its
+        own distinct label for it); it never gets a "duration" ("Allegro"
+        covering the rest of the piece is a real reading, but nothing short
+        of tracking every later instruction that could countermand it would
+        tell an assumed duration from a wrong one, so none is claimed at
+        all); and it never gets a "voice" (the fabricated STAVE_TEXT_VOICE_ID
+        number is an implementation detail, not information - there is only
+        ever one Stave Text voice per staff, so unlike a real voice number it
+        never disambiguates anything a user could act on)."""
+        is_stave_text = note.voice == STAVE_TEXT_VOICE_ID
         if note.duration_name_us is not None:
             dur_str = vocabulary.duration_name(note.duration_name_us, self.uk_terms)
         else:
@@ -780,17 +800,19 @@ class MusicData:
             # Region 3 and Region 4 since both read this same "step" pair.
             grace_str = ", ".join(g.step_name for g in note.grace_notes)
             step_str = f"{grace_str} grace {step_str}"
-        pairs = {"step": step_str}
+        pairs = {"text": step_str} if is_stave_text else {"step": step_str}
         if note.octave is not None:
             pairs["octave"] = str(note.octave)
         if note.midi_pitch is not None:
             pairs["midi"] = str(note.midi_pitch)
         pairs["measure"] = str(note.measure)
         pairs["beat position"] = str(note.beat_position)
-        pairs["duration"] = dur_str
+        if not is_stave_text:
+            pairs["duration"] = dur_str
         pairs["part"] = note.part_name
         pairs["stave"] = self.get_stave_name_for_part(note.part_id, note.staff)
-        pairs["voice"] = str(note.voice)
+        if not is_stave_text:
+            pairs["voice"] = str(note.voice)
         if note.string is not None:
             pairs["string"] = str(note.string)
         if note.fret is not None:
@@ -837,7 +859,7 @@ class MusicData:
     # itself rather than relying on this set for "duration".
     # Region 4's table always labels its "Duration" row regardless; only
     # this inline rendering ever omits the prefix.
-    REGION_3_UNPREFIXED_ATTRIBUTES = frozenset({"step", "duration"})
+    REGION_3_UNPREFIXED_ATTRIBUTES = frozenset({"step", "text", "duration"})
 
     def _format_note_for_region_3(self, note: NoteData) -> str:
         """Ref 15 AC4: the note name plus whichever extras its voice has

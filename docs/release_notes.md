@@ -1,5 +1,9 @@
 # Recall Score Release Notes
 
+## 2026.1.29
+
+* Introduced concept of stave text as a peer to voices 
+
 ## 2026.1.28
 
 * Added a tuner in a new tools menu supporting multiple instruments

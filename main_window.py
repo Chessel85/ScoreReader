@@ -813,7 +813,22 @@ class MainWindow(QMainWindow):
         self.persistence.refresh_clear_action()
 
     def _clear_current_score_preferences(self):
+        """Reported bug: clearing only deleted the on-disk .rsc - the
+        already-loaded MusicData/Region 2 (mute/solo, voice_display_
+        attributes, attribute_order, metronome...) kept whatever was in
+        effect, so e.g. a solo toggled before clearing stayed soloed. Reload
+        the same file straight after deleting, the same fresh-defaults path
+        a normal open takes (saved_config is None in _on_score_loaded, since
+        clear_current() just removed it) - not a hand-rolled reset of every
+        live field, which would be a second place to keep in sync with
+        apply_config(). Uses self.session.load(...) directly, NOT
+        load_score_from_file(...), which saves the current (still stale,
+        about to be discarded) config to disk BEFORE loading - that would
+        silently recreate the very .rsc this action just deleted."""
+        file_path = self._music_data.file_path if self._music_data else None
         self.persistence.clear_current()
+        if file_path and not self.session.is_loading():
+            self.session.load(file_path)
 
     # --- dialects ------------------------------------------------------
 

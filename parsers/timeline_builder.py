@@ -2,7 +2,7 @@
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from music21 import harmony as harmony21
 
@@ -40,6 +40,85 @@ CHORDS_PART_ID = "chords"
 CHORDS_PART_NAME = "Chords"
 LYRICS_PART_ID = "lyrics"
 LYRICS_PART_NAME = "Lyrics"
+
+# Generic "stave text" support: any free-text <direction><direction-type>
+# <words> a real part carries (guitar left-hand position roman numerals,
+# tempo/technique words an exporter wrote as plain text instead of semantic
+# markup - "Allegro", "Staccato", "Pizz.", all confirmed in real fixtures)
+# becomes its own event, distinct from the notes around it - deliberately
+# NOT sticky/carried forward to later notes (the user's own call: inferring
+# how long a marking "lasts" would invent information the score doesn't
+# state). Unlike Chords/Lyrics above, this is NOT a new top-level part -
+# each occurrence attaches to whichever REAL part/staff its <direction>
+# element is physically inside, via a fabricated voice id on that part -
+# the same "fabricate a voice_id, reuse the existing tree" trick
+# parsers/gp_timeline_builder.py's GP_CHORD_VOICE_ID already established for
+# GP's synthetic Chords voice. This is what makes a guitar-duet's two
+# independent fret-position tracks (or a flute+guitar duet's guitar-only
+# fret text) fall out for free with zero cross-part guessing: each part's
+# own <direction> elements can only ever produce a voice on that same part.
+STAVE_TEXT_VOICE_ID = 1000
+STAVE_TEXT_VOICE_NAME = "Stave Text"
+
+# SMuFL Private Use Area (U+E000-U+F8FF): a <words> element can hold music-
+# font glyph codepoints instead of readable text - confirmed in a real file
+# (files/etude 1 tablature.mxl, font-family="Leland Text") where 12 such
+# elements are MuseScore's own redundant *visual* rendering of right-hand
+# pluck-fingering marks already captured properly via
+# <notations><technical><pluck>/NoteData.pluck. Left in, these would read as
+# garbage to a screen reader, so any <words> text that is ENTIRELY such
+# glyphs (after stripping whitespace) is not qualifying stave text.
+_SMUFL_PUA_RE = re.compile("[-]")
+
+
+def _is_pure_smufl_glyph_text(text: str) -> bool:
+    return _SMUFL_PUA_RE.sub("", text).strip() == ""
+
+
+def _is_qualifying_stave_text(text: Optional[str]) -> bool:
+    """Whether a <words> element's text should become a Stave Text event.
+
+    Excludes only two things, both grounded in real fixture content: bare
+    SMuFL glyph "text" (see _is_pure_smufl_glyph_text) and text that already
+    matches the existing D.C./D.S./Fine/Coda/To-Coda jump-mark vocabulary
+    (TimelineBuilder._is_jump_mark_words) - that text already drives real
+    playback-jump behaviour and a Performance Report line elsewhere, so
+    surfacing the identical printed mark a second time as an inert Stave
+    Text event would just be confusing duplicate information. Everything
+    else - tempo words, technique words, position marks, anything a sighted
+    reader would see printed on the score - qualifies, deliberately generic
+    rather than guitar/position-specific.
+    """
+    if not text:
+        return False
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if _is_pure_smufl_glyph_text(text):
+        return False
+    if TimelineBuilder._is_jump_mark_words(stripped):
+        return False
+    return True
+
+
+def _stave_text_staves_for_part(part_elem: ET.Element) -> Set[int]:
+    """Which staff numbers within this one real <part> carry at least one
+    qualifying stave-text <words> mark. Used by MusicXMLReader to decide
+    which (part, staff) pairs need a fabricated Stave Text voice added to
+    PartStructureInfo; TimelineBuilder.build() independently re-applies the
+    identical _is_qualifying_stave_text filter while walking notes, so the
+    two can't disagree on which text counts (the same shared-detector
+    convention has_harmony_elements/has_lyric_elements already use).
+    """
+    staves: Set[int] = set()
+    for direction_elem in part_elem.findall(".//direction"):
+        for words_el in direction_elem.findall("direction-type/words"):
+            if not _is_qualifying_stave_text(words_el.text):
+                continue
+            staff_el = direction_elem.find("staff")
+            staff = int(staff_el.text.strip()) if (staff_el is not None and staff_el.text) else 1
+            staves.add(staff)
+    return staves
 
 
 def has_harmony_elements(root: Optional[ET.Element]) -> bool:
@@ -450,6 +529,52 @@ class TimelineBuilder:
                             dir_staff = int(dir_staff_el.text.strip()) if (dir_staff_el is not None and dir_staff_el.text) else None
                             pending_dynamics[(dir_staff, walker.offset_divs)] = dynamic_name(mark)
 
+                        # Generic stave text (see STAVE_TEXT_VOICE_ID above):
+                        # built independently, right here, and bucketed
+                        # immediately - unlike pending_dynamics, nothing here
+                        # is deferred/inherited by a later note, so there is
+                        # no stickiness to a following event by construction.
+                        for words_el in elem.findall("direction-type/words"):
+                            if not _is_qualifying_stave_text(words_el.text):
+                                continue
+                            st_staff_el = elem.find("staff")
+                            st_staff = (
+                                int(st_staff_el.text.strip())
+                                if (st_staff_el is not None and st_staff_el.text)
+                                else 1
+                            )
+                            st_offset_el = elem.find("offset")
+                            st_offset_divs = walker.offset_divs
+                            if st_offset_el is not None and st_offset_el.text:
+                                try:
+                                    st_offset_divs += int(st_offset_el.text.strip())
+                                except ValueError:
+                                    pass
+                            st_offset_q = st_offset_divs / walker.divisions
+                            if m_num == 0:
+                                st_start_beat = self._start_beat(
+                                    full_bar_quarters, pickup_filled_quarters, beat_unit_quarter_len
+                                )
+                                st_beat_pos = st_start_beat + (st_offset_q / beat_unit_quarter_len)
+                            else:
+                                st_beat_pos = 1.0 + (st_offset_q / beat_unit_quarter_len)
+                            stave_text_note = NoteData(
+                                step_name=words_el.text.strip(),
+                                octave=None,
+                                midi_pitch=None,
+                                measure=m_num,
+                                beat_position=round(st_beat_pos, 2),
+                                ts_duration=float(walker.ts_num),
+                                quarter_length=full_bar_quarters,
+                                part_id=part_id,
+                                part_name=part_name,
+                                staff=st_staff,
+                                voice=STAVE_TEXT_VOICE_ID,
+                            )
+                            st_key = (m_num, round(st_offset_q, 4))
+                            buckets.setdefault(st_key, []).append(stave_text_note)
+                            slice_state.setdefault(st_key, ((walker.ts_num, walker.ts_den), walker.fifths))
+
                     if elem.tag == "harmony":
                         # <harmony> is a <measure> child like <direction>,
                         # not a <note> child - walker.step() already
@@ -858,7 +983,18 @@ class TimelineBuilder:
         part_order[LYRICS_PART_ID] = len(part_order)
 
         def _pitch_sort_key(note: NoteData) -> Tuple[int, float]:
-            pitch_component = -note.midi_pitch if note.midi_pitch is not None else float("inf")
+            # Stave text shares its real part's own part_id (not a separate
+            # part - see STAVE_TEXT_VOICE_ID above), so it would otherwise
+            # fall into the ordinary midi_pitch-is-None tiebreak below and
+            # sort AFTER every real note, same as a silent rest. User-
+            # requested: it should read first instead, matching how it's
+            # already listed above the real voices in Region 2 (mirroring a
+            # position mark's own placement above the stave on the printed
+            # score) - float("-inf") beats every real pitch_component.
+            if note.voice == STAVE_TEXT_VOICE_ID:
+                pitch_component = float("-inf")
+            else:
+                pitch_component = -note.midi_pitch if note.midi_pitch is not None else float("inf")
             return (part_order.get(note.part_id, 0), pitch_component)
 
         for bucket_notes in buckets.values():
@@ -1183,6 +1319,23 @@ class TimelineBuilder:
             if words_el is None or not words_el.text:
                 continue
             self._match_words_jump_mark(words_el.text, m_num, scan)
+
+    @classmethod
+    def _is_jump_mark_words(cls, text: str) -> bool:
+        """Pure predicate version of the five _match_words_jump_mark
+        patterns below, for _is_qualifying_stave_text's dedup check - no
+        scan mutation, safe to call from anywhere without touching
+        _step_direction_jump_marks' own (first-part-only) control flow."""
+        return any(
+            p.match(text) is not None
+            for p in (
+                cls._TO_CODA_WORDS_RE,
+                cls._CODA_WORDS_RE,
+                cls._DACAPO_WORDS_RE,
+                cls._DALSEGNO_WORDS_RE,
+                cls._FINE_WORDS_RE,
+            )
+        )
 
     @classmethod
     def _match_words_jump_mark(cls, text: str, m_num: int, scan: "_FirstPartScan") -> None:

@@ -15,7 +15,7 @@ Before writing, briefly inspect the codebase—specifically the UI components, m
   1. Introduction / Overview (What the app does in 2-3 sentences)
   2. Getting Started / Basic Concepts
   3. Core Features & Workflows (The bulk of the guide)
-  4. Settings & Preferences (If applicable)
+  4. Reference information, Settings & Preferences (If applicable)
 
 ### Style & Formatting Rules:
 * Use active voice and short, clear sentences.

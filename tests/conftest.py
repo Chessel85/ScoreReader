@@ -207,6 +207,19 @@ def chord_and_stroke_same_note_score() -> str:
 
 
 @pytest.fixture
+def stave_text_score() -> str:
+    """Two parts, one 4/4 bar each. P1 carries every generic-stave-text case
+    on its own four notes: a bare tempo word with no metronome sibling
+    ("Allegro"), a qualifying position mark ("III"), a SMuFL-glyph-only
+    <words> that must produce no entry, and a jump-mark word ("D.S.") that
+    must also produce no entry (while still registering as its own
+    NavigationJump via the existing, untouched path). P2 has real notes but
+    no <direction> elements at all - the guitar-duet/flute+guitar-duet
+    cross-contamination case: stave text must never leak onto it."""
+    return _require(FIXTURES_DIR / "stave_text.musicxml")
+
+
+@pytest.fixture
 def score_three_blind_mice() -> str:
     """A real MuseScore 4.7.4 export: one Piano part (2 staves), a chord
     symbol on every bar with content, a lyric on every melody note, and
@@ -222,6 +235,12 @@ def score_bourree() -> str:
     """4/4 guitar score: notation staff plus a TAB staff duplicating it.
 
     Pickup is exported as number="1", so measure re-indexing applies.
+
+    Unlike the other real-file fixtures below, this one has no surviving
+    replacement to repoint to - both the loose extracted copy and its own
+    "bach-bourree-tab short.mxl" were pruned from files/, with nothing left
+    carrying this exact ("short") content. Tests depending on this fixture
+    correctly skip via _require rather than fail.
     """
     return _require(SCORES_DIR / "bach-bourree-tab short" / "score.xml")
 
@@ -233,8 +252,12 @@ def score_bourree_full() -> str:
     ground-truth cross-check (test_midi_timeline_builder.py) uses this
     specific file because files/midi/bach-bourree-tab.mid is MuseScore's own
     MIDI export of exactly this MusicXML, unchanged.
+
+    Points at the compressed .mxl - the loose extracted META-INF/score.xml
+    copy this used to point at was pruned from files/ as redundant (the
+    .mxl already carries the identical content).
     """
-    return _require(SCORES_DIR / "bach-bourree-tab" / "score.xml")
+    return _require(SCORES_DIR / "bach-bourree-tab.mxl")
 
 
 @pytest.fixture
@@ -243,19 +266,43 @@ def score_duet() -> str:
 
     Pickup is exported as number="0" implicit="yes" - the convention the
     parser currently mishandles (A3).
+
+    Same file as score_duet_mxl below - the loose extracted copy this used
+    to point at independently was pruned from files/ as redundant, leaving
+    the compressed .mxl as the only surviving copy of this score. Kept as
+    its own fixture (rather than folding every call site over to
+    score_duet_mxl) purely so test_reader_handles_compressed_mxl_the_same_
+    as_the_uncompressed_score's "compare an uncompressed parse against the
+    compressed one" premise stays legible even though it can now only ever
+    skip (no independent uncompressed sample survives to compare against).
     """
-    return _require(SCORES_DIR / "Chessel Duet" / "score.xml")
+    return _require(SCORES_DIR / "Chessel Duet.mxl")
 
 
 @pytest.fixture
 def score_duet_mxl() -> str:
-    """The same score as score_duet, but the real compressed .mxl the user
-    would actually open - internally just META-INF/container.xml + a member
-    named score.xml, same as every other real .mxl in files/, which is
-    exactly the "every real file is internally called score.xml" case that
-    per-file config naming (Ref 27) must key off the outer .mxl filename
-    instead of."""
+    """The real compressed .mxl the user would actually open for this score
+    - internally just META-INF/container.xml + a member named score.xml,
+    same as every other real .mxl in files/, which is exactly the "every
+    real file is internally called score.xml" case that per-file config
+    naming (Ref 27) must key off the outer .mxl filename instead of."""
     return _require(SCORES_DIR / "Chessel Duet.mxl")
+
+
+@pytest.fixture
+def score_etude_1_tablature() -> str:
+    """A real Carcassi guitar etude export: two real parts, "Classical
+    Guitar" (standard notation) and "Guitare classique [Tablature]" (a
+    linked tab staff), grouped by a part-group brace with matching
+    instrument-sound but no other formal MusicXML link. From bar 29
+    onwards, the notation part carries <direction><words> roman-numeral
+    left-hand position marks ("III"/"V"/"VIII"/"IV") - the real file the
+    generic stave-text feature (STAVE_TEXT_VOICE_ID) was built against. Also
+    carries 12 <words> elements that are SMuFL Private-Use-Area glyphs
+    (font-family="Leland Text", MuseScore's own redundant visual rendering
+    of pluck-fingering marks already captured via NoteData.pluck) - the
+    real-file exercise of the glyph-noise filter."""
+    return _require(SCORES_DIR / "etude 1 tablature.mxl")
 
 
 @pytest.fixture
@@ -273,8 +320,11 @@ def score_hit_it() -> str:
 def score_long_tune() -> str:
     """4/4, one part, 130 measures, no pickup - a real score with genuine
     multi-digit measure numbers, for C4's digit-entry bar jump (Ref 6).
+
+    Points at the compressed .mxl - the loose extracted copy this used to
+    point at was pruned from files/ as redundant.
     """
-    return _require(SCORES_DIR / "long tune" / "score.xml")
+    return _require(SCORES_DIR / "long tune.mxl")
 
 
 @pytest.fixture
@@ -380,8 +430,11 @@ def score_way_to_go() -> str:
     Time signature changes 4/4 -> 3/4 -> 4/4 and key signature changes
     mid-piece. The parser currently reads both from the first match only
     (A6), so this is the fixture that exercises the bug.
+
+    Points at the compressed .mxl - the loose extracted copy this used to
+    point at was pruned from files/ as redundant.
     """
-    return _require(SCORES_DIR / "Way To Go" / "score.xml")
+    return _require(SCORES_DIR / "Way To Go.mxl")
 
 
 @pytest.fixture

@@ -3303,6 +3303,28 @@ def test_clear_preferences_deletes_the_saved_config(window, qtbot, minimal_score
     window._clear_current_score_preferences()
 
     assert score_config.load_for(minimal_score) is None
+    qtbot.waitUntil(lambda: window._load_thread is None, timeout=5000)
+
+
+def test_clear_preferences_also_resets_the_live_session(window, qtbot, minimal_score):
+    """Reported bug: clearing used to only delete the on-disk .rsc, leaving
+    the already-loaded MusicData/Region 2 untouched - a solo toggled before
+    clearing stayed soloed even though the saved config was gone. Fixed by
+    reloading the same file straight after deleting (see
+    MainWindow._clear_current_score_preferences), the same fresh-defaults
+    path a normal open takes."""
+    load_and_wait(window, qtbot, minimal_score)
+    window.toggle_metronome()
+    window.region_2.model_manager.toggle_solo("voice_P1_1_1")
+    window._save_current_score_config()
+    assert window._music_data.metronome_enabled is True
+    assert window.region_2.model_manager.node("voice_P1_1_1").soloed is True
+
+    window._clear_current_score_preferences()
+    qtbot.waitUntil(lambda: window._load_thread is None, timeout=5000)
+
+    assert window._music_data.metronome_enabled is False
+    assert window.region_2.model_manager.node("voice_P1_1_1").soloed is False
 
 
 def test_closing_the_window_saves_the_current_score_config(window, qtbot, minimal_score):
