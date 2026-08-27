@@ -47,14 +47,10 @@ _USER_AGENT = (
 
 _JS_STORE_RE = re.compile(r'class="js-store" data-content="(.*?)"></div>', re.S)
 
-# Decodes for tab_view.strummings[0].measures[] codes - confirmed by the
-# user against a real UG page; no public documentation exists for them.
-# Both decodes live here, next to UgSource.strum_codes, since they're just
-# two different interpretations of the same field: STRUM_CODE_WORDS for
-# Region 1's display text (parsers/ug_reader.py), STRUM_CODE_DIRECTIONS for
-# actual playback (audio/strum_schedule.py, via MusicData.ug_strum_pattern).
-STRUM_CODE_WORDS = {1: "downstroke", 101: "upstroke", 202: "muted strum"}
-STRUM_CODE_DIRECTIONS = {1: "down", 101: "up", 202: "mute"}
+# S2: the strum-code tables and both decodes now live in
+# models/strum_codes.py (a pure lookup table, like models/gm_instruments.py),
+# so models/ need not import from parsers/ just to read them. Import them
+# from there, not from here.
 
 
 @dataclass
@@ -79,28 +75,6 @@ class UgSource:
     # "absence isn't an error" convention as tonality/tuning above when UG
     # doesn't supply one.
     strum_codes: List[int] = field(default_factory=list)
-
-
-def strumming_pattern_text(strum_codes: List[int]) -> Optional[str]:
-    """Region 1 credits text for a whole-song strum pattern (UG's own
-    strummings block is "part": "whole" - one fixed pattern for the entire
-    song, not per-bar/per-section - so this is a score-wide fact like
-    Tempo/Key/Tuning, shown once, never repeated per chord note). An
-    unrecognised code (should one turn up on a different tab) renders as
-    its own raw number rather than raising."""
-    if not strum_codes:
-        return None
-    words = [STRUM_CODE_WORDS.get(code, str(code)) for code in strum_codes]
-    return ", ".join(words)
-
-
-def strum_directions(strum_codes: List[int]) -> List[str]:
-    """The same codes, decoded into audio/strum_schedule.py's compact
-    direction vocabulary ("down"/"up"/"mute") instead of display words. An
-    unrecognised code defaults to "mute" - the quietest, safest fallback
-    for a code outside the three the user confirmed, rather than guessing a
-    stroke direction."""
-    return [STRUM_CODE_DIRECTIONS.get(code, "mute") for code in strum_codes]
 
 
 def validate_url_shape(url: str) -> None:

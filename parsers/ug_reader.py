@@ -1,11 +1,15 @@
 # parsers/ug_reader.py
 from models.music_data import MusicData
 from models.parts_structure import PartStructureInfo
-from parsers.ug_source import UgSource, read_ug_source, read_ug_source_file, strumming_pattern_text
-from parsers.ug_timeline_builder import CHORDS_PART_ID, LYRICS_PART_ID
+from models.synthetic_parts import (
+    CHORDS_PART_ID,
+    CHORDS_PART_NAME,
+    LYRICS_PART_ID,
+    LYRICS_PART_NAME,
+)
+from models.strum_codes import strumming_pattern_text
+from parsers.ug_source import UgSource, read_ug_source, read_ug_source_file
 
-CHORDS_PART_NAME = "Chords"
-LYRICS_PART_NAME = "Lyrics"
 
 
 def _build_music_data(source: UgSource, file_path: str) -> MusicData:

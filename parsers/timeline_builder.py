@@ -19,6 +19,13 @@ from models.fine_mark import FineMark
 from models.hairpin_span import HairpinSpan
 from models.navigation_jump import NavigationJump
 from models.note_data import GraceNote, NoteData
+from models.synthetic_parts import (
+    CHORDS_PART_ID,
+    CHORDS_PART_NAME,
+    LYRICS_PART_ID,
+    LYRICS_PART_NAME,
+    STAVE_TEXT_VOICE_ID,
+)
 from models.parts_structure import PartStructureInfo
 from models.repeat_span import RepeatSpan
 from models.segno_mark import SegnoMark
@@ -36,10 +43,7 @@ from parsers.xml_source import read_musicxml_root
 # MusicXMLReader (parts_info entries, so Region 2/mixer/channel assignment
 # see them) and TimelineBuilder (the notes themselves) via one constant each,
 # so the two can't disagree on a name the way R5's two independent reads did.
-CHORDS_PART_ID = "chords"
-CHORDS_PART_NAME = "Chords"
-LYRICS_PART_ID = "lyrics"
-LYRICS_PART_NAME = "Lyrics"
+# S2: re-exported from models/synthetic_parts.py (one definition, see there).
 
 # Generic "stave text" support: any free-text <direction><direction-type>
 # <words> a real part carries (guitar left-hand position roman numerals,
@@ -57,8 +61,7 @@ LYRICS_PART_NAME = "Lyrics"
 # independent fret-position tracks (or a flute+guitar duet's guitar-only
 # fret text) fall out for free with zero cross-part guessing: each part's
 # own <direction> elements can only ever produce a voice on that same part.
-STAVE_TEXT_VOICE_ID = 1000
-STAVE_TEXT_VOICE_NAME = "Stave Text"
+# S2: re-exported from models/synthetic_parts.py (one definition, see there).
 
 # SMuFL Private Use Area (U+E000-U+F8FF): a <words> element can hold music-
 # font glyph codepoints instead of readable text - confirmed in a real file
@@ -342,6 +345,218 @@ class _FirstPartScan:
     navigation_jumps: List[NavigationJump] = field(default_factory=list)
 
 
+def _staff_number(elem, default):
+    """A <staff> child's number, or `default` when absent. Read three
+    different ways in the original walk (defaulting to None for a dynamics
+    direction, 1 for stave text and for a note); the default is the only
+    difference, so it's the parameter."""
+    staff_el = elem.find("staff")
+    if staff_el is not None and staff_el.text:
+        return int(staff_el.text.strip())
+    return default
+
+
+def _displaced_offset_divs(elem, walker) -> int:
+    """The walker's current offset, displaced by an <offset> child if the
+    element has one. <direction> and <harmony> are both <measure> children
+    that never advance the cursor themselves and both use this same
+    convention; a malformed offset is ignored rather than raising."""
+    offset_divs = walker.offset_divs
+    offset_el = elem.find("offset")
+    if offset_el is not None and offset_el.text:
+        try:
+            offset_divs += int(offset_el.text.strip())
+        except ValueError:
+            pass
+    return offset_divs
+
+
+def _duration_display_name(elem, quarter_len: float) -> Optional[str]:
+    """The note's spoken duration word.
+
+    Taken from the note's own notated shape (<type>/<dot>), not a
+    reverse-lookup from quarter_length - a tuplet member's <type> still
+    reads "eighth" even though its actual sounding duration isn't a clean
+    fraction, which is exactly what a musician reading the note list wants
+    ("quaver", not some approximated tuplet fraction). Falls back to the
+    reverse-lookup only when there is no <type> at all - chiefly a
+    whole-measure rest, which MusicXML allows to omit it - rather than
+    leaving the note with no word.
+    """
+    type_el = elem.find("type")
+    duration_type = type_el.text.strip() if (type_el is not None and type_el.text) else None
+    if duration_type is not None:
+        name = beat_unit_display_name(duration_type, len(elem.findall("dot")))
+    else:
+        name = quarter_length_to_display_name(quarter_len)
+
+    time_mod_el = elem.find("time-modification")
+    if name is not None and time_mod_el is not None:
+        actual_notes_el = time_mod_el.find("actual-notes")
+        if actual_notes_el is not None and actual_notes_el.text:
+            word = tuplet_word(int(actual_notes_el.text.strip()))
+            if word is not None:
+                name = f"{name} {word}"
+    return name
+
+
+@dataclass
+class _NoteReading:
+    """What <pitch>/<unpitched> (or a rest) says a note sounds as."""
+    step_name: str
+    octave: Optional[int] = None
+    midi_pitch: Optional[int] = None
+    percussion_source_key: Optional[int] = None
+    # A percussion item replaces the note's real notated <voice> with its
+    # own declared key - see TimelineBuilder._read_pitch.
+    voice_override: Optional[int] = None
+
+
+@dataclass
+class _NoteMarks:
+    """Everything hanging off a <note> that isn't its pitch. All optional by
+    design: absence is how Region 3/4 know not to render a row (see
+    NoteRenderer.note_attribute_pairs)."""
+    fret: Optional[int] = None
+    string_num: Optional[int] = None
+    fingering: Optional[str] = None
+    pluck: Optional[str] = None
+    articulation: Optional[str] = None
+    dynamic: Optional[str] = None
+    strum: Optional[str] = None
+    lyric_text: Optional[str] = None
+
+
+@dataclass
+class _PartState:
+    """State that survives across one part's measures.
+
+    divisions/time signature/key carry forward from each measure's walker to
+    seed the next (MusicXML states them once and they persist); the sticky
+    current chord is what lets an arpeggiate mark several bars later still
+    know which chord it strums. Scoped per PART, not per document - every
+    real file seen carries <harmony>/<notations/arpeggiate> on a single
+    part, and interleaving correctly across parts would need the measures
+    walked in time order across parts rather than one part fully at a time.
+    """
+    part_id: str
+    part_name: str
+    percussion_instruments: Dict[str, Tuple[str, Optional[int]]]
+    pickup_filled_quarters: float
+
+    divisions: int = 1
+    time_sig_num: int = 4
+    time_sig_den: int = 4
+    fifths: int = 0
+
+    current_chord_pitches: Optional[List[int]] = None
+    current_chord_label: str = "Strum"
+    # Reported: when a bar's own <harmony> lands at the same beat as an
+    # arpeggiate-marked note (a bar with no other stroke, so the harmony IS
+    # the first note - files/Three Blind Mice.mxl's bar 4), the once-per-bar
+    # harmony entry and the stroke entry ended up as two near-identical
+    # Chords rows at the same slice ("G, beat position 1.0" right next to
+    # "G, beat position 1.0, strum down stroke") - real information, but
+    # redundant enough to read as noise ("obfuscated by the presence of the
+    # chord", the user's own description). Tracks the harmony NoteData
+    # already emitted at each (measure, offset) this part has seen, so a
+    # stroke landing on that same slice sets .strum on that SAME NoteData in
+    # place instead of adding a second one.
+    harmony_notes_by_key: Dict[Tuple[int, float], NoteData] = field(default_factory=dict)
+
+    def __post_init__(self):
+        self.refresh_bar_shape()
+
+    def refresh_bar_shape(self, walker=None) -> None:
+        """Recompute the beat unit and bar length. Called once per part from
+        the seeded time signature, and again at every <attributes> from the
+        walker's live one (a time signature change takes effect there).
+
+        Deliberately does NOT write back to time_sig_num/time_sig_den:
+        those exist only to seed the NEXT measure's walker, and carry_forward
+        is the one place that sets them - keeping the two roles separate is
+        what makes a mid-measure <attributes> affect this bar's beat maths
+        without touching the seed.
+        """
+        ts_num = walker.ts_num if walker is not None else self.time_sig_num
+        ts_den = walker.ts_den if walker is not None else self.time_sig_den
+        self.beat_unit_quarter_len = 4.0 / ts_den
+        self.full_bar_quarters = ts_num * self.beat_unit_quarter_len
+
+    def carry_forward(self, walker) -> None:
+        """Seed the next measure's walker from where this one ended."""
+        self.divisions = walker.divisions
+        self.time_sig_num = walker.ts_num
+        self.time_sig_den = walker.ts_den
+        self.fifths = walker.fifths
+
+    def beat_position(self, m_num: int, offset_q: float) -> float:
+        """Ts-relative beat position (Ref 18) for an offset within a
+        measure. A pickup bar's notes sit at the END of a notional full bar
+        (Ref 17), which is what _start_beat computes. Shared by notes,
+        stave text and harmony entries - all three had their own copy of
+        this two-branch calculation before S3."""
+        if m_num == 0:
+            start_beat = TimelineBuilder._start_beat(
+                self.full_bar_quarters, self.pickup_filled_quarters, self.beat_unit_quarter_len
+            )
+        else:
+            start_beat = 1.0
+        return round(start_beat + (offset_q / self.beat_unit_quarter_len), 2)
+
+
+@dataclass
+class _MeasureState:
+    """State scoped to one measure and reset with it: the offset walker, any
+    dynamics mark waiting for a note at the same offset to claim it, and
+    grace notes buffered until the note they decorate arrives."""
+    m_num: int
+    walker: "_MeasureOffsetWalker"
+    pending_dynamics: Dict[Tuple[Optional[int], int], str] = field(default_factory=dict)
+    pending_grace: Dict[Tuple[int, int], List[Tuple[NoteData, bool, Tuple[int, float]]]] = field(
+        default_factory=dict
+    )
+
+    def key_for(self, offset_q: float) -> Tuple[int, float]:
+        """The (measure, offset) bucket key. Rounded to 4dp so two notes
+        meant to be simultaneous can't miss each other by a float hair."""
+        return (self.m_num, round(offset_q, 4))
+
+
+class _NoteSink:
+    """Collects notes into (measure, offset) buckets, with the time
+    signature and key in force at each.
+
+    One place that writes both, because they must stay in step: a bucket
+    with no slice_state entry renders as 4/4 with no accidentals. The
+    original walk repeated this two-line pair at five separate call sites.
+
+    overwrite_state distinguishes the two conventions the original used and
+    is preserved exactly: a real note stamps its slice's state
+    unconditionally (the last writer at a position wins), while stave text
+    and harmony entries only fill it in if nothing has yet (setdefault) -
+    they are <measure> children that can precede the notes they sit with.
+    """
+
+    def __init__(self):
+        self.buckets: Dict[Tuple[int, float], List[NoteData]] = {}
+        self.slice_state: Dict[Tuple[int, float], Tuple[Tuple[int, int], int]] = {}
+
+    def add(self, key, note: NoteData, walker, overwrite_state: bool = True) -> None:
+        self.buckets.setdefault(key, []).append(note)
+        state = ((walker.ts_num, walker.ts_den), walker.fifths)
+        if overwrite_state:
+            self.slice_state[key] = state
+        else:
+            self.slice_state.setdefault(key, state)
+
+    def append_only(self, key, note: NoteData) -> None:
+        """Add a note that rides along with one already bucketed here (a
+        lyric, a Chords-part stroke), which therefore never sets the slice
+        state itself - the note it accompanies already did."""
+        self.buckets[key].append(note)
+
+
 class TimelineBuilder:
     """Builds the flat, sorted EventSlice timeline for a MusicXML file.
 
@@ -417,6 +632,20 @@ class TimelineBuilder:
         return part_names
 
     def build(self) -> List[EventSlice]:
+        """S3: the top-level shape of the walk only - one part at a time,
+        one measure at a time, dispatching each measure child to the handler
+        that owns it. Everything that reads an element lives in a _handle_*
+        method below, following the shape _scan_first_part/_step_barline/
+        _step_wedge already established in this file for the structural
+        scan.
+
+        The two state objects carry exactly what has to survive between
+        elements: _PartState what persists across a part's measures
+        (divisions/time signature/key carried forward, the sticky current
+        chord), _MeasureState what is scoped to one measure and reset with
+        it (the offset walker, pending dynamics, buffered grace notes).
+        _NoteSink collects what every handler produces.
+        """
         root = self._root
         if root is None:
             try:
@@ -444,574 +673,429 @@ class TimelineBuilder:
         self.navigation_jumps = scan.navigation_jumps
         self.total_measures = max(measure_start_quarters.keys()) if measure_start_quarters else 0
 
-        buckets: Dict[Tuple[int, float], List[NoteData]] = {}
-        # Time signature + key fifths at each (measure, offset), stamped
-        # onto the EventSlice. Tracked alongside the buckets because a
-        # slice's state isn't known until every part's notes are visited.
-        slice_state: Dict[Tuple[int, float], Tuple[Tuple[int, int], int]] = {}
+        sink = _NoteSink()
 
         for part in root.findall("part"):
             part_id = part.attrib.get("id", "")
-            part_name = part_names.get(part_id, default_part_name)
-
-            divisions, time_sig_num, time_sig_den, fifths = 1, 4, 4, 0
-            beat_unit_quarter_len = 4.0 / time_sig_den
-            full_bar_quarters = time_sig_num * beat_unit_quarter_len
-
-            # Reported: a strum/pick-direction mark reads as belonging to
-            # the melody instrument that carries it in the XML (a Piano part
-            # here), but conceptually it's a guitar-accompaniment idea, not
-            # something a piano does - the user's own steer. So a strum mark
-            # produces an extra Chords-part NoteData at that same beat
-            # (the sticky current chord, same "last named chord carries
-            # forward" convention GP/UG already use for their own Chords
-            # voice/part) rather than an attribute on the melody note
-            # itself. Sticky state is scoped per part - the real files this
-            # was built against carry <harmony> and <notations/arpeggiate>
-            # on the same single part, and interleaving it correctly across
-            # multiple parts would need the measures walked in time order
-            # across parts rather than one part fully at a time.
-            current_chord_pitches: Optional[List[int]] = None
-            current_chord_label: str = "Strum"
-            # Reported: when a bar's own <harmony> lands at the same beat as
-            # an arpeggiate-marked note (a bar with no other stroke, so the
-            # harmony IS the first note - files/Three Blind Mice.mxl's bar
-            # 4), the once-per-bar harmony entry and the stroke entry ended
-            # up as two near-identical Chords rows at the same slice ("G,
-            # beat position 1.0" right next to "G, beat position 1.0, strum
-            # down stroke") - real information, but redundant enough to read
-            # as noise ("obfuscated by the presence of the chord", the
-            # user's own description). Tracks the harmony NoteData already
-            # emitted at each (measure, offset) this part has seen, so a
-            # stroke landing on that same slice sets .strum on that SAME
-            # NoteData in place instead of adding a second one.
-            harmony_notes_by_key: Dict[Tuple[int, float], NoteData] = {}
+            part_state = _PartState(
+                part_id=part_id,
+                part_name=part_names.get(part_id, default_part_name),
+                percussion_instruments=percussion_instruments,
+                pickup_filled_quarters=pickup_filled_quarters,
+            )
 
             for m in part.findall("measure"):
-                m_num = _measure_number(m, needs_reindex)
-
-                walker = _MeasureOffsetWalker(divisions, time_sig_num, time_sig_den, fifths)
-                # A MuseScore-style dynamics mark is a <direction> SIBLING
-                # of <note>, not a child. Keyed by (staff_or_None,
-                # offset_divs) so the note at that same offset picks it up -
-                # including every note of a chord, which share an offset.
-                # Reset per measure; a direction's target is always local.
-                pending_dynamics: Dict[Tuple[Optional[int], int], str] = {}
-                # MusicXML <grace> support: a grace note carries no
-                # <duration> of its own, so without this it would land at
-                # the exact same (measure, offset) as the note it decorates
-                # and render as a phantom extra chord tone (reported bug -
-                # "B grace A" showing as a B/A chord). Buffered per
-                # (staff, voice) - the same key a chord's own notes share -
-                # in document order until the next non-grace note for that
-                # voice arrives, which is where they get attached (see
-                # GraceNote/NoteData.grace_notes). Reset per measure, like
-                # pending_dynamics: every real grace note seen resolves
-                # within the same measure as the note it leads into; a
-                # leftover entry (last note of a voice/measure being itself
-                # a grace note - untested by any real file) is flushed as a
-                # standalone note rather than silently dropped, see below.
-                pending_grace: Dict[Tuple[int, int], List[Tuple[NoteData, bool, Tuple[int, float]]]] = {}
-
-                for elem in m:
-                    result = walker.step(elem)
-
-                    if elem.tag == "attributes":
-                        beat_unit_quarter_len = 4.0 / walker.ts_den
-                        full_bar_quarters = walker.ts_num * beat_unit_quarter_len
-
-                    if elem.tag == "direction":
-                        dyn_el = elem.find("direction-type/dynamics")
-                        if dyn_el is not None and len(dyn_el) > 0:
-                            mark_el = dyn_el[0]
-                            mark = mark_el.text.strip() if (mark_el.tag == "other-dynamics" and mark_el.text) else mark_el.tag
-                            dir_staff_el = elem.find("staff")
-                            dir_staff = int(dir_staff_el.text.strip()) if (dir_staff_el is not None and dir_staff_el.text) else None
-                            pending_dynamics[(dir_staff, walker.offset_divs)] = dynamic_name(mark)
-
-                        # Generic stave text (see STAVE_TEXT_VOICE_ID above):
-                        # built independently, right here, and bucketed
-                        # immediately - unlike pending_dynamics, nothing here
-                        # is deferred/inherited by a later note, so there is
-                        # no stickiness to a following event by construction.
-                        for words_el in elem.findall("direction-type/words"):
-                            if not _is_qualifying_stave_text(words_el.text):
-                                continue
-                            st_staff_el = elem.find("staff")
-                            st_staff = (
-                                int(st_staff_el.text.strip())
-                                if (st_staff_el is not None and st_staff_el.text)
-                                else 1
-                            )
-                            st_offset_el = elem.find("offset")
-                            st_offset_divs = walker.offset_divs
-                            if st_offset_el is not None and st_offset_el.text:
-                                try:
-                                    st_offset_divs += int(st_offset_el.text.strip())
-                                except ValueError:
-                                    pass
-                            st_offset_q = st_offset_divs / walker.divisions
-                            if m_num == 0:
-                                st_start_beat = self._start_beat(
-                                    full_bar_quarters, pickup_filled_quarters, beat_unit_quarter_len
-                                )
-                                st_beat_pos = st_start_beat + (st_offset_q / beat_unit_quarter_len)
-                            else:
-                                st_beat_pos = 1.0 + (st_offset_q / beat_unit_quarter_len)
-                            stave_text_note = NoteData(
-                                step_name=words_el.text.strip(),
-                                octave=None,
-                                midi_pitch=None,
-                                measure=m_num,
-                                beat_position=round(st_beat_pos, 2),
-                                ts_duration=float(walker.ts_num),
-                                quarter_length=full_bar_quarters,
-                                part_id=part_id,
-                                part_name=part_name,
-                                staff=st_staff,
-                                voice=STAVE_TEXT_VOICE_ID,
-                            )
-                            st_key = (m_num, round(st_offset_q, 4))
-                            buckets.setdefault(st_key, []).append(stave_text_note)
-                            slice_state.setdefault(st_key, ((walker.ts_num, walker.ts_den), walker.fifths))
-
-                    if elem.tag == "harmony":
-                        # <harmony> is a <measure> child like <direction>,
-                        # not a <note> child - walker.step() already
-                        # returned None for it, so it never advances
-                        # offset_divs itself. An <offset> child (rare;
-                        # absent in every file seen so far) displaces it
-                        # from the current cursor position, same convention
-                        # MusicXML uses for <direction>.
-                        offset_el = elem.find("offset")
-                        harmony_offset_divs = walker.offset_divs
-                        if offset_el is not None and offset_el.text:
-                            try:
-                                harmony_offset_divs += int(offset_el.text.strip())
-                            except ValueError:
-                                pass
-                        chord_pitches, chord_label = _resolve_harmony(elem)
-                        if chord_pitches:
-                            current_chord_pitches = chord_pitches
-                            current_chord_label = chord_label
-                            h_offset_q = harmony_offset_divs / walker.divisions
-                            if m_num == 0:
-                                h_start_beat = self._start_beat(
-                                    full_bar_quarters, pickup_filled_quarters, beat_unit_quarter_len
-                                )
-                                h_beat_pos = h_start_beat + (h_offset_q / beat_unit_quarter_len)
-                            else:
-                                h_beat_pos = 1.0 + (h_offset_q / beat_unit_quarter_len)
-                            chord_note = NoteData(
-                                step_name=chord_label,
-                                octave=None,
-                                midi_pitch=max(chord_pitches),
-                                measure=m_num,
-                                beat_position=round(h_beat_pos, 2),
-                                ts_duration=float(walker.ts_num),
-                                quarter_length=full_bar_quarters,
-                                duration_name_us=quarter_length_to_display_name(full_bar_quarters),
-                                part_id=CHORDS_PART_ID,
-                                part_name=CHORDS_PART_NAME,
-                                staff=1,
-                                voice=1,
-                                chord_pitches=chord_pitches,
-                            )
-                            h_key = (m_num, round(h_offset_q, 4))
-                            buckets.setdefault(h_key, []).append(chord_note)
-                            slice_state.setdefault(h_key, ((walker.ts_num, walker.ts_den), walker.fifths))
-                            harmony_notes_by_key[h_key] = chord_note
-
-                    if result is None:
-                        continue
-                    note_offset_divs, is_chord = result
-
-                    is_rest = elem.find("rest") is not None
-                    dur_divs = _duration_divs(elem)
-
-                    # <grace> is a <note> child with no <duration> sibling -
-                    # dur_divs above is already 0 for it, which is also why
-                    # walker.step() never advances offset_divs past a grace
-                    # note (see _MeasureOffsetWalker.step). slash="yes" is
-                    # the conventional "crushed" acciaccatura; slash="no" or
-                    # absent is a longer appoggiatura - both are captured
-                    # here and realized identically for now (see GraceNote).
-                    grace_el = elem.find("grace")
-                    is_grace = grace_el is not None
-                    grace_slash = grace_el.attrib.get("slash", "no") == "yes" if is_grace else False
-
-                    # The note's own notated shape (<type>/<dot>), not a
-                    # reverse-lookup from quarter_length - a tuplet member's
-                    # <type> still reads "eighth" even though its actual
-                    # sounding duration isn't a clean fraction, which is
-                    # exactly what a musician reading the note list wants
-                    # ("quaver", not some approximated tuplet fraction).
-                    # duration_name_us itself isn't finished until quarter_len
-                    # is known below (the <type>-less whole-measure-rest
-                    # fallback needs it), so only the raw ingredients are
-                    # collected here.
-                    type_el = elem.find("type")
-                    duration_type = type_el.text.strip() if (type_el is not None and type_el.text) else None
-                    duration_dots = len(elem.findall("dot"))
-                    time_mod_el = elem.find("time-modification")
-                    tuplet_actual_notes = None
-                    if time_mod_el is not None:
-                        actual_notes_el = time_mod_el.find("actual-notes")
-                        if actual_notes_el is not None and actual_notes_el.text:
-                            tuplet_actual_notes = int(actual_notes_el.text.strip())
-
-                    staff = int(elem.find("staff").text.strip()) if elem.find("staff") is not None else 1
-                    voice = int(elem.find("voice").text.strip()) if elem.find("voice") is not None else 1
-
-                    if is_rest:
-                        step_name = "rest"
-                        octave = None
-                        midi_pitch = None
-                        fret = None
-                        string_num = None
-                        dynamic = None
-                        articulation = None
-                        fingering = None
-                        pluck = None
-                        strum = None
-                        lyric_text = None
-                        percussion_source_key = None
-                    else:
-                        pitch_el = elem.find("pitch")
-                        unpitched_el = elem.find("unpitched") if pitch_el is None else None
-                        if pitch_el is None and unpitched_el is None:
-                            continue
-
-                        fret = None
-                        string_num = None
-                        fingering = None
-                        pluck = None
-                        percussion_source_key = None
-
-                        if unpitched_el is not None:
-                            # Wishlist #8: a percussion note's real
-                            # sound/name comes from its <instrument id> ref
-                            # into percussion_instruments (the score-part's
-                            # own <score-instrument>/<midi-instrument>
-                            # children) - never from <display-step>/
-                            # <display-octave>, which is only where the
-                            # notehead is drawn on the percussion staff, not
-                            # a real pitch (confirmed against Hit It.mxl).
-                            instr_el = elem.find("instrument")
-                            instr_id = instr_el.attrib.get("id") if instr_el is not None else None
-                            instr_name, instr_key = percussion_instruments.get(instr_id, (None, None))
-                            step_name = instr_name if instr_name is not None else "Percussion"
-                            octave = None
-                            midi_pitch = instr_key
-                            percussion_source_key = instr_key
-                            # Region 2 follow-up (user: "the pitch defines
-                            # the instrument - that is the defining
-                            # feature"): each distinct percussion item gets
-                            # its OWN voice number - its own declared key,
-                            # not the real notated <voice> several
-                            # instruments may share (Hit It.mxl's hi-hat and
-                            # snare are both real MusicXML voice 1). This is
-                            # what splits them into independently
-                            # mute/soloable Region 2 rows for free, reusing
-                            # the existing part/staff/voice machinery
-                            # untouched rather than adding a new tree level
-                            # - the same "fabricate a voice_id" trick GP's
-                            # synthetic Chords voice (GP_CHORD_VOICE_ID)
-                            # already uses. Falls back to the real notated
-                            # voice only if the instrument id didn't
-                            # resolve.
-                            if instr_key is not None:
-                                voice = instr_key
-                        else:
-                            step = pitch_el.find("step").text.strip() if pitch_el.find("step") is not None else "C"
-                            octave = int(pitch_el.find("octave").text.strip()) if pitch_el.find("octave") is not None else 4
-                            alter_el = pitch_el.find("alter")
-                            alter = int(alter_el.text.strip()) if (alter_el is not None and alter_el.text) else 0
-
-                            acc_words = {1: " sharp", -1: " flat", 2: " double sharp", -2: " double flat", 0: ""}
-                            step_name = f"{step}{acc_words.get(alter, '')}"
-
-                            step_offsets = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
-                            midi_pitch = (octave + 1) * 12 + step_offsets.get(step, 0) + alter
-
-                        tech_el = elem.find("notations/technical")
-                        if tech_el is not None:
-                            f_el = tech_el.find("fret")
-                            s_el = tech_el.find("string")
-                            if f_el is not None and f_el.text:
-                                fret = int(f_el.text.strip())
-                            if s_el is not None and s_el.text:
-                                string_num = int(s_el.text.strip())
-                            # MusicXML allows several <fingering>/<pluck>
-                            # per note (a rasgueado marks one note p/i/m/a),
-                            # so use findall - .find() silently drops
-                            # everything after the first.
-                            fing_texts = [e.text.strip() for e in tech_el.findall("fingering") if e.text]
-                            pluck_texts = [e.text.strip() for e in tech_el.findall("pluck") if e.text]
-                            fingering = ", ".join(fing_texts) or None
-                            pluck = ", ".join(pluck_texts) or None
-
-                        # Articulations and ornaments get the same
-                        # spoken-word treatment, so both are merged into one
-                        # comma-joined field.
-                        artic_tags = [
-                            child.tag
-                            for parent_tag in ("articulations", "ornaments")
-                            for child in elem.findall(f"notations/{parent_tag}/*")
-                        ]
-                        articulation = ", ".join(articulation_name(t) for t in artic_tags) or None
-
-                        # A direct notations/dynamics is the rarer exporter
-                        # form; being note-specific, it beats an
-                        # offset-matched <direction>.
-                        note_dyn_el = elem.find("notations/dynamics")
-                        if note_dyn_el is not None and len(note_dyn_el) > 0:
-                            note_mark_el = note_dyn_el[0]
-                            note_mark = (
-                                note_mark_el.text.strip()
-                                if (note_mark_el.tag == "other-dynamics" and note_mark_el.text)
-                                else note_mark_el.tag
-                            )
-                            dynamic = dynamic_name(note_mark)
-                        else:
-                            dynamic = pending_dynamics.get((staff, note_offset_divs))
-                            if dynamic is None:
-                                dynamic = pending_dynamics.get((None, note_offset_divs))
-
-                        # <notations/arpeggiate direction="up"/"down"> on a
-                        # single (non-chord) note has no conventional
-                        # notation meaning - real arpeggios apply to chords -
-                        # so this is read as a per-note pick/strum-direction
-                        # indicator instead, the same "down stroke"/
-                        # "up stroke" vocabulary Guitar Pro's synthetic
-                        # Chords voice already established for NoteData.strum
-                        # (see CLAUDE.md). Reported: strumming isn't
-                        # something a piano/melody note does - it belongs to
-                        # the (guitar) chord accompaniment, so this never
-                        # ends up on the melody note's own NoteData; it only
-                        # ever triggers an extra Chords-part "stroke" entry
-                        # below. Left None (not inferred) when absent, same
-                        # "leave unstated" convention.
-                        strum = None
-                        arpeggiate_el = elem.find("notations/arpeggiate")
-                        if arpeggiate_el is not None:
-                            arp_direction = arpeggiate_el.attrib.get("direction")
-                            if arp_direction == "up":
-                                strum = "up stroke"
-                            elif arp_direction == "down":
-                                strum = "down stroke"
-
-                        # Only the first verse - real files with more than
-                        # one <lyric> per note are untested by any fixture
-                        # seen so far.
-                        lyric_text = None
-                        lyric_el = elem.find("lyric")
-                        if lyric_el is not None:
-                            lyric_text_el = lyric_el.find("text")
-                            if lyric_text_el is not None and lyric_text_el.text:
-                                lyric_text = lyric_text_el.text.strip()
-
-                    offset_q = note_offset_divs / walker.divisions
-                    quarter_len = dur_divs / walker.divisions
-                    ts_duration = round(quarter_len / beat_unit_quarter_len, 2)
-
-                    if duration_type is not None:
-                        duration_name_us = beat_unit_display_name(duration_type, duration_dots)
-                    else:
-                        # No <type> in the source XML - chiefly a
-                        # whole-measure rest, which MusicXML allows to omit
-                        # <type> entirely. Reverse-lookup from the real
-                        # quarter-length rather than leaving this note/rest
-                        # with no word at all.
-                        duration_name_us = quarter_length_to_display_name(quarter_len)
-                    if duration_name_us is not None and tuplet_actual_notes is not None:
-                        word = tuplet_word(tuplet_actual_notes)
-                        if word is not None:
-                            duration_name_us = f"{duration_name_us} {word}"
-
-                    if m_num == 0:
-                        start_beat = self._start_beat(
-                            full_bar_quarters, pickup_filled_quarters, beat_unit_quarter_len
-                        )
-                        beat_pos = start_beat + (offset_q / beat_unit_quarter_len)
-                    else:
-                        beat_pos = 1.0 + (offset_q / beat_unit_quarter_len)
-
-                    note_obj = NoteData(
-                        step_name=step_name,
-                        octave=octave,
-                        midi_pitch=midi_pitch,
-                        measure=m_num,
-                        beat_position=round(beat_pos, 2),
-                        ts_duration=ts_duration,
-                        quarter_length=quarter_len,
-                        part_id=part_id,
-                        part_name=part_name,
-                        staff=staff,
-                        voice=voice,
-                        fret=fret,
-                        string=string_num,
-                        dynamic=dynamic,
-                        articulation=articulation,
-                        fingering=fingering,
-                        pluck=pluck,
-                        duration_name_us=duration_name_us,
-                        percussion_source_key=percussion_source_key,
-                    )
-
-                    key = (m_num, round(offset_q, 4))
-                    voice_key = (staff, voice)
-
-                    if is_grace:
-                        # Not bucketed here at all - see GraceNote/
-                        # pending_grace's own comments. Held until the next
-                        # non-grace note for this (staff, voice) arrives.
-                        pending_grace.setdefault(voice_key, []).append((note_obj, grace_slash, key))
-                        continue
-
-                    grace_list = pending_grace.pop(voice_key, None)
-                    if grace_list:
-                        note_obj.grace_notes = [
-                            GraceNote(step_name=g.step_name, midi_pitch=g.midi_pitch, slash=slash)
-                            for g, slash, _ in grace_list
-                        ]
-
-                    if key not in buckets:
-                        buckets[key] = []
-                    buckets[key].append(note_obj)
-                    slice_state[key] = ((walker.ts_num, walker.ts_den), walker.fifths)
-
-                    if lyric_text is not None:
-                        # Bucketed into the SAME slice as the melody note it
-                        # came from, unlike parsers/ug_timeline_builder.py's
-                        # Lyrics part - MusicXML already gives real per-note
-                        # timing, so there is no need to fabricate one bar
-                        # per lyric the way UG (plain chord-tab text, no real
-                        # positions) has to.
-                        lyric_note = NoteData(
-                            step_name=lyric_text,
-                            octave=None,
-                            midi_pitch=None,
-                            measure=m_num,
-                            beat_position=round(beat_pos, 2),
-                            ts_duration=ts_duration,
-                            quarter_length=quarter_len,
-                            part_id=LYRICS_PART_ID,
-                            part_name=LYRICS_PART_NAME,
-                            staff=1,
-                            voice=1,
-                        )
-                        buckets[key].append(lyric_note)
-
-                    if strum is not None and current_chord_pitches is not None:
-                        # A stroke mark with no chord known yet (arpeggiate
-                        # before the piece's first <harmony>) is skipped
-                        # rather than fabricating a chord - an untested
-                        # edge case in every real file seen so far.
-                        #
-                        # A stroke landing on the exact same slice as the
-                        # bar's own harmony entry (no other note between
-                        # them - the harmony IS the stroke's note) sets
-                        # .strum on that existing entry rather than adding a
-                        # second, near-identical Chords row.
-                        existing_harmony_note = harmony_notes_by_key.get(key)
-                        if existing_harmony_note is not None:
-                            existing_harmony_note.strum = strum
-                            continue
-                        stroke_note = NoteData(
-                            step_name=current_chord_label,
-                            octave=None,
-                            midi_pitch=max(current_chord_pitches),
-                            measure=m_num,
-                            beat_position=round(beat_pos, 2),
-                            ts_duration=ts_duration,
-                            quarter_length=quarter_len,
-                            part_id=CHORDS_PART_ID,
-                            part_name=CHORDS_PART_NAME,
-                            staff=1,
-                            voice=1,
-                            chord_pitches=current_chord_pitches,
-                            strum=strum,
-                            duration_name_us=duration_name_us,
-                        )
-                        buckets[key].append(stroke_note)
-
-                # A grace note with no following non-grace note for its
-                # (staff, voice) before the measure ends (the piece's very
-                # last note being itself a grace note, or a voice ending
-                # mid-measure on one - untested by any real file so far).
-                # Flushed as an ordinary standalone note at its own captured
-                # key rather than silently dropped - the same "degrade
-                # gracefully" convention every other absent-data case in
-                # this parser follows.
-                for grace_list in pending_grace.values():
-                    for note_obj, _slash, key in grace_list:
-                        if key not in buckets:
-                            buckets[key] = []
-                        buckets[key].append(note_obj)
-                        slice_state[key] = ((walker.ts_num, walker.ts_den), walker.fifths)
-
-                divisions, time_sig_num, time_sig_den, fifths = (
-                    walker.divisions, walker.ts_num, walker.ts_den, walker.fifths
+                measure_state = _MeasureState(
+                    m_num=_measure_number(m, needs_reindex),
+                    walker=_MeasureOffsetWalker(
+                        part_state.divisions,
+                        part_state.time_sig_num,
+                        part_state.time_sig_den,
+                        part_state.fifths,
+                    ),
                 )
 
-        sorted_keys = sorted(buckets.keys(), key=lambda k: (k[0], k[1]))
+                for elem in m:
+                    result = measure_state.walker.step(elem)
 
-        # Region 3/4 must read highest-to-lowest pitch within each
-        # instrument, regardless of how the source XML orders a chord's
-        # notes (a real MuseScore guitar-tab export was found writing
-        # chords lowest-string/lowest-pitch first, reported bug: measures
-        # 8-9 of files/bach-bourree-tab/score.xml). Notes are already
-        # grouped by part by construction - the loop above finishes one
-        # part's measures entirely before starting the next, so entries
-        # sharing a bucket never interleave across parts - but a plain
-        # pitch-only sort would still break that grouping whenever one
-        # part's pitch range overlaps another's. part_order pins each
-        # note to its part's position first and sorts by pitch only within
-        # that group; ties (e.g. the same chord duplicated across a
-        # notation stave and a tab stave) keep their original relative
-        # order via Python's stable sort. Rests (midi_pitch None) sort
-        # last within their part - they don't sound, so their position
-        # among sounding notes doesn't matter. The synthetic Chords/Lyrics
-        # parts are appended after every real part's index (not left to the
-        # dict.get() fallback of 0 below, which would collide with whichever
-        # real part happens to be first) so they always sort after the
-        # notated instruments, Chords before Lyrics - the same order
-        # MusicXMLReader appends them to parts_info in.
-        part_order = {p.attrib.get("id", ""): i for i, p in enumerate(root.findall("part"))}
-        part_order[CHORDS_PART_ID] = len(part_order)
-        part_order[LYRICS_PART_ID] = len(part_order)
+                    if elem.tag == "attributes":
+                        part_state.refresh_bar_shape(measure_state.walker)
+                    elif elem.tag == "direction":
+                        self._handle_direction(elem, part_state, measure_state, sink)
+                    elif elem.tag == "harmony":
+                        self._handle_harmony(elem, part_state, measure_state, sink)
 
-        def _pitch_sort_key(note: NoteData) -> Tuple[int, float]:
-            # Stave text shares its real part's own part_id (not a separate
-            # part - see STAVE_TEXT_VOICE_ID above), so it would otherwise
-            # fall into the ordinary midi_pitch-is-None tiebreak below and
-            # sort AFTER every real note, same as a silent rest. User-
-            # requested: it should read first instead, matching how it's
-            # already listed above the real voices in Region 2 (mirroring a
-            # position mark's own placement above the stave on the printed
-            # score) - float("-inf") beats every real pitch_component.
-            if note.voice == STAVE_TEXT_VOICE_ID:
-                pitch_component = float("-inf")
-            else:
-                pitch_component = -note.midi_pitch if note.midi_pitch is not None else float("inf")
-            return (part_order.get(note.part_id, 0), pitch_component)
+                    if result is not None:
+                        self._handle_note(elem, result, part_state, measure_state, sink)
 
+                self._flush_pending_grace(measure_state, sink)
+                part_state.carry_forward(measure_state.walker)
+
+        return self._assemble_slices(
+            root, sink, measure_start_quarters, measure_ts_fifths, pickup_filled_quarters
+        )
+
+    # --- per-element handlers -------------------------------------------
+
+    def _handle_direction(self, elem, part_state, measure_state, sink) -> None:
+        """A <direction> carries two independent things this parser reads: a
+        dynamics mark (deferred - a later note at the same offset picks it
+        up) and generic stave text (bucketed immediately - nothing here is
+        inherited by a following note, see STAVE_TEXT_VOICE_ID)."""
+        walker = measure_state.walker
+
+        # A MuseScore-style dynamics mark is a <direction> SIBLING of
+        # <note>, not a child. Keyed by (staff_or_None, offset_divs) so the
+        # note at that same offset picks it up - including every note of a
+        # chord, which share an offset. Reset per measure; a direction's
+        # target is always local.
+        dyn_el = elem.find("direction-type/dynamics")
+        if dyn_el is not None and len(dyn_el) > 0:
+            mark_el = dyn_el[0]
+            mark = mark_el.text.strip() if (mark_el.tag == "other-dynamics" and mark_el.text) else mark_el.tag
+            dir_staff = _staff_number(elem, default=None)
+            measure_state.pending_dynamics[(dir_staff, walker.offset_divs)] = dynamic_name(mark)
+
+        for words_el in elem.findall("direction-type/words"):
+            if not _is_qualifying_stave_text(words_el.text):
+                continue
+            offset_q = _displaced_offset_divs(elem, walker) / walker.divisions
+            sink.add(
+                measure_state.key_for(offset_q),
+                NoteData(
+                    step_name=words_el.text.strip(),
+                    octave=None,
+                    midi_pitch=None,
+                    measure=measure_state.m_num,
+                    beat_position=part_state.beat_position(measure_state.m_num, offset_q),
+                    ts_duration=float(walker.ts_num),
+                    quarter_length=part_state.full_bar_quarters,
+                    part_id=part_state.part_id,
+                    part_name=part_state.part_name,
+                    staff=_staff_number(elem, default=1),
+                    voice=STAVE_TEXT_VOICE_ID,
+                ),
+                walker,
+                overwrite_state=False,
+            )
+
+    def _handle_harmony(self, elem, part_state, measure_state, sink) -> None:
+        """<harmony> is a <measure> child like <direction>, not a <note>
+        child - walker.step() already returned None for it, so it never
+        advances offset_divs itself. An <offset> child (rare; absent in
+        every file seen so far) displaces it from the current cursor
+        position, the same convention MusicXML uses for <direction>."""
+        walker = measure_state.walker
+        chord_pitches, chord_label = _resolve_harmony(elem)
+        if not chord_pitches:
+            return
+
+        part_state.current_chord_pitches = chord_pitches
+        part_state.current_chord_label = chord_label
+
+        offset_q = _displaced_offset_divs(elem, walker) / walker.divisions
+        key = measure_state.key_for(offset_q)
+        chord_note = NoteData(
+            step_name=chord_label,
+            octave=None,
+            midi_pitch=max(chord_pitches),
+            measure=measure_state.m_num,
+            beat_position=part_state.beat_position(measure_state.m_num, offset_q),
+            ts_duration=float(walker.ts_num),
+            quarter_length=part_state.full_bar_quarters,
+            duration_name_us=quarter_length_to_display_name(part_state.full_bar_quarters),
+            part_id=CHORDS_PART_ID,
+            part_name=CHORDS_PART_NAME,
+            staff=1,
+            voice=1,
+            chord_pitches=chord_pitches,
+        )
+        sink.add(key, chord_note, walker, overwrite_state=False)
+        part_state.harmony_notes_by_key[key] = chord_note
+
+    def _handle_note(self, elem, result, part_state, measure_state, sink) -> None:
+        """One <note>: read it, bucket it, and emit whatever rides along
+        with it (a lyric, a Chords-part stroke). Grace notes are buffered
+        rather than bucketed - see _MeasureState.pending_grace."""
+        walker = measure_state.walker
+        m_num = measure_state.m_num
+        note_offset_divs, _is_chord = result
+
+        is_rest = elem.find("rest") is not None
+        dur_divs = _duration_divs(elem)
+
+        # <grace> is a <note> child with no <duration> sibling - dur_divs
+        # above is already 0 for it, which is also why walker.step() never
+        # advances offset_divs past a grace note (see
+        # _MeasureOffsetWalker.step). slash="yes" is the conventional
+        # "crushed" acciaccatura; slash="no" or absent is a longer
+        # appoggiatura - both are captured here and realized identically
+        # for now (see GraceNote).
+        grace_el = elem.find("grace")
+        is_grace = grace_el is not None
+        grace_slash = grace_el.attrib.get("slash", "no") == "yes" if is_grace else False
+
+        staff = _staff_number(elem, default=1)
+        voice = int(elem.find("voice").text.strip()) if elem.find("voice") is not None else 1
+
+        if is_rest:
+            pitch = _NoteReading(step_name="rest")
+            marks = _NoteMarks()
+        else:
+            pitch = self._read_pitch(elem, part_state)
+            if pitch is None:
+                # Neither <pitch> nor <unpitched> - nothing soundable to
+                # place, so this element contributes no note at all.
+                return
+            if pitch.voice_override is not None:
+                voice = pitch.voice_override
+            marks = self._read_notations(elem, staff, note_offset_divs, measure_state)
+
+        offset_q = note_offset_divs / walker.divisions
+        quarter_len = dur_divs / walker.divisions
+        ts_duration = round(quarter_len / part_state.beat_unit_quarter_len, 2)
+        duration_name_us = _duration_display_name(elem, quarter_len)
+        beat_pos = part_state.beat_position(m_num, offset_q)
+
+        note_obj = NoteData(
+            step_name=pitch.step_name,
+            octave=pitch.octave,
+            midi_pitch=pitch.midi_pitch,
+            measure=m_num,
+            beat_position=beat_pos,
+            ts_duration=ts_duration,
+            quarter_length=quarter_len,
+            part_id=part_state.part_id,
+            part_name=part_state.part_name,
+            staff=staff,
+            voice=voice,
+            fret=marks.fret,
+            string=marks.string_num,
+            dynamic=marks.dynamic,
+            articulation=marks.articulation,
+            fingering=marks.fingering,
+            pluck=marks.pluck,
+            duration_name_us=duration_name_us,
+            percussion_source_key=pitch.percussion_source_key,
+        )
+
+        key = measure_state.key_for(offset_q)
+        voice_key = (staff, voice)
+
+        if is_grace:
+            # Not bucketed here at all - see GraceNote/pending_grace's own
+            # comments. Held until the next non-grace note for this
+            # (staff, voice) arrives.
+            measure_state.pending_grace.setdefault(voice_key, []).append(
+                (note_obj, grace_slash, key)
+            )
+            return
+
+        grace_list = measure_state.pending_grace.pop(voice_key, None)
+        if grace_list:
+            note_obj.grace_notes = [
+                GraceNote(step_name=g.step_name, midi_pitch=g.midi_pitch, slash=slash)
+                for g, slash, _ in grace_list
+            ]
+
+        sink.add(key, note_obj, walker)
+
+        if marks.lyric_text is not None:
+            # Bucketed into the SAME slice as the melody note it came from,
+            # unlike parsers/ug_timeline_builder.py's Lyrics part - MusicXML
+            # already gives real per-note timing, so there is no need to
+            # fabricate one bar per lyric the way UG (plain chord-tab text,
+            # no real positions) has to.
+            sink.append_only(
+                key,
+                NoteData(
+                    step_name=marks.lyric_text,
+                    octave=None,
+                    midi_pitch=None,
+                    measure=m_num,
+                    beat_position=beat_pos,
+                    ts_duration=ts_duration,
+                    quarter_length=quarter_len,
+                    part_id=LYRICS_PART_ID,
+                    part_name=LYRICS_PART_NAME,
+                    staff=1,
+                    voice=1,
+                ),
+            )
+
+        if marks.strum is not None and part_state.current_chord_pitches is not None:
+            # A stroke mark with no chord known yet (arpeggiate before the
+            # piece's first <harmony>) is skipped rather than fabricating a
+            # chord - an untested edge case in every real file seen so far.
+            #
+            # A stroke landing on the exact same slice as the bar's own
+            # harmony entry (no other note between them - the harmony IS the
+            # stroke's note) sets .strum on that existing entry rather than
+            # adding a second, near-identical Chords row.
+            existing_harmony_note = part_state.harmony_notes_by_key.get(key)
+            if existing_harmony_note is not None:
+                existing_harmony_note.strum = marks.strum
+                return
+            sink.append_only(
+                key,
+                NoteData(
+                    step_name=part_state.current_chord_label,
+                    octave=None,
+                    midi_pitch=max(part_state.current_chord_pitches),
+                    measure=m_num,
+                    beat_position=beat_pos,
+                    ts_duration=ts_duration,
+                    quarter_length=quarter_len,
+                    part_id=CHORDS_PART_ID,
+                    part_name=CHORDS_PART_NAME,
+                    staff=1,
+                    voice=1,
+                    chord_pitches=part_state.current_chord_pitches,
+                    strum=marks.strum,
+                    duration_name_us=duration_name_us,
+                ),
+            )
+
+    def _read_pitch(self, elem, part_state) -> Optional["_NoteReading"]:
+        """Name/octave/sounding pitch for a non-rest note, or None when the
+        element carries neither <pitch> nor <unpitched>."""
+        pitch_el = elem.find("pitch")
+        if pitch_el is None:
+            unpitched_el = elem.find("unpitched")
+            if unpitched_el is None:
+                return None
+            # Wishlist #8: a percussion note's real sound/name comes from
+            # its <instrument id> ref into percussion_instruments (the
+            # score-part's own <score-instrument>/<midi-instrument>
+            # children) - never from <display-step>/<display-octave>, which
+            # is only where the notehead is drawn on the percussion staff,
+            # not a real pitch (confirmed against Hit It.mxl).
+            instr_el = elem.find("instrument")
+            instr_id = instr_el.attrib.get("id") if instr_el is not None else None
+            instr_name, instr_key = part_state.percussion_instruments.get(instr_id, (None, None))
+            # Region 2 follow-up (user: "the pitch defines the instrument -
+            # that is the defining feature"): each distinct percussion item
+            # gets its OWN voice number - its own declared key, not the real
+            # notated <voice> several instruments may share (Hit It.mxl's
+            # hi-hat and snare are both real MusicXML voice 1). This is what
+            # splits them into independently mute/soloable Region 2 rows for
+            # free, reusing the existing part/staff/voice machinery
+            # untouched rather than adding a new tree level - the same
+            # "fabricate a voice_id" trick GP's synthetic Chords voice
+            # (GP_CHORD_VOICE_ID) already uses. Falls back to the real
+            # notated voice only if the instrument id didn't resolve.
+            return _NoteReading(
+                step_name=instr_name if instr_name is not None else "Percussion",
+                octave=None,
+                midi_pitch=instr_key,
+                percussion_source_key=instr_key,
+                voice_override=instr_key,
+            )
+
+        step = pitch_el.find("step").text.strip() if pitch_el.find("step") is not None else "C"
+        octave = int(pitch_el.find("octave").text.strip()) if pitch_el.find("octave") is not None else 4
+        alter_el = pitch_el.find("alter")
+        alter = int(alter_el.text.strip()) if (alter_el is not None and alter_el.text) else 0
+
+        acc_words = {1: " sharp", -1: " flat", 2: " double sharp", -2: " double flat", 0: ""}
+        step_offsets = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
+        return _NoteReading(
+            step_name=f"{step}{acc_words.get(alter, '')}",
+            octave=octave,
+            midi_pitch=(octave + 1) * 12 + step_offsets.get(step, 0) + alter,
+        )
+
+    def _read_notations(self, elem, staff, note_offset_divs, measure_state) -> "_NoteMarks":
+        """Everything hanging off a note that isn't its pitch: technical
+        (fret/string/fingering/pluck), articulations and ornaments, its
+        dynamic, a strum/pick direction, and its first lyric."""
+        marks = _NoteMarks()
+
+        tech_el = elem.find("notations/technical")
+        if tech_el is not None:
+            f_el = tech_el.find("fret")
+            s_el = tech_el.find("string")
+            if f_el is not None and f_el.text:
+                marks.fret = int(f_el.text.strip())
+            if s_el is not None and s_el.text:
+                marks.string_num = int(s_el.text.strip())
+            # MusicXML allows several <fingering>/<pluck> per note (a
+            # rasgueado marks one note p/i/m/a), so use findall - .find()
+            # silently drops everything after the first.
+            fing_texts = [e.text.strip() for e in tech_el.findall("fingering") if e.text]
+            pluck_texts = [e.text.strip() for e in tech_el.findall("pluck") if e.text]
+            marks.fingering = ", ".join(fing_texts) or None
+            marks.pluck = ", ".join(pluck_texts) or None
+
+        # Articulations and ornaments get the same spoken-word treatment, so
+        # both are merged into one comma-joined field.
+        artic_tags = [
+            child.tag
+            for parent_tag in ("articulations", "ornaments")
+            for child in elem.findall(f"notations/{parent_tag}/*")
+        ]
+        marks.articulation = ", ".join(articulation_name(t) for t in artic_tags) or None
+
+        # A direct notations/dynamics is the rarer exporter form; being
+        # note-specific, it beats an offset-matched <direction>.
+        note_dyn_el = elem.find("notations/dynamics")
+        if note_dyn_el is not None and len(note_dyn_el) > 0:
+            note_mark_el = note_dyn_el[0]
+            note_mark = (
+                note_mark_el.text.strip()
+                if (note_mark_el.tag == "other-dynamics" and note_mark_el.text)
+                else note_mark_el.tag
+            )
+            marks.dynamic = dynamic_name(note_mark)
+        else:
+            pending = measure_state.pending_dynamics
+            marks.dynamic = pending.get((staff, note_offset_divs))
+            if marks.dynamic is None:
+                marks.dynamic = pending.get((None, note_offset_divs))
+
+        # <notations/arpeggiate direction="up"/"down"> on a single
+        # (non-chord) note has no conventional notation meaning - real
+        # arpeggios apply to chords - so this is read as a per-note
+        # pick/strum-direction indicator instead, the same "down stroke"/
+        # "up stroke" vocabulary Guitar Pro's synthetic Chords voice already
+        # established for NoteData.strum (see CLAUDE.md). Reported:
+        # strumming isn't something a piano/melody note does - it belongs to
+        # the (guitar) chord accompaniment, so this never ends up on the
+        # melody note's own NoteData; it only ever triggers an extra
+        # Chords-part "stroke" entry. Left None (not inferred) when absent,
+        # same "leave unstated" convention.
+        arpeggiate_el = elem.find("notations/arpeggiate")
+        if arpeggiate_el is not None:
+            arp_direction = arpeggiate_el.attrib.get("direction")
+            if arp_direction == "up":
+                marks.strum = "up stroke"
+            elif arp_direction == "down":
+                marks.strum = "down stroke"
+
+        # Only the first verse - real files with more than one <lyric> per
+        # note are untested by any fixture seen so far.
+        lyric_el = elem.find("lyric")
+        if lyric_el is not None:
+            lyric_text_el = lyric_el.find("text")
+            if lyric_text_el is not None and lyric_text_el.text:
+                marks.lyric_text = lyric_text_el.text.strip()
+
+        return marks
+
+    def _flush_pending_grace(self, measure_state, sink) -> None:
+        """A grace note with no following non-grace note for its
+        (staff, voice) before the measure ends (the piece's very last note
+        being itself a grace note, or a voice ending mid-measure on one -
+        untested by any real file so far). Flushed as an ordinary standalone
+        note at its own captured key rather than silently dropped - the same
+        "degrade gracefully" convention every other absent-data case in this
+        parser follows."""
+        for grace_list in measure_state.pending_grace.values():
+            for note_obj, _slash, key in grace_list:
+                sink.add(key, note_obj, measure_state.walker)
+
+    # --- assembling the result ------------------------------------------
+
+    def _assemble_slices(
+        self, root, sink, measure_start_quarters, measure_ts_fifths, pickup_filled_quarters
+    ) -> List[EventSlice]:
+        """Sort each bucket into reading order, turn every bucket into an
+        EventSlice, and compute the metronome's beat markers."""
+        buckets = sink.buckets
+        sort_key = self._pitch_sort_key(root)
         for bucket_notes in buckets.values():
-            bucket_notes.sort(key=_pitch_sort_key)
+            bucket_notes.sort(key=sort_key)
 
         slices = []
-        for m_num, offset_q in sorted_keys:
-            notes = buckets[(m_num, offset_q)]
-            q_len = min(n.quarter_length for n in notes) if notes else 1.0
-            beat_pos = notes[0].beat_position if notes else 1.0
-            time_sig, key_fifths = slice_state.get((m_num, offset_q), ((4, 4), 0))
-
+        for key in sorted(buckets.keys(), key=lambda k: (k[0], k[1])):
+            m_num, offset_q = key
+            notes = buckets[key]
+            time_sig, key_fifths = sink.slice_state.get(key, ((4, 4), 0))
             slices.append(
                 EventSlice(
                     measure=m_num,
-                    beat_position=beat_pos,
-                    quarter_length=q_len,
+                    beat_position=notes[0].beat_position if notes else 1.0,
+                    quarter_length=min(n.quarter_length for n in notes) if notes else 1.0,
                     notes=notes,
                     time_sig=time_sig,
                     key_fifths=key_fifths,
@@ -1025,12 +1109,56 @@ class TimelineBuilder:
         # relies on. MusicData splices these in only while the metronome is
         # actually on.
         self.beat_markers = sorted(
-            self._beat_marker_slices(buckets, measure_start_quarters, measure_ts_fifths, pickup_filled_quarters),
+            self._beat_marker_slices(
+                buckets, measure_start_quarters, measure_ts_fifths, pickup_filled_quarters
+            ),
             key=lambda s: (s.measure, s.quarters_from_start),
         )
-
         return slices
 
+    @staticmethod
+    def _pitch_sort_key(root):
+        """Region 3/4 must read highest-to-lowest pitch within each
+        instrument, regardless of how the source XML orders a chord's notes
+        (a real MuseScore guitar-tab export was found writing chords
+        lowest-string/lowest-pitch first, reported bug: measures 8-9 of
+        files/bach-bourree-tab/score.xml). Notes are already grouped by part
+        by construction - the walk finishes one part's measures entirely
+        before starting the next, so entries sharing a bucket never
+        interleave across parts - but a plain pitch-only sort would still
+        break that grouping whenever one part's pitch range overlaps
+        another's. part_order pins each note to its part's position first
+        and sorts by pitch only within that group; ties (e.g. the same chord
+        duplicated across a notation stave and a tab stave) keep their
+        original relative order via Python's stable sort. Rests (midi_pitch
+        None) sort last within their part - they don't sound, so their
+        position among sounding notes doesn't matter. The synthetic
+        Chords/Lyrics parts are appended after every real part's index (not
+        left to the dict.get() fallback of 0 below, which would collide with
+        whichever real part happens to be first) so they always sort after
+        the notated instruments, Chords before Lyrics - the same order
+        MusicXMLReader appends them to parts_info in.
+        """
+        part_order = {p.attrib.get("id", ""): i for i, p in enumerate(root.findall("part"))}
+        part_order[CHORDS_PART_ID] = len(part_order)
+        part_order[LYRICS_PART_ID] = len(part_order)
+
+        def key(note: NoteData) -> Tuple[int, float]:
+            # Stave text shares its real part's own part_id (not a separate
+            # part - see STAVE_TEXT_VOICE_ID), so it would otherwise fall
+            # into the ordinary midi_pitch-is-None tiebreak below and sort
+            # AFTER every real note, same as a silent rest. User-requested:
+            # it should read first instead, matching how it's already listed
+            # above the real voices in Region 2 (mirroring a position mark's
+            # own placement above the stave on the printed score) -
+            # float("-inf") beats every real pitch_component.
+            if note.voice == STAVE_TEXT_VOICE_ID:
+                pitch_component = float("-inf")
+            else:
+                pitch_component = -note.midi_pitch if note.midi_pitch is not None else float("inf")
+            return (part_order.get(note.part_id, 0), pitch_component)
+
+        return key
     @staticmethod
     def _start_beat(full_bar_quarters: float, pickup_filled_quarters: float, beat_unit_quarter_len: float) -> float:
         """Ref 17: pickup notes sit at the END of a notional full bar - a

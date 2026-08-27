@@ -8,13 +8,15 @@ from models.duration_units import beat_unit_display_name
 from models.key_signatures import FIFTHS_MAP
 from models.music_data import MusicData
 from models.parts_structure import PartStructureInfo
-from parsers.timeline_builder import (
+from models.synthetic_parts import (
     CHORDS_PART_ID,
     CHORDS_PART_NAME,
     LYRICS_PART_ID,
     LYRICS_PART_NAME,
     STAVE_TEXT_VOICE_ID,
     STAVE_TEXT_VOICE_NAME,
+)
+from parsers.timeline_builder import (
     _percussion_instrument_map,
     _stave_text_staves_for_part,
     has_harmony_elements,

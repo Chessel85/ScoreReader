@@ -23,6 +23,7 @@ from typing import Dict, List, Optional, Tuple
 from models.duration_units import beat_unit_display_name, tuplet_word
 from models.event_slice import EventSlice
 from models.note_data import NoteData
+from models.synthetic_parts import GP_CHORD_VOICE_ID
 from models.parts_structure import PartStructureInfo
 from models.vocabulary import dynamic_name, spell_out_minor_chord
 from parsers.gp_source import GpNote, GpSource, GpTrack, iter_track_positions, read_gp_source
@@ -30,7 +31,7 @@ from parsers.gp_source import GpNote, GpSource, GpTrack, iter_track_positions, r
 # Clearly out of range of GP's real 1-4 <Voices> slots (1-indexed once
 # converted - see GpReader), so it can never collide with a real voice
 # number even on a score using every slot.
-GP_CHORD_VOICE_ID = 1000
+# S2: re-exported from models/synthetic_parts.py (one definition, see there).
 
 # GP's own accidental vocabulary (Property name="ConcertPitch") - mirrors
 # MusicXML's acc_words spoken-word convention (never a symbol - see

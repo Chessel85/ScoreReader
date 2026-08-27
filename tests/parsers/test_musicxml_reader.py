@@ -133,7 +133,7 @@ def test_reader_adds_a_stave_text_voice_to_the_real_part_that_carries_it(stave_t
     is a fabricated voice on the SAME real part its <direction><words> was
     found on - P1 here - never a new top-level part, and never P2 (which has
     no <direction> of its own, the guitar-duet cross-contamination case)."""
-    from parsers.timeline_builder import STAVE_TEXT_VOICE_ID, STAVE_TEXT_VOICE_NAME
+    from models.synthetic_parts import STAVE_TEXT_VOICE_ID, STAVE_TEXT_VOICE_NAME
 
     data = MusicXMLReader(stave_text_score).load()
 

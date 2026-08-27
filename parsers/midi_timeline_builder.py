@@ -14,30 +14,11 @@ from models.gm_percussion_map import gm_percussion_name
 from models.note_data import NoteData
 from models.duration_units import is_simple_duration_match, quarter_length_to_display_name
 from models.parts_structure import PartStructureInfo
+from models.pitch_spelling import spell_pitch
 from models.tempo_change import TempoChange
 from parsers.midi_source import PERCUSSION_CHANNEL, MidiSource, read_midi_source
 from parsers.timeline_builder import TimelineBuilder
 
-# Enharmonic spelling is a simplification, not full scale-degree spelling:
-# a non-negative key signature (sharps or C major) spells every chromatic
-# note with a sharp, a flat key signature spells with a flat - the same
-# convention most quick MIDI-to-notation tools use. Good enough for a
-# screen-reader note name; not degree-accurate for exotic modes.
-PITCH_CLASS_SHARP = [
-    "C", "C sharp", "D", "D sharp", "E", "F",
-    "F sharp", "G", "G sharp", "A", "A sharp", "B",
-]
-PITCH_CLASS_FLAT = [
-    "C", "D flat", "D", "E flat", "E", "F",
-    "G flat", "G", "A flat", "A", "B flat", "B",
-]
-
-
-def _spell_pitch(midi_pitch: int, fifths: int) -> Tuple[str, int]:
-    pc = midi_pitch % 12
-    octave = midi_pitch // 12 - 1
-    names = PITCH_CLASS_FLAT if fifths < 0 else PITCH_CLASS_SHARP
-    return names[pc], octave
 
 
 class MidiTimelineBuilder:
@@ -185,7 +166,7 @@ class MidiTimelineBuilder:
                     # leaves MusicXML notes alone.
                     step_name, octave, note_file_key_fifths = gm_percussion_name(ev.pitch), None, None
                 else:
-                    step_name, octave = _spell_pitch(ev.pitch, fifths)
+                    step_name, octave = spell_pitch(ev.pitch, fifths)
                     note_file_key_fifths = fifths
                 # Tolerance of 1%: loose enough to still call a
                 # programmatically-quantized file's durations by name

@@ -6,9 +6,11 @@ from models.key_signatures import FIFTHS_MAP, key_signature_display_name
 from models.music_data import MusicData
 from models.parts_structure import PartStructureInfo
 from parsers.gp_source import GpSource, iter_track_positions, read_gp_source
-from parsers.gp_timeline_builder import GP_CHORD_VOICE_ID
+from models.synthetic_parts import GP_CHORD_VOICE_ID, GP_CHORD_VOICE_NAME
 
-CHORD_VOICE_NAME = "Chords"
+# S2: GP's synthetic Chords voice name now comes from
+# models/synthetic_parts.py, alongside its voice id.
+CHORD_VOICE_NAME = GP_CHORD_VOICE_NAME
 
 
 class GpReader:

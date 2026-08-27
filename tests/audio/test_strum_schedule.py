@@ -1,6 +1,6 @@
 # tests/audio/test_strum_schedule.py
 from audio.strum_schedule import build_strum_schedule, sound_events
-from parsers.ug_source import strum_directions
+from models.strum_codes import strum_directions
 
 
 def test_downstroke_fires_pitches_ascending_with_note_delay_gaps():

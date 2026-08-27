@@ -26,18 +26,19 @@ attempting a bogus re-fetch.
 """
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from music21 import harmony
 
 from models.event_slice import EventSlice
 from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
+from models.synthetic_parts import CHORDS_PART_ID, LYRICS_PART_ID
 from models.vocabulary import spell_out_minor_chord
 from parsers.ug_source import UgSource
 
-CHORDS_PART_ID = "chords"
-LYRICS_PART_ID = "lyrics"
+# S2: re-exported from models/synthetic_parts.py (one definition, see
+# there) - these were an independent second copy of the same literals.
 
 _CH_TAG_RE = re.compile(r"\[ch\](.*?)\[/ch\]")
 _SECTION_LINE_RE = re.compile(r"^\[([^\[\]/][^\[\]]*)\]$")

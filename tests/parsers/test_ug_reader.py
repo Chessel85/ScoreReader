@@ -1,6 +1,7 @@
 # tests/parsers/test_ug_reader.py
 from parsers.ug_reader import UgFileReader, _build_music_data
-from parsers.ug_source import UgSource, strumming_pattern_text, write_ug_source
+from models.strum_codes import strumming_pattern_text
+from parsers.ug_source import UgSource, write_ug_source
 
 
 def _source(**overrides) -> UgSource:
