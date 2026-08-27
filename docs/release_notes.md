@@ -1,6 +1,10 @@
 # Recall Score Release Notes
 
-## 2026.1.35
+## 2026.1.32
+
+* Code review and appropriate code updates
+
+## 2026.1.31
 
 * Improved menu layout and shortcuts.
 
