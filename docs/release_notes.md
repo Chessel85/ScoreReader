@@ -1,5 +1,10 @@
 # Recall Score Release Notes
 
+## 2026.1.33
+
+* More code refinements
+* Added File > Close to revert the app back to a state when first run
+
 ## 2026.1.32
 
 * Code review and appropriate code updates

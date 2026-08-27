@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QValidator
 from PySide6.QtWidgets import QDialog
 
-from controllers import region_presenter
+from widgets import accessible_announcer
 from widgets.goto_measure_dialog import GotoMeasureDialog
 from tests.support.main_window_helpers import _focus, _show, load_and_wait
 
@@ -76,7 +76,7 @@ def test_measure_navigation_announces_the_new_bar_number_without_changing_row_te
     Captured here in place of a real screen reader."""
     announcements = []
     monkeypatch.setattr(
-        region_presenter.QAccessible,
+        accessible_announcer.QAccessible,
         "updateAccessibility",
         lambda event: announcements.append(event.message()),
     )
@@ -97,7 +97,7 @@ def test_note_by_note_navigation_does_not_announce_a_bar_number(
     "go to bar N" are measure-level jumps."""
     announcements = []
     monkeypatch.setattr(
-        region_presenter.QAccessible,
+        accessible_announcer.QAccessible,
         "updateAccessibility",
         lambda event: announcements.append(event.message()),
     )
@@ -118,7 +118,7 @@ def test_ctrl_number_in_note_region_announces_the_nth_region_4_attribute(
     3's own row text."""
     announcements = []
     monkeypatch.setattr(
-        region_presenter.QAccessible,
+        accessible_announcer.QAccessible,
         "updateAccessibility",
         lambda event: announcements.append(event.message()),
     )
@@ -139,7 +139,7 @@ def test_ctrl_number_beyond_the_attribute_count_does_nothing(
     out-of-range convention in this app."""
     announcements = []
     monkeypatch.setattr(
-        region_presenter.QAccessible,
+        accessible_announcer.QAccessible,
         "updateAccessibility",
         lambda event: announcements.append(event.message()),
     )
@@ -162,7 +162,7 @@ def test_alt_pageup_pagedown_announce_the_new_preview_length(
     `window` fixture runs with uk_terms=False (US), so "measure" here."""
     announcements = []
     monkeypatch.setattr(
-        region_presenter.QAccessible,
+        accessible_announcer.QAccessible,
         "updateAccessibility",
         lambda event: announcements.append(event.message()),
     )

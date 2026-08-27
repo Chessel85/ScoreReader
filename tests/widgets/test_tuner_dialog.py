@@ -4,7 +4,7 @@ TunerController/TunerCapture itself, only emits signals (or, for announce(),
 calls Qt's own accessibility API), so it can be driven directly with no
 MainWindow involved - same reasoning tests/widgets/test_mixer_dialog.py
 already documents for MixerDialog."""
-from widgets import tuner_dialog as tuner_dialog_module
+from widgets import accessible_announcer
 from widgets.tuner_dialog import TunerDialog
 from models.tuner_settings import TunerSettings
 
@@ -154,7 +154,7 @@ def test_announce_dispatches_through_the_dialog_itself_as_a_real_widget(qtbot, m
     widget behind the fix."""
     events = []
     monkeypatch.setattr(
-        tuner_dialog_module.QAccessible, "updateAccessibility", events.append
+        accessible_announcer.QAccessible, "updateAccessibility", events.append
     )
     dialog = TunerDialog()
     qtbot.addWidget(dialog)

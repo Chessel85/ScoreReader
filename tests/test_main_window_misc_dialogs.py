@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QDialog
 from main_window import MainWindow
 from persistence import app_settings
 from widgets.tuner_dialog import TunerDialog
+from widgets.voice_control_dialog import VoiceControlDialog
 from tests.support.main_window_helpers import load_and_wait
 
 
@@ -42,6 +43,33 @@ def test_loading_a_score_rebuilds_the_go_to_bar_grammar(
     load_and_wait(w, qtbot, many_measures_score)
 
     assert null_voice_recognizer.rebuild_calls[-1] == w._music_data.total_measures
+
+
+def test_voice_control_device_combo_is_filled_off_the_main_thread(
+    qtbot, null_synth, null_voice_recognizer,
+):
+    """P1: the settings dialog must not block the (screen-reader-driving)
+    main thread while devices are enumerated. _scan_devices_async shows a
+    "Scanning…" placeholder at once and fills the real list from a
+    DeviceEnumerationThread, re-selecting the saved device."""
+    null_voice_recognizer.available_devices = ["My Microphone", "Other Device"]
+    w = MainWindow(synth=null_synth, uk_terms=False, voice_control_manager=null_voice_recognizer)
+    qtbot.addWidget(w)
+
+    dialog = VoiceControlDialog(w, devices=[], settings=w.voice_control.begin_settings_edit())
+    qtbot.addWidget(dialog)
+
+    w._scan_devices_async(
+        dialog, w.voice_control.available_devices, selected="Other Device"
+    )
+    assert dialog.device_combo.count() == 1
+    assert dialog.device_combo.itemText(0) == "Scanning for devices…"
+
+    qtbot.waitUntil(lambda: dialog.device_combo.count() == 3, timeout=2000)
+    assert [dialog.device_combo.itemText(i) for i in range(1, 3)] == [
+        "My Microphone", "Other Device",
+    ]
+    assert dialog.device_combo.currentData() == "Other Device"
 
 
 def test_close_stops_the_voice_control_recognizer(qtbot, null_synth, null_voice_recognizer):

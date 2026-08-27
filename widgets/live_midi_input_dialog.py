@@ -23,6 +23,10 @@ from widgets.range_spin_box import RangeSpinBox
 # collide with one.
 NO_DEVICE = "(No device)"
 
+# Transient sole entry while the port list is enumerated off the main
+# thread (P1). set_devices() replaces it when the worker signals back.
+SCANNING_DEVICES = "Scanning for devices…"
+
 
 class LiveMidiInputDialog(QDialog):
     """Options > Live MIDI Input Settings... (Ctrl+Shift+L) - which MIDI
@@ -148,6 +152,16 @@ class LiveMidiInputDialog(QDialog):
             self.device_combo.addItem(name, name)
         index = self.device_combo.findData(selected) if selected else -1
         self.device_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.device_combo.blockSignals(False)
+
+    def set_devices_scanning(self) -> None:
+        """Show a single "Scanning…" entry while the real port list is being
+        enumerated off the main thread (see main_window._scan_devices_async).
+        set_devices() replaces this when the worker signals back."""
+        self.device_combo.blockSignals(True)
+        self.device_combo.clear()
+        self.device_combo.addItem(SCANNING_DEVICES, None)
+        self.device_combo.setCurrentIndex(0)
         self.device_combo.blockSignals(False)
 
     def _on_instrument_text_changed(self, text: str) -> None:

@@ -1,3 +1,6 @@
+Can we have a file/close?
+Preview seems to be playing the first event in the next bar beyond the length of the preview 
+I have the grace note in the piano allegro the wrong way around. it sounds like a very short b followed by an A so should say A grace B.
 Doing the enter a number and hit enter should work from anywhere not just the note region.
 want s, d and f to announce tempo.
 * Think the glitch i hear at start up is a real problem. is very noticeable when on speakers. and sometimes the quality of the midi rendering is crackly. or is this only when running from command prompt?

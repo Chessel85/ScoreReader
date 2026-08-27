@@ -2109,6 +2109,25 @@ def test_find_occurrence_for_an_attribute_with_no_occurrences_returns_none(
     assert md.find_occurrence(target, from_index=0, direction=1) is None
 
 
+def test_find_occurrence_attribute_cache_follows_the_active_voice_filter(
+    timeline, dynamics_articulation_fingering_score
+):
+    """M1: find_occurrence caches an attribute target's sorted occurrence
+    list, so a later active-voice-filter change (Ref 7) has to invalidate
+    it - otherwise Alt+Right keeps landing on notes the user just hid.
+    'pluck' occurs only on the guitar (P2); filtering down to the piano's
+    first voice must drop it."""
+    md = timeline(dynamics_articulation_fingering_score)
+    target = FindTarget("attribute", "pluck", "pluck")
+
+    # Warm the cache while the guitar is still visible.
+    assert md.find_occurrence(target, from_index=0, direction=1) is not None
+
+    md.set_active_voice_filter({("P1", 1, 1)})
+
+    assert md.find_occurrence(target, from_index=0, direction=1) is None
+
+
 def test_find_occurrence_for_repeat_start_and_end(timeline, repeats_and_endings_score):
     md = timeline(repeats_and_endings_score)
     start_target = _find_target(md, "repeat_start", category="marking")

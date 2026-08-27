@@ -54,6 +54,7 @@ from widgets.tuner_dialog import TunerDialog
 from widgets.ultimate_guitar_import_dialog import UltimateGuitarImportDialog
 from widgets.voice_control_dialog import VoiceControlDialog
 from widgets.voice_control_test_dialog import VoiceControlTestDialog
+from workers.device_enumeration_worker import DeviceEnumerationThread
 
 
 def detect_default_uk_terms(system_locale: Optional[QLocale] = None) -> bool:
@@ -67,6 +68,12 @@ def detect_default_uk_terms(system_locale: Optional[QLocale] = None) -> bool:
     # still returns the QLocale.Country enum (not a separate Territory enum
     # class, unlike some Qt6 versions/bindings) - verified via introspection.
     return loc.territory() != QLocale.Country.UnitedStates
+
+
+# Sentinel for _scan_devices_async's `selected` arg: "keep whatever the
+# combo currently shows" (a Refresh), as distinct from an explicit None
+# ("the default device").
+_KEEP_SELECTION = object()
 
 
 def _app_base_dir() -> str:
@@ -148,6 +155,10 @@ class MainWindow(QMainWindow):
         self._live_midi_manager = live_midi_manager
         self._voice_control_manager = voice_control_manager
         self._tuner_manager = tuner_manager
+        # In-flight off-the-main-thread device scans for the audio settings
+        # dialogs (P1). Each self-removes on finish; closeEvent waits out any
+        # that are still running so tearing down the window can't orphan one.
+        self._device_scan_threads: list = []
 
         self.setup_ui()
         self.setup_controllers()
@@ -1025,6 +1036,34 @@ class MainWindow(QMainWindow):
             dialog.preview_requested.connect(self.playback.audition_phrase)
             self.playback.end_mixer_edit(dialog.exec() == QDialog.DialogCode.Accepted)
 
+    def _scan_devices_async(self, dialog, enumerate_fn, selected=_KEEP_SELECTION):
+        """Fill an audio settings dialog's device combo without blocking the
+        Qt main thread on enumeration (P1). `enumerate_fn` is a controller's
+        `available_devices`; for voice control it spawns a subprocess, and a
+        frozen main thread in a screen-reader-first app is silence with no
+        cue. The combo shows "Scanning…" at once and set_devices() replaces
+        it when the worker signals back.
+
+        `selected` is the device name to re-select once the real list
+        arrives - the saved setting on the first scan, and (the default)
+        whatever is currently chosen for a Refresh, captured before the
+        placeholder overwrites it."""
+        if selected is _KEEP_SELECTION:
+            data = dialog.device_combo.currentData()
+            selected = data if isinstance(data, str) else None
+        dialog.set_devices_scanning()
+        thread = DeviceEnumerationThread(enumerate_fn, self)
+        self._device_scan_threads.append(thread)
+        thread.devices_found.connect(
+            lambda devices: dialog.set_devices(devices, selected=selected)
+        )
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(
+            lambda: self._device_scan_threads.remove(thread)
+            if thread in self._device_scan_threads else None
+        )
+        thread.start()
+
     def _show_live_midi_input_dialog(self):
         """Options > Live MIDI Input Settings... (Ctrl+Shift+L). Pure view
         (see widgets/live_midi_input_dialog.py's own docstring) - this
@@ -1035,14 +1074,18 @@ class MainWindow(QMainWindow):
         with self._preserving_focus():
             dialog = LiveMidiInputDialog(
                 self,
-                devices=self.live_midi.available_devices(),
+                devices=[],
                 settings=self.live_midi.begin_settings_edit(),
             )
             dialog.instrument_changed.connect(self.live_midi.preview_instrument)
             dialog.volume_changed.connect(self.live_midi.preview_volume)
             dialog.pan_changed.connect(self.live_midi.preview_pan)
             dialog.refresh_requested.connect(
-                lambda: dialog.set_devices(self.live_midi.available_devices())
+                lambda: self._scan_devices_async(dialog, self.live_midi.available_devices)
+            )
+            self._scan_devices_async(
+                dialog, self.live_midi.available_devices,
+                selected=self.live_midi.settings.device_name,
             )
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 self.live_midi.commit_settings_edit(dialog.result_settings())
@@ -1059,11 +1102,15 @@ class MainWindow(QMainWindow):
         with self._preserving_focus():
             dialog = VoiceControlDialog(
                 self,
-                devices=self.voice_control.available_devices(),
+                devices=[],
                 settings=self.voice_control.begin_settings_edit(),
             )
             dialog.refresh_requested.connect(
-                lambda: dialog.set_devices(self.voice_control.available_devices())
+                lambda: self._scan_devices_async(dialog, self.voice_control.available_devices)
+            )
+            self._scan_devices_async(
+                dialog, self.voice_control.available_devices,
+                selected=self.voice_control.settings.device_name,
             )
             dialog.test_requested.connect(self._show_voice_control_test_dialog)
             dialog.cue_volume_changed.connect(self.voice_control.preview_cue_volume)
@@ -1214,4 +1261,8 @@ class MainWindow(QMainWindow):
         self.voice_control.close()
         self.tuner.stop_listening()
         self.synth.close()
+        # Wait out any device scan still running (P1) so tearing down the
+        # window - the threads' parent - can't orphan one mid-run.
+        for thread in list(self._device_scan_threads):
+            thread.wait()
         super().closeEvent(event)

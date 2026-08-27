@@ -182,13 +182,19 @@ def list_input_devices() -> List[str]:
     no-op" handling this app gives every optional resource. Runs the worker
     script in a one-shot --list-devices mode rather than importing
     sounddevice directly here - see module docstring on why this process
-    must never import it."""
+    must never import it.
+
+    This spawns a whole Python subprocess, so it must not be called on the
+    Qt main thread - main_window._scan_devices_async runs it on a
+    DeviceEnumerationThread (P1). The timeout is 5s rather than 10: long
+    enough for a cold PortAudio init in the worker, short enough that a
+    wedged scan doesn't strand the settings dialog on "Scanning…"."""
     if not VOSK_AVAILABLE:
         return []
     try:
         result = subprocess.run(
             _worker_command() + ["--list-devices"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=5,
             creationflags=_POPEN_CREATIONFLAGS,
         )
         if result.returncode != 0:

@@ -1,4 +1,5 @@
 # models/music_data.py
+import bisect
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
@@ -291,14 +292,22 @@ class MusicData:
         # Safe to cache forever: timeline_slices is never reassigned after
         # this point. The filter-dependent caches are separate, below.
         self._measure_numbers_cache: Optional[List[int]] = None
+        # M1: parallel list of tempo_changes[i].quarters_from_start for the
+        # bisect in _tempo_change_at. tempo_changes is assigned once by
+        # TimelineBuild.apply_to (above) and never mutated, so this is
+        # built lazily and kept forever, like _measure_numbers_cache.
+        self._tempo_change_starts_cache: Optional[List[float]] = None
         self._invalidate_visibility_cache()
 
     def _invalidate_visibility_cache(self) -> None:
         """Drops the navigator's filter-dependent caches - see
-        TimelineNavigator.invalidate_cache. Called whenever
-        active_voice_filter changes (set_active_voice_filter) and from
-        set_metronome_enabled, which changes what counts as navigable."""
+        TimelineNavigator.invalidate_cache - and FindIndex's attribute-
+        target occurrence cache (M1), which keys off the same
+        active_voice_filter state. Called whenever active_voice_filter
+        changes (set_active_voice_filter) and from set_metronome_enabled,
+        which changes what counts as navigable."""
         self.navigator.invalidate_cache()
+        self.find_index.invalidate_cache()
 
     def get_current_slice(self) -> Optional[EventSlice]:
         if 0 <= self.active_event_index < len(self.timeline_slices):
@@ -1139,16 +1148,23 @@ class MusicData:
         """(tempo_bpm, beat_unit_quarter_length, beat_unit_name) in effect at
         an index, or the cursor. Falls back to the score's opening tempo
         before the first marking. tempo_changes is sorted by position
-        (TimelineBuilder's job), so the last entry not past it wins."""
+        (TimelineBuilder's job), so the last entry not past it wins - found
+        here with a bisect over the change positions rather than a linear
+        walk: this is on the Sequencer's per-step path via
+        effective_tempo_bpm and is called N times over by
+        FindIndex.tempo_change_indices (M1)."""
         idx = self.active_event_index if index is None else index
         quarters = self.timeline_slices[idx].quarters_from_start if 0 <= idx < len(self.timeline_slices) else 0.0
 
-        result = (self.tempo_bpm, self.tempo_beat_unit_quarter_length, self.tempo_beat_unit_name)
-        for change in self.tempo_changes:
-            if change.quarters_from_start > quarters:
-                break
-            result = (change.tempo_bpm, change.beat_unit_quarter_length, change.beat_unit_name)
-        return result
+        if self._tempo_change_starts_cache is None:
+            self._tempo_change_starts_cache = [
+                c.quarters_from_start for c in self.tempo_changes
+            ]
+        pos = bisect.bisect_right(self._tempo_change_starts_cache, quarters)
+        if pos == 0:
+            return (self.tempo_bpm, self.tempo_beat_unit_quarter_length, self.tempo_beat_unit_name)
+        change = self.tempo_changes[pos - 1]
+        return (change.tempo_bpm, change.beat_unit_quarter_length, change.beat_unit_name)
 
     def score_tempo_display_bpm(self, index: Optional[int] = None) -> float:
         """The tempo actually in effect at `index` (or the cursor), in the

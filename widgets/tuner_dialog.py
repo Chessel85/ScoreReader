@@ -2,7 +2,6 @@
 from typing import List, Optional
 
 from PySide6.QtCore import QTimer, Signal
-from PySide6.QtGui import QAccessible, QAccessibleAnnouncementEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -31,6 +30,7 @@ from models.tuner_instruments import (
     tuner_instrument_by_name,
 )
 from models.tuner_settings import TunerSettings
+from widgets import accessible_announcer
 from widgets.range_spin_box import RangeSpinBox
 
 # Shown as the device combo's first entry - never a real device name, so it
@@ -321,14 +321,12 @@ class TunerDialog(QDialog):
         self.reading_edit.setText(f"{level_text} - {note_label}: {cents_description(cents)}")
 
     def announce(self, message: str) -> None:
-        """Performs the actual QAccessible.updateAccessibility() call, using
-        THIS DIALOG (a real widget) as the event's target - see the class
-        docstring's opening paragraph for why this can't live in the
-        controller. main_window.py's _show_tuner_dialog connects
-        TunerController.announcement_requested to this method."""
-        event = QAccessibleAnnouncementEvent(self, message)
-        event.setPoliteness(QAccessible.AnnouncementPoliteness.Assertive)
-        QAccessible.updateAccessibility(event)
+        """Posts the announcement with THIS DIALOG (a real widget) as the
+        event's target - see the class docstring's opening paragraph for why
+        this can't live in the controller. main_window.py's
+        _show_tuner_dialog connects TunerController.announcement_requested to
+        this method."""
+        accessible_announcer.announce(self, message)
 
     # --- result ---------------------------------------------------------
 

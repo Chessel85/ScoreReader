@@ -2,11 +2,11 @@
 from typing import List, Optional
 
 from PySide6.QtCore import QItemSelectionModel, QObject, Signal
-from PySide6.QtGui import QAccessible, QAccessibleAnnouncementEvent
 from PySide6.QtWidgets import QListWidgetItem
 
 from audio.performance_cue import performance_cue_event
 from models.vocabulary import bar_word
+from widgets import accessible_announcer
 
 
 class RegionPresenter(QObject):
@@ -184,9 +184,7 @@ class RegionPresenter(QObject):
             return
         label = bar_word(self.session.uk_terms).capitalize()
         message = f"{label} {current.measure}."
-        event = QAccessibleAnnouncementEvent(self.region_3, message)
-        event.setPoliteness(QAccessible.AnnouncementPoliteness.Assertive)
-        QAccessible.updateAccessibility(event)
+        accessible_announcer.announce(self.region_3, message)
 
     def refresh_region_3_labels(self) -> None:
         """Re-renders Region 3's row text in place after an attribute
@@ -227,9 +225,7 @@ class RegionPresenter(QObject):
             return
         display_key, _attribute_key, value = rows[number - 1]
         message = f"{display_key}: {value}"
-        event = QAccessibleAnnouncementEvent(self.region_3, message)
-        event.setPoliteness(QAccessible.AnnouncementPoliteness.Assertive)
-        QAccessible.updateAccessibility(event)
+        accessible_announcer.announce(self.region_3, message)
 
     def announce_preview_length(self, bars: int) -> None:
         """Alt+PageUp/PageDown (main_window.increase_preview_bars/
@@ -245,9 +241,7 @@ class RegionPresenter(QObject):
         label = bar_word(self.session.uk_terms)
         plural = "" if bars == 1 else "s"
         message = f"Preview {bars} {label}{plural}."
-        event = QAccessibleAnnouncementEvent(self.region_3, message)
-        event.setPoliteness(QAccessible.AnnouncementPoliteness.Assertive)
-        QAccessible.updateAccessibility(event)
+        accessible_announcer.announce(self.region_3, message)
 
     def refresh_region_5(self) -> None:
         """Ref 29: recomputes Region 5's rows for the current position.

@@ -21,6 +21,10 @@ from widgets.range_spin_box import RangeSpinBox
 # never collide with one. None (the default microphone) resolves to this.
 NO_DEVICE = "(Default microphone)"
 
+# Transient sole entry while the device list is enumerated off the main
+# thread (P1 - enumeration spawns a subprocess). set_devices() replaces it.
+SCANNING_DEVICES = "Scanning for devices…"
+
 
 class VoiceControlDialog(QDialog):
     """Options > Voice Control Settings... (Ref 19) - which microphone to
@@ -151,6 +155,18 @@ class VoiceControlDialog(QDialog):
             self.device_combo.addItem(name, name)
         index = self.device_combo.findData(selected) if selected else -1
         self.device_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.device_combo.blockSignals(False)
+
+    def set_devices_scanning(self) -> None:
+        """Show a single "Scanning…" entry while the real list is being
+        enumerated off the main thread (see main_window._scan_devices_async).
+        set_devices() replaces this the moment the worker signals back. Its
+        data is None, so OK during the scan resolves to the default
+        microphone - the same thing an empty list would."""
+        self.device_combo.blockSignals(True)
+        self.device_combo.clear()
+        self.device_combo.addItem(SCANNING_DEVICES, None)
+        self.device_combo.setCurrentIndex(0)
         self.device_combo.blockSignals(False)
 
     def _on_test_clicked(self) -> None:

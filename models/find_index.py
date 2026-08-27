@@ -10,7 +10,8 @@ the timeline itself changing. MusicData keeps one-line delegators for
 available_find_targets/find_occurrence, so call sites and tests are
 unchanged.
 """
-from typing import List, Optional
+import bisect
+from typing import Dict, List, Optional
 
 from models import vocabulary
 from models.find_target import MARKING_KINDS, FindTarget
@@ -19,6 +20,27 @@ from models.find_target import MARKING_KINDS, FindTarget
 class FindIndex:
     def __init__(self, data):
         self.data = data
+        # M1: for an attribute target, candidate_indices_for_target runs
+        # _note_attribute_pairs (real per-note string formatting) over
+        # every visible note of every slice - the single most expensive
+        # thing on the Alt+Right/Alt+Left hot path, discarded and rebuilt
+        # on every keypress. Cache the sorted occurrence list per
+        # attribute key. It depends only on the active voice filter (Ref 7)
+        # and on the metronome toggle rebuilding timeline_slices, both of
+        # which already route through MusicData._invalidate_visibility_
+        # cache - which now calls invalidate_cache() here too (the S7
+        # pattern). Marking targets stay uncached: their scans are span
+        # iterations or one tuple-comparison pass with no per-note
+        # formatting, and key_signature_change additionally depends on the
+        # S6 key override, which does not flow through that hook.
+        self._attribute_candidate_cache: Dict[str, List[int]] = {}
+
+    def invalidate_cache(self) -> None:
+        """Drop the cached attribute-target occurrence lists - see
+        __init__. Called from MusicData._invalidate_visibility_cache
+        whenever the active voice filter changes or the metronome toggle
+        rebuilds timeline_slices."""
+        self._attribute_candidate_cache.clear()
 
     # --- signature/tempo change points --------------------------------
 
@@ -157,6 +179,24 @@ class FindIndex:
                 targets.append(candidate)
         return targets
 
+    def sorted_candidate_indices(self, target: FindTarget) -> List[int]:
+        """candidate_indices_for_target(), de-duplicated, None-filtered and
+        sorted ascending - the form find_occurrence bisects over.
+        Attribute-target lists are cached (see __init__); marking-target
+        lists are rebuilt each call."""
+        if target.category == "attribute":
+            cached = self._attribute_candidate_cache.get(target.key)
+            if cached is None:
+                cached = self._compute_sorted_candidates(target)
+                self._attribute_candidate_cache[target.key] = cached
+            return cached
+        return self._compute_sorted_candidates(target)
+
+    def _compute_sorted_candidates(self, target: FindTarget) -> List[int]:
+        return sorted(
+            {i for i in self.candidate_indices_for_target(target) if i is not None}
+        )
+
     def find_occurrence(self, target: FindTarget, from_index: int, direction: int) -> Optional[int]:
         """The next (direction=+1) or previous (direction=-1) timeline_
         slices index that is an occurrence of `target`, strictly after/
@@ -166,15 +206,11 @@ class FindIndex:
         all (shouldn't happen for a target that came from
         available_targets(), but the catalog and the score can drift if the
         score reloads without a fresh Find)."""
-        candidates = sorted({i for i in self.candidate_indices_for_target(target) if i is not None})
+        candidates = self.sorted_candidate_indices(target)
         if not candidates:
             return None
         if direction > 0:
-            for i in candidates:
-                if i > from_index:
-                    return i
-            return candidates[0]
-        for i in reversed(candidates):
-            if i < from_index:
-                return i
-        return candidates[-1]
+            pos = bisect.bisect_right(candidates, from_index)
+            return candidates[pos] if pos < len(candidates) else candidates[0]
+        pos = bisect.bisect_left(candidates, from_index)
+        return candidates[pos - 1] if pos > 0 else candidates[-1]
