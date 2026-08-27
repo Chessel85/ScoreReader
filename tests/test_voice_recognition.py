@@ -11,6 +11,10 @@ Real recognition accuracy needs a live microphone, the real model, and the
 real worker process - see CLAUDE.md's own note on manual verification for
 this feature.
 """
+import subprocess
+import threading
+import time
+
 from audio.voice_commands import (
     ATTRIBUTE,
     COMMAND_PHRASES,
@@ -161,3 +165,92 @@ def test_handle_final_result_resolves_attribute_with_the_row_number():
 
     assert accepted == [(ATTRIBUTE, 90.0, 5)]
     assert diagnostics == [("attribute five", 90.0, True)]
+
+
+# --- stop() must not block the calling (Qt main) thread - S4 ------------
+
+
+class _FakeStdin:
+    def __init__(self):
+        self.written = []
+
+    def write(self, s):
+        self.written.append(s)
+
+    def flush(self):
+        pass
+
+
+class _FakeProcess:
+    """Stand-in for subprocess.Popen in stop() tests. wait() honours its
+    timeout the way Popen.wait does (raises TimeoutExpired on expiry), so
+    the bounded synchronous path can be timed without a real child."""
+
+    def __init__(self, exit_delay: float):
+        self._deadline = time.monotonic() + exit_delay
+        self.stdin = _FakeStdin()
+        self.kill_count = 0
+
+    def wait(self, timeout=None):
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0:
+            return 0
+        if timeout is not None and timeout < remaining:
+            raise subprocess.TimeoutExpired(cmd="fake-worker", timeout=timeout)
+        time.sleep(remaining)
+        return 0
+
+    def kill(self):
+        self.kill_count += 1
+        self._deadline = time.monotonic()
+
+    def poll(self):
+        return 0 if time.monotonic() >= self._deadline else None
+
+
+def _manager_with_fake_worker(exit_delay: float):
+    manager = VoiceRecognitionManager()
+    process = _FakeProcess(exit_delay)
+    reader = threading.Thread(target=lambda: None)
+    reader.start()
+    manager._process = process
+    manager._reader_thread = reader
+    return manager, process
+
+
+def test_stop_sends_the_stop_command_and_detaches_the_worker_promptly():
+    manager, process = _manager_with_fake_worker(exit_delay=0.0)
+
+    started = time.monotonic()
+    manager.stop()
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.5
+    assert process.stdin.written == ['{"cmd": "stop"}\n']
+    assert manager._process is None
+    assert manager._reader_thread is None
+    assert process.kill_count == 0
+
+
+def test_stop_does_not_block_on_a_wedged_worker_and_reaps_it_in_the_background():
+    manager, process = _manager_with_fake_worker(exit_delay=60.0)
+
+    started = time.monotonic()
+    manager.stop()
+    elapsed = time.monotonic() - started
+
+    # The old inline path blocked here for up to 6s (3s wait + 3s join).
+    assert elapsed < 1.0
+    assert manager._process is None
+    assert manager._reader_thread is None
+
+    deadline = time.monotonic() + 3.0
+    while process.kill_count == 0 and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert process.kill_count == 1
+
+
+def test_stop_is_a_noop_with_no_worker():
+    manager = VoiceRecognitionManager()
+    manager.stop()  # must not raise
+    assert manager._process is None

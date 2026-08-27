@@ -57,10 +57,12 @@ handshake (mirrors the SAPI version's readiness Event) and one "result" event
 per completed utterance. All the domain logic - confidence-threshold
 filtering, resolving heard text against the command vocabulary - lives HERE,
 in the parent, not in the worker; the worker only ever reports a raw Vosk
-result. Stopping sends the worker a {"cmd": "stop"} line and waits for it to
-exit; if the parent process ever dies without a clean stop, the worker's own
-stdin-closed detection (see voice_recognition_worker.py) makes it exit too,
-so a crash can't leave it orphaned.
+result. Stopping sends the worker a {"cmd": "stop"} line, gives it a brief
+grace period to exit on the calling thread, then reaps it (wait/kill/join)
+on a daemon thread so a hung worker can never block the Qt main thread - see
+stop(); if the parent process ever dies without a clean stop, the worker's
+own stdin-closed detection (see voice_recognition_worker.py) makes it exit
+too, so a crash can't leave it orphaned.
 
 Everything here degrades gracefully if vosk/sounddevice aren't installed, or
 the model directory (vosk_model/ at the repo root - see .gitignore) is
@@ -352,17 +354,56 @@ class VoiceRecognitionManager:
                 self._ready_callback(False)
 
     def stop(self) -> None:
+        """Ask the worker to exit, then return almost immediately - the
+        wait/kill/join is handed to a daemon thread so a wedged worker can
+        never freeze the caller. This is reached from the Qt main thread
+        (VoiceControlController._disconnect / .close, and start()'s own
+        restart path), and a frozen GUI takes NVDA down with it.
+
+        GOTCHA, S4: this used to do process.wait(timeout=3.0) then
+        reader_thread.join(timeout=3.0) inline - up to 6s of blocked UI if
+        the worker hung. Now self._process / self._reader_thread are
+        detached synchronously (so is_running goes False at once and a
+        following start() builds a fresh process rather than adopting this
+        one), the worker is given a short ~200ms grace period to exit
+        cleanly on the calling thread - it almost always does, having no
+        model to unload, just a PortAudio input stream to close, which the
+        Test... dialog flow wants released before it opens its own
+        recognizer - and anything slower than that is left to _reap_worker
+        on a background thread."""
         if self._process is None:
             return
         self._send({"cmd": "stop"})
-        try:
-            self._process.wait(timeout=3.0)
-        except Exception:
-            self._process.kill()
-        if self._reader_thread is not None:
-            self._reader_thread.join(timeout=3.0)
+        process, reader_thread = self._process, self._reader_thread
         self._process = None
         self._reader_thread = None
+        try:
+            process.wait(timeout=0.2)
+        except Exception:
+            threading.Thread(
+                target=self._reap_worker, args=(process, reader_thread),
+                daemon=True, name="VoiceRecognitionManagerReaper",
+            ).start()
+        # On a clean, prompt exit the stdout-reader thread ends by itself
+        # the moment the worker's pipe closes; it's a daemon and nothing
+        # waits on its result, so it is not joined here - that join was the
+        # other half of the up-to-6s block.
+
+    @staticmethod
+    def _reap_worker(process: subprocess.Popen, reader_thread: Optional[threading.Thread]) -> None:
+        """Off the calling thread: wait out a worker that didn't exit
+        within stop()'s short grace period, kill it if it never does, then
+        join the stdout-reader thread. Daemon thread - it cannot keep the
+        app alive and its result is not observed."""
+        try:
+            process.wait(timeout=3.0)
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
+        if reader_thread is not None:
+            reader_thread.join(timeout=3.0)
 
     @property
     def is_running(self) -> bool:
@@ -426,7 +467,15 @@ class VoiceRecognitionManager:
         # the "error"/"ready" path or was never waiting; but a worker that
         # CRASHED before ever reporting either must still be reported as a
         # failure, not leave the caller waiting forever.
-        if not self._ready_event.is_set():
+        #
+        # `process is self._process` guards the restart race S4's stop()
+        # widened: stop() nulls self._process and a following start() has
+        # already cleared _ready_event for the NEW worker, so a late EOF
+        # from the OLD worker's pipe must not fire the ready callback here
+        # and report the new worker as failed. On a deliberate stop the
+        # same check simply skips this block (self._process is None), which
+        # is correct - the controller reports the disconnect itself.
+        if process is self._process and not self._ready_event.is_set():
             self._started_ok = False
             self._ready_event.set()
             if self._ready_callback is not None:
