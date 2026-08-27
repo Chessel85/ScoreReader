@@ -22,12 +22,18 @@ sit next to each other here:
 MusicData keeps a delegator for every method here, including the private
 ones tests drive directly (_sounding_bounds, _slice_is_navigable).
 """
+import bisect
 from typing import Dict, List, Optional, Tuple
 
 
 class TimelineNavigator:
     def __init__(self, data):
         self.data = data
+        # Timeline-only caches (no active_voice_filter dependency), so they
+        # live outside invalidate_cache() and are built once, lazily -
+        # timeline_slices is never reassigned after construction.
+        self._first_index_by_measure_cache: Optional[Dict[int, int]] = None
+        self._quarters_from_start_cache: Optional[List[float]] = None
         self.invalidate_cache()
 
     # --- caches --------------------------------------------------------
@@ -159,11 +165,15 @@ class TimelineNavigator:
     def first_event_index_of_measure(self, measure_number: int) -> Optional[int]:
         """Index of the first timeline event in the measure, or None if it
         has none - Ref 6 turns that into a boundary cue and no movement.
-        Unfiltered, unlike first_visible_event_index_of_measure below."""
-        for i, s in enumerate(self.data.timeline_slices):
-            if s.measure == measure_number:
-                return i
-        return None
+        Unfiltered, unlike first_visible_event_index_of_measure below - so
+        this one cache is built once and never invalidated."""
+        if self._first_index_by_measure_cache is None:
+            cache: Dict[int, int] = {}
+            for i, s in enumerate(self.data.timeline_slices):
+                if s.measure not in cache:
+                    cache[s.measure] = i
+            self._first_index_by_measure_cache = cache
+        return self._first_index_by_measure_cache.get(measure_number)
 
     def first_visible_event_index_of_measure(self, measure_number: int) -> Optional[int]:
         """Like first_event_index_of_measure, but skips slices with no note
@@ -194,11 +204,17 @@ class TimelineNavigator:
     def slice_index_at_or_after_quarters(self, quarters_from_start: float) -> Optional[int]:
         """First slice index at or after an elapsed-quarters position -
         resolves a hairpin row's jump target, which the measure-only
-        lookups can't since a wedge may start or stop mid-measure."""
-        for i, s in enumerate(self.data.timeline_slices):
-            if s.quarters_from_start >= quarters_from_start:
-                return i
-        return None
+        lookups can't since a wedge may start or stop mid-measure.
+
+        quarters_from_start is monotonically non-decreasing across the
+        timeline, so a bisect over a once-built list of those values is
+        sound; the list has no filter dependency, hence no invalidation."""
+        if self._quarters_from_start_cache is None:
+            self._quarters_from_start_cache = [
+                s.quarters_from_start for s in self.data.timeline_slices
+            ]
+        i = bisect.bisect_left(self._quarters_from_start_cache, quarters_from_start)
+        return i if i < len(self._quarters_from_start_cache) else None
 
     # --- measure-by-measure movement ---------------------------------------
 
