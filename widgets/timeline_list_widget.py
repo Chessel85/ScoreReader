@@ -16,14 +16,15 @@ class TimelineListWidget(RegionFocusCycleMixin, QListWidget):
     """
     Region 3 list widget handling custom timeline traversal (Left/Right)
     and single-note selection collapsing (Up/Down).
-    """
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        # Ref 6: digits typed here build a target bar number, jumped to on
-        # Enter and cleared by Escape or any other meaningful key - stale
-        # digits waiting for a later Enter would be confusing.
-        self._pending_digits = ""
+    Typing a bar number then Enter (Ref 6) is NOT handled here anymore - it
+    is global: main_window.py's window-wide digit shortcuts feed
+    NavigationController, Enter is the Preview QAction routing through
+    audition_phrase, and Escape cancels. Any cursor move cancels a
+    half-typed number - NavigationController does that for
+    Left/Right/Home/End/Find, and MainWindow.on_region_3_vertical_move for
+    an in-slice Up/Down here.
+    """
 
     def _main_window(self) -> "MainWindow":
         # Only ever created by MainWindow.setup_ui, so window() is always it.
@@ -36,32 +37,12 @@ class TimelineListWidget(RegionFocusCycleMixin, QListWidget):
         main_win = self._main_window()
         ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
         alt = bool(event.modifiers() & Qt.KeyboardModifier.AltModifier)
-        no_modifiers = event.modifiers() == Qt.KeyboardModifier.NoModifier
 
-        if no_modifiers and Qt.Key.Key_0 <= key <= Qt.Key.Key_9:
-            self._pending_digits += chr(key)
-            main_win.on_pending_digits_changed(self._pending_digits)
-            return
-        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            if self._pending_digits:
-                digits = self._pending_digits
-                self._pending_digits = ""
-                main_win.on_pending_digits_changed(self._pending_digits)
-                main_win.navigate_to_typed_measure(digits)
-            else:
-                # Ref 11 (E6): no digits pending - two-bar phrase audition.
-                main_win.audition_phrase()
-            return
-        elif key == Qt.Key.Key_Escape:
-            if self._pending_digits:
-                self._pending_digits = ""
-                main_win.on_pending_digits_changed(self._pending_digits)
-            return
-        elif key == Qt.Key.Key_PageUp and alt:
+        if key == Qt.Key.Key_PageUp and alt:
             # Alt avoids QListWidget's own native PageUp (move the current
             # row up a page) - bare PageUp/PageDown would collide with that
             # the same way bare Up/Down would collide with chord-selection
-            # handling above, so this is deliberately not bound plain.
+            # handling below, so this is deliberately not bound plain.
             main_win.increase_preview_bars()
             return
         elif key == Qt.Key.Key_PageDown and alt:
@@ -74,10 +55,6 @@ class TimelineListWidget(RegionFocusCycleMixin, QListWidget):
             # exceeds the currently displayed attribute list.
             main_win.announce_region_4_attribute(key - Qt.Key.Key_0)
             return
-
-        if self._pending_digits:
-            self._pending_digits = ""
-            main_win.on_pending_digits_changed(self._pending_digits)
 
         if key == Qt.Key.Key_Left:
             if ctrl:

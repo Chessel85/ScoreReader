@@ -342,17 +342,19 @@ class MenuBuilder:
         )
         playback_menu.addAction(a.pause_resume)
 
-        # Enter/Return now a real global shortcut (user-requested
+        # Enter/Return is a real global shortcut (user-requested
         # 2026-08-26: "Enter should do the preview from anywhere - any
-        # region or the status bar"), enabled everywhere EXCEPT the Note
-        # region - FocusController.update_preview_action_enabled disables
-        # it there so it never fires instead of TimelineListWidget's own
-        # keyPressEvent, which still owns Enter's dual behaviour (jump to a
-        # typed bar number if one is pending, else the same phrase preview
-        # toggle this action calls). Two shortcuts, not one - same numpad-
-        # Enter-vs-main-Return distinction already documented for Voice
-        # Control's Ctrl+Enter, with Key_Enter listed first so the menu
-        # displays "Enter" rather than "Return".
+        # region or the status bar"), always enabled - including the Note
+        # region. Its slot (MainWindow.audition_phrase) is the single, global
+        # implementation of Enter's dual behaviour: complete a typed bar
+        # number if one is pending (NavigationController.commit_pending_
+        # digits), else toggle the phrase preview. Typed bar numbers are
+        # themselves global now (window-wide digit shortcuts in
+        # main_window.py), so there is nothing left for the Note region to
+        # handle specially. Two shortcuts, not one - same numpad-Enter-vs-
+        # main-Return distinction already documented for Voice Control's
+        # Ctrl+Enter, with Key_Enter listed first so the menu displays
+        # "Enter" rather than "Return".
         a.preview = self._action(
             "Pre&view", self.slots.audition_phrase,
             status_tip=(

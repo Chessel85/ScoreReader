@@ -20,10 +20,20 @@ class NavigationController(QObject):
 
     position_changed = Signal(bool, bool)  # play_all, announce_measure
     boundary_hit = Signal()
+    # Ref 6: the digits typed so far towards a bar number, emitted on every
+    # change so RegionPresenter can show "Go to measure: 12" in the status
+    # bar. Empty string once committed or cancelled.
+    pending_digits_changed = Signal(str)
 
     def __init__(self, session, parent=None):
         super().__init__(parent)
         self.session = session
+        # Ref 6: digits build up here as they are typed (from any region or
+        # the status bar - main_window.py's window-wide digit shortcuts feed
+        # this), and are jumped to on Enter. Any cursor move or Escape
+        # cancels a half-typed number so a later, unrelated Enter can't
+        # action a stale one.
+        self.pending_digits: str = ""
         # The FindTarget last armed by the Find dialog's OK (Ctrl+F) -
         # what Alt+Right/Alt+Left (find_next/find_previous) cycle through.
         # None until Find has been used at least once this session; a
@@ -43,22 +53,50 @@ class NavigationController(QObject):
         else:
             self.boundary_hit.emit()
 
+    # --- typed bar number (Ref 6) -----------------------------------------
+
+    def append_pending_digit(self, ch: str) -> None:
+        self.pending_digits += ch
+        self.pending_digits_changed.emit(self.pending_digits)
+
+    def clear_pending_digits(self) -> None:
+        """Cancel a half-typed bar number. A cheap no-op when nothing is
+        pending, so movement methods can call it unconditionally."""
+        if self.pending_digits:
+            self.pending_digits = ""
+            self.pending_digits_changed.emit("")
+
+    def commit_pending_digits(self) -> bool:
+        """Enter: if a bar number is pending, jump to it and return True;
+        otherwise return False so the caller falls through to Preview."""
+        if not self.pending_digits:
+            return False
+        digits = self.pending_digits
+        self.pending_digits = ""
+        self.pending_digits_changed.emit("")
+        self.to_typed_measure(digits)
+        return True
+
     def timeline_left(self) -> None:
+        self.clear_pending_digits()
         if not self.music_data:
             return
         self._moved(self.music_data.move_timeline_left())
 
     def timeline_right(self) -> None:
+        self.clear_pending_digits()
         if not self.music_data:
             return
         self._moved(self.music_data.move_timeline_right())
 
     def measure_left(self) -> None:
+        self.clear_pending_digits()
         if not self.music_data:
             return
         self._moved(self.music_data.move_timeline_left_by_measure(), announce_measure=True)
 
     def measure_right(self) -> None:
+        self.clear_pending_digits()
         if not self.music_data:
             return
         self._moved(self.music_data.move_timeline_right_by_measure(), announce_measure=True)
@@ -66,6 +104,7 @@ class NavigationController(QObject):
     def timeline_home(self) -> None:
         """Home (Ref 5). Unlike Left/Right this jumps to a known limit, so it
         never represents crossing a boundary and never cues one."""
+        self.clear_pending_digits()
         if not self.music_data:
             return
         self.music_data.move_timeline_home()
@@ -73,6 +112,7 @@ class NavigationController(QObject):
 
     def timeline_end(self) -> None:
         """End (Ref 5) - see timeline_home."""
+        self.clear_pending_digits()
         if not self.music_data:
             return
         self.music_data.move_timeline_end()
@@ -95,6 +135,7 @@ class NavigationController(QObject):
         one of those lands on the LAST sounding note of the end bar (the
         user's decision) - the app's only "last event in a measure" target.
         """
+        self.clear_pending_digits()
         if not self.music_data or row is None:
             return
 
@@ -129,6 +170,7 @@ class NavigationController(QObject):
         self._find(direction=-1)
 
     def _find(self, direction: int) -> None:
+        self.clear_pending_digits()
         if not self.music_data or self.current_find_target is None:
             self.boundary_hit.emit()
             return

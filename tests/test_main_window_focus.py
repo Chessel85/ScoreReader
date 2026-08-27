@@ -207,40 +207,40 @@ def test_first_and_last_note_actions_are_only_enabled_in_the_note_region(
     assert window.last_measure_action.isEnabled()
 
 
-def test_preview_action_is_enabled_everywhere_except_the_note_region(
+def test_preview_action_is_enabled_in_every_region_and_the_status_bar(
     window, qtbot, null_synth, minimal_score
 ):
-    """The INVERSE of the Home/End gating above: Enter/Return (Playback >
-    Preview) is user-requested (2026-08-26) to work from any region or the
-    status bar - except the Note region, which must keep owning Enter
-    itself (TimelineListWidget.keyPressEvent's jump-to-typed-bar-number/
-    phrase-preview dual behaviour). Enabling the global shortcut there too
-    would let it fire INSTEAD of that region-local handling."""
+    """Enter/Return (Playback > Preview) is a plain window-wide action now,
+    always enabled - including the Note region. Its slot
+    (MainWindow.audition_phrase) is the single global implementation of
+    Enter's dual behaviour: complete a pending typed bar number, else
+    toggle the phrase preview. There is no longer a Note-region carve-out
+    (FocusController.update_preview_action_enabled is gone)."""
     load_and_wait(window, qtbot, minimal_score)
     _show(window, qtbot)
 
-    for region in (window.region_1, window.region_2, window.region_4, window.region_5):
+    for region in (
+        window.region_1, window.region_2, window.region_3,
+        window.region_4, window.region_5,
+    ):
         _focus(region)
         assert window.preview_action.isEnabled()
 
     _focus(window.status_bar.first_field())
     assert window.preview_action.isEnabled()
 
-    _focus(window.region_3)
-    assert not window.preview_action.isEnabled()
-
 
 @pytest.mark.parametrize(
     "focus_target",
-    ["region_1", "region_2", "region_4", "region_5", "status_bar"],
+    ["region_1", "region_2", "region_3", "region_4", "region_5", "status_bar"],
 )
 def test_enter_starts_and_stops_preview_from_any_region_or_the_status_bar(
     window, qtbot, null_synth, minimal_score, focus_target
 ):
-    """Functional counterpart of the enabled/disabled test above: pressing
-    Enter must actually start Preview, and pressing it again must stop it
-    early - the same toggle audition_phrase() already provides for the
-    Note region's own Enter handling, now reachable globally too."""
+    """Functional counterpart of the enabled test above: with no bar number
+    pending, pressing Enter must actually start Preview, and pressing it
+    again must stop it early - the audition_phrase() toggle, now reachable
+    from every region (the Note region included) and the status bar."""
     load_and_wait(window, qtbot, minimal_score)
     _show(window, qtbot)
     target = (
@@ -257,14 +257,12 @@ def test_enter_starts_and_stops_preview_from_any_region_or_the_status_bar(
     assert window.playback.is_preview_active is False
 
 
-def test_enter_in_the_note_region_still_only_does_its_own_local_behaviour(
+def test_enter_in_the_note_region_completes_a_typed_bar_number_not_a_preview(
     window, qtbot, null_synth, many_measures_score
 ):
-    """Regression guard: with the global Enter/Return shortcut disabled in
-    the Note region (see test_preview_action_is_enabled_everywhere_except_
-    the_note_region), a typed bar number followed by Enter must still jump
-    to that bar rather than the global action firing and starting a
-    Preview instead."""
+    """Regression guard: a typed bar number followed by Enter must jump to
+    that bar, not start a Preview - audition_phrase() checks for pending
+    digits (NavigationController.commit_pending_digits) before previewing."""
     load_and_wait(window, qtbot, many_measures_score)
     _show(window, qtbot)
     _focus(window.region_3)

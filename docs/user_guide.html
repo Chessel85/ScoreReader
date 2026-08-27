@@ -766,17 +766,20 @@ position, since they’re jumping to a known place rather than attempting
 to move past a limit.</p>
 <h3 id="jumping-to-a-specific-bar-number">5.4 Jumping to a Specific Bar
 Number</h3>
-<p>With focus in the Note region, type a bar number using the digit keys
-- no dialog needed - then press <code>Enter</code> to jump straight to
-its first active event, which plays immediately. Press
-<code>Escape</code> at any point before <code>Enter</code> to clear what
-you’ve typed without moving. Typing a bar number that doesn’t exist in
-the piece plays the boundary sound (section 5.6) and leaves your
-position unchanged.</p>
+<p>Type a bar number using the digit keys - no dialog needed - then
+press <code>Enter</code> to jump straight to its first active event,
+which plays immediately. This works from anywhere in the window: any of
+the five regions or the status bar, exactly like Play, Preview and the
+tempo keys. The number you’re building shows in the status bar’s
+position field as you type. Press <code>Escape</code> at any point
+before <code>Enter</code> to clear what you’ve typed without moving, and
+any ordinary move (an arrow key, a menu jump, Find) also clears a
+half-typed number so a later <code>Enter</code> can’t act on a stale
+one. Typing a bar number that doesn’t exist in the piece plays the
+boundary sound (section 5.6) and leaves your position unchanged.</p>
 <p>You can also reach the same feature through Navigation &gt; Go to
 Measure… (<code>Ctrl+G</code>), a dialog pre-filled with your current
-bar number if you’d rather use a menu than type directly into the Note
-region.</p>
+bar number if you’d rather use a menu.</p>
 <h3 id="moving-between-notes-in-a-chord-up-down-arrow">5.5 Moving
 Between Notes in a Chord (Up / Down Arrow)</h3>
 <p>When several notes sound together at one position,
@@ -898,11 +901,10 @@ playing stops it early. Either way, your actual cursor position is left
 untouched. Preview also follows repeat/ending/Segno/Coda markings the
 same way full playback does, whenever they fall inside the previewed
 passage.</p>
-<p>Enter works this way from any region, or the status bar -
-<strong>except</strong> the Note region, where it has a second job: with
-a bar number currently being typed (section 5.4), Enter jumps to that
-bar instead of starting a Preview. Pressing Enter in the Note region
-with nothing typed still starts Preview exactly as everywhere else.</p>
+<p>Enter works this way from any region and the status bar. It has one
+second job, also everywhere: if you’re partway through typing a bar
+number (section 5.4), Enter completes that jump instead of starting a
+Preview. With nothing typed, Enter always previews.</p>
 <p>While focus is in the Note region, <code>Alt+PageUp</code> and
 <code>Alt+PageDown</code> increase or decrease how many bars Preview
 covers by one bar at a time, a quick alternative to opening the Preview
@@ -1661,8 +1663,8 @@ Ctrl+Space again (section 7.2).</td>
 <td style="text-align: left;">Enter</td>
 <td style="text-align: left;">Plays a short phrase around the current
 position, or stops it early if already playing. Works from any region or
-the status bar; in the Note region, Enter also completes a typed bar
-number if one is pending (section 7.3).</td>
+the status bar; if a typed bar number is pending, Enter completes that
+jump instead (sections 5.4, 7.3).</td>
 </tr>
 <tr>
 <td style="text-align: left;">Preview Settings…</td>
@@ -1904,12 +1906,12 @@ anywhere</td>
 </tr>
 <tr>
 <td style="text-align: left;">Type a bar number, then jump to it
-<em>(Note region only)</em></td>
+<em>(any region or the status bar)</em></td>
 <td style="text-align: left;">0-9, then Enter</td>
 </tr>
 <tr>
 <td style="text-align: left;">Clear a typed bar number without moving
-<em>(Note region only)</em></td>
+<em>(any region or the status bar)</em></td>
 <td style="text-align: left;">Escape</td>
 </tr>
 <tr>
@@ -1979,8 +1981,8 @@ Ctrl+Space again)</td>
 <tr>
 <td style="text-align: left;">Play a preview phrase around the current
 position, or stop it early if already playing (works from any region or
-the status bar; in the Note region, only when no bar number is
-pending)</td>
+the status bar; completes a pending typed bar number instead, if there
+is one)</td>
 <td style="text-align: left;">Enter</td>
 </tr>
 <tr>

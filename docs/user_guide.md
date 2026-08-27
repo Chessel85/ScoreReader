@@ -321,16 +321,21 @@ attempting to move past a limit.
 
 ### 5.4 Jumping to a Specific Bar Number
 
-With focus in the Note region, type a bar number using the digit keys -
-no dialog needed - then press `Enter` to jump straight to its first
-active event, which plays immediately. Press `Escape` at any point
-before `Enter` to clear what you've typed without moving. Typing a bar
-number that doesn't exist in the piece plays the boundary sound (section
-5.6) and leaves your position unchanged.
+Type a bar number using the digit keys - no dialog needed - then press
+`Enter` to jump straight to its first active event, which plays
+immediately. This works from anywhere in the window: any of the five
+regions or the status bar, exactly like Play, Preview and the tempo
+keys. The number you're building shows in the status bar's position
+field as you type. Press `Escape` at any point before `Enter` to clear
+what you've typed without moving, and any ordinary move (an arrow key, a
+menu jump, Find) also clears a half-typed number so a later `Enter`
+can't act on a stale one. Typing a bar number that doesn't exist in the
+piece plays the boundary sound (section 5.6) and leaves your position
+unchanged.
 
 You can also reach the same feature through Navigation > Go to
 Measure... (`Ctrl+G`), a dialog pre-filled with your current bar number
-if you'd rather use a menu than type directly into the Note region.
+if you'd rather use a menu.
 
 ### 5.5 Moving Between Notes in a Chord (Up / Down Arrow)
 
@@ -458,11 +463,10 @@ early. Either way, your actual cursor position is left untouched.
 Preview also follows repeat/ending/Segno/Coda markings the same way full
 playback does, whenever they fall inside the previewed passage.
 
-Enter works this way from any region, or the status bar - **except** the
-Note region, where it has a second job: with a bar number currently
-being typed (section 5.4), Enter jumps to that bar instead of starting a
-Preview. Pressing Enter in the Note region with nothing typed still
-starts Preview exactly as everywhere else.
+Enter works this way from any region and the status bar. It has one
+second job, also everywhere: if you're partway through typing a bar
+number (section 5.4), Enter completes that jump instead of starting a
+Preview. With nothing typed, Enter always previews.
 
 While focus is in the Note region, `Alt+PageUp` and `Alt+PageDown`
 increase or decrease how many bars Preview covers by one bar at a time,
@@ -1114,7 +1118,7 @@ directly (see also section 16.3).
 | :--- | :--- | :--- |
 | Play/Stop | Space | Starts playback from the current position, resumes from pause, or stops it (section 7.2). |
 | Pause | Ctrl+Space | Pauses playback; resume with Space, not Ctrl+Space again (section 7.2). |
-| Preview | Enter | Plays a short phrase around the current position, or stops it early if already playing. Works from any region or the status bar; in the Note region, Enter also completes a typed bar number if one is pending (section 7.3). |
+| Preview | Enter | Plays a short phrase around the current position, or stops it early if already playing. Works from any region or the status bar; if a typed bar number is pending, Enter completes that jump instead (sections 5.4, 7.3). |
 | Preview Settings... | Ctrl+Shift+V | Sets Preview's lead-in, length and looping (section 7.4). |
 | Mute | F8 | Mutes or unmutes the focused row in the Parts region (section 6.3). |
 | Solo | F9 | Solos or unsolos the focused row in the Parts region (section 6.3). |
@@ -1165,8 +1169,8 @@ directly (see also section 16.3).
 | Step to the next / previous active event *(Note region only)* | Left Arrow / Right Arrow |
 | Jump to the first active event of the next / current-or-previous bar *(Note region only)* | Ctrl+Left Arrow / Ctrl+Right Arrow |
 | Jump to the first / last active note *(Note region only)* | Home / End |
-| Type a bar number, then jump to it *(Note region only)* | 0-9, then Enter |
-| Clear a typed bar number without moving *(Note region only)* | Escape |
+| Type a bar number, then jump to it *(any region or the status bar)* | 0-9, then Enter |
+| Clear a typed bar number without moving *(any region or the status bar)* | Escape |
 | Move between notes within a chord *(Note region only)* | Up Arrow / Down Arrow |
 | Reselect every note at the current position, so `Shift+Space` plays them all together *(Note region only, also Edit > Select All)* | Ctrl+A |
 | Speak the Nth row of the Note Attributes region without moving focus *(Note region only)* | Ctrl+1 - Ctrl+9 |
@@ -1180,7 +1184,7 @@ directly (see also section 16.3).
 | Clear every solo in the score *(Parts List region only)* | Alt+F9 |
 | Play / stop playback from the current position (also resumes from pause) | Space |
 | Pause playback (resume with Space, not Ctrl+Space again) | Ctrl+Space |
-| Play a preview phrase around the current position, or stop it early if already playing (works from any region or the status bar; in the Note region, only when no bar number is pending) | Enter |
+| Play a preview phrase around the current position, or stop it early if already playing (works from any region or the status bar; completes a pending typed bar number instead, if there is one) | Enter |
 | Increase / decrease Preview's length by one bar, spoken aloud *(Note region only)* | Alt+PageUp / Alt+PageDown |
 | Play every note at the current position together | Shift+Space |
 | Increase / decrease playback tempo by 10bpm *(works from any region or the status bar)* | F / S |

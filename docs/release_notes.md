@@ -6,6 +6,8 @@
 * Added File > Close to revert the app back to a state when first run
 * Changed disabled menu behaviour away from the menu item being skipped to being announced us unavailable 
 * Fixed a looping Preview of a bar of triplets restarting slightly out of time
+* Slower, default and faster keystrokes now cause the new tempo to be announced
+* Typing a bar number then Enter to jump to it now works from any region or the status bar, not just the Note region
 
 ## 2026.1.32
 

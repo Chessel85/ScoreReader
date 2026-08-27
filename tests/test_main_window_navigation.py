@@ -1,6 +1,7 @@
 # tests/test_main_window_navigation.py
 """Load, timeline navigation, boundary cues, status bar, typed-measure jumps, and file loading. Split from the original test_main_window.py (S10 of code_review_26th.md).
 """
+import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QValidator
 from PySide6.QtWidgets import QDialog
@@ -395,36 +396,69 @@ def test_status_bar_shows_pending_digits_while_typing_a_bar_number(
     window, qtbot, null_synth, many_measures_score
 ):
     load_and_wait(window, qtbot, many_measures_score)
+    # Digit entry and Enter are now window-wide shortcuts (Ref 6, no longer
+    # TimelineListWidget.keyPressEvent), so the window must be shown and
+    # focused - same requirement as the F/S/D tempo shortcut tests.
+    _show(window, qtbot)
+    _focus(window.region_3)
 
-    qtbot.keyClicks(window.region_3, "12")
+    qtbot.keyClicks(window.focusWidget(), "12")
     # F4/D-6: this used to hardcode "bar" regardless of dialect (a
     # pre-existing inconsistency with "Measure" everywhere else) - now
     # dialect-aware, so under this fixture's uk_terms=False it says
     # "measure" like the rest of the status bar.
     assert window.status_bar._fields[0].text() == "Go to measure: 12"
 
-    qtbot.keyClick(window.region_3, Qt.Key.Key_Return)
+    qtbot.keyClick(window.focusWidget(), Qt.Key.Key_Return)
     assert window.status_bar._fields[0].text() == "Measure 12 beat 1"
 
 
 def test_typing_digits_then_enter_jumps_to_that_measure(window, qtbot, null_synth, many_measures_score):
-    """C4, Ref 6: multi-digit bar number typed into the Note region."""
+    """C4, Ref 6: multi-digit bar number, typed with the Note region focused."""
     load_and_wait(window, qtbot, many_measures_score)
+    _show(window, qtbot)
+    _focus(window.region_3)
 
-    qtbot.keyClicks(window.region_3, "12")
-    qtbot.keyClick(window.region_3, Qt.Key.Key_Return)
+    qtbot.keyClicks(window.focusWidget(), "12")
+    qtbot.keyClick(window.focusWidget(), Qt.Key.Key_Return)
 
     assert window._music_data.active_event_index == 11  # measure 12's only event
+
+
+@pytest.mark.parametrize(
+    "focus_target",
+    ["region_1", "region_2", "region_4", "region_5", "status_bar"],
+)
+def test_typing_a_bar_number_then_enter_jumps_from_any_region_or_the_status_bar(
+    window, qtbot, null_synth, many_measures_score, focus_target
+):
+    """Ref 6, user-requested: the typed-bar jump is now a window-wide action
+    like Play/Stop/Preview/tempo, not scoped to the Note region."""
+    load_and_wait(window, qtbot, many_measures_score)
+    _show(window, qtbot)
+    target = (
+        window.status_bar.first_field() if focus_target == "status_bar"
+        else getattr(window, focus_target)
+    )
+    _focus(target)
+
+    qtbot.keyClicks(window.focusWidget(), "12")
+    assert window.status_bar._fields[0].text() == "Go to measure: 12"
+
+    qtbot.keyClick(window.focusWidget(), Qt.Key.Key_Return)
+    assert window._music_data.active_event_index == 11
 
 
 def test_typing_an_unknown_bar_number_then_enter_plays_the_boundary_cue_and_does_not_move(
     window, qtbot, null_synth, many_measures_score
 ):
     load_and_wait(window, qtbot, many_measures_score)
+    _show(window, qtbot)
+    _focus(window.region_3)
     null_synth.played.clear()
 
-    qtbot.keyClicks(window.region_3, "99")
-    qtbot.keyClick(window.region_3, Qt.Key.Key_Return)
+    qtbot.keyClicks(window.focusWidget(), "99")
+    qtbot.keyClick(window.focusWidget(), Qt.Key.Key_Return)
 
     assert window._music_data.active_event_index == 0
     assert null_synth.last_played["channel"] == window.BOUNDARY_CHANNEL
@@ -432,10 +466,12 @@ def test_typing_an_unknown_bar_number_then_enter_plays_the_boundary_cue_and_does
 
 def test_escape_clears_pending_digits_without_moving(window, qtbot, null_synth, many_measures_score):
     load_and_wait(window, qtbot, many_measures_score)
+    _show(window, qtbot)
+    _focus(window.region_3)
     null_synth.played.clear()
 
-    qtbot.keyClicks(window.region_3, "5")
-    qtbot.keyClick(window.region_3, Qt.Key.Key_Escape)
+    qtbot.keyClicks(window.focusWidget(), "5")
+    qtbot.keyClick(window.focusWidget(), Qt.Key.Key_Escape)
 
     assert window._music_data.active_event_index == 0
     assert null_synth.played == [], "Escape itself must not jump, play the boundary cue, or play anything"
@@ -446,14 +482,47 @@ def test_escape_clears_pending_digits_without_moving(window, qtbot, null_synth, 
 
 def test_an_arrow_key_clears_any_pending_digits(window, qtbot, null_synth, many_measures_score):
     """Typing "1" then moving right before pressing Enter must not leave a
-    stale "1" waiting to be actioned by a later, unrelated Enter."""
+    stale "1" waiting to be actioned by a later, unrelated Enter -
+    NavigationController clears the buffer on every cursor move."""
     load_and_wait(window, qtbot, many_measures_score)
+    _show(window, qtbot)
+    _focus(window.region_3)
 
-    qtbot.keyClicks(window.region_3, "1")
-    qtbot.keyClick(window.region_3, Qt.Key.Key_Right)  # measure 2, clears the pending "1"
-    qtbot.keyClick(window.region_3, Qt.Key.Key_Return)  # no digits pending - starts phrase audition (E6)
+    qtbot.keyClicks(window.focusWidget(), "1")
+    qtbot.keyClick(window.focusWidget(), Qt.Key.Key_Right)  # measure 2, clears the pending "1"
+    qtbot.keyClick(window.focusWidget(), Qt.Key.Key_Return)  # no digits pending - starts phrase audition (E6)
 
     assert window._music_data.active_event_index == 1  # phrase audition never moves the cursor
+
+
+def test_navigation_controller_pending_digit_buffer(window, qtbot, null_synth, many_measures_score):
+    """Unit-level check of the Ref 6 buffer that now lives on
+    NavigationController: append/clear/commit transitions, the
+    pending_digits_changed emissions, and commit returning False when
+    there is nothing pending (so Enter falls through to Preview)."""
+    load_and_wait(window, qtbot, many_measures_score)
+    nav = window.navigation
+    seen = []
+    nav.pending_digits_changed.connect(seen.append)
+
+    assert nav.commit_pending_digits() is False  # nothing pending -> Preview
+
+    nav.append_pending_digit("1")
+    nav.append_pending_digit("2")
+    assert nav.pending_digits == "12"
+    assert seen == ["1", "12"]
+
+    nav.clear_pending_digits()
+    assert nav.pending_digits == ""
+    assert seen[-1] == ""
+    nav.clear_pending_digits()  # already empty -> no extra emission
+    assert seen == ["1", "12", ""]
+
+    nav.append_pending_digit("3")
+    assert nav.commit_pending_digits() is True
+    assert nav.pending_digits == ""
+    assert seen[-1] == ""
+    assert window._music_data.get_current_slice().measure == 3
 
 
 def test_navigation_menu_first_and_last_measure_move_focus_and_position(

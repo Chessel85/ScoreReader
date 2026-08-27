@@ -267,6 +267,30 @@ class MainWindow(QMainWindow):
             "Shift+Space", self._audition_current_selection
         )
 
+        # Ref 6: typing a bar number then Enter jumps to it. Global, like the
+        # transport and tempo shortcuts above and unlike arrow-key
+        # navigation - a bar jump is a position-wide action, not a per-row
+        # one, so it should work from any region or the status bar. Bare
+        # digits are safe window-wide here: no region uses digit type-ahead
+        # for anything meaningful (the rows are part/staff/voice names and
+        # note text), and Ctrl+digit in the Note region is a separate combo.
+        # The digits accumulate on NavigationController; Enter is handled by
+        # the Preview QAction routing through audition_phrase(), Escape
+        # cancels a half-typed number. Numpad digits arrive with
+        # KeypadModifier and are not bound (they weren't before either).
+        self._digit_shortcuts = [
+            window_shortcut(
+                Qt.Key(Qt.Key.Key_0 + d),
+                lambda d=d: self.navigation.append_pending_digit(str(d)),
+            )
+            for d in range(10)
+        ]
+        # A lambda, not a bound-method reference: setup_shortcuts() runs
+        # before setup_controllers() creates self.navigation.
+        self._cancel_digits_shortcut = window_shortcut(
+            Qt.Key.Key_Escape, lambda: self.navigation.clear_pending_digits()
+        )
+
     def setup_controllers(self):
         regions = [self.region_1, self.region_2, self.region_3, self.region_4, self.region_5]
 
@@ -390,8 +414,6 @@ class MainWindow(QMainWindow):
         self.focus.unmute_all_action = actions.unmute_all
         self.focus.unsolo_all_action = actions.unsolo_all
         self.focus.update_region2_actions_enabled()
-        self.focus.preview_action = actions.preview
-        self.focus.update_preview_action_enabled()
 
         self.recent_files_menu = actions.recent_files_menu
         self._refresh_recent_files_menu()
@@ -405,6 +427,7 @@ class MainWindow(QMainWindow):
         # Both "the cursor moved" sources land on the same redraw.
         self.navigation.position_changed.connect(self.presenter.update_timeline_views)
         self.navigation.boundary_hit.connect(self.playback.play_boundary_cue)
+        self.navigation.pending_digits_changed.connect(self.presenter.show_pending_digits)
         self.playback.cursor_moved.connect(self.presenter.update_timeline_views)
         self.playback.status_text_changed.connect(self.presenter.update_status_bar)
         self.playback.playback_state_changed.connect(
@@ -657,9 +680,6 @@ class MainWindow(QMainWindow):
     def navigate_to_typed_measure(self, digits: str):
         self.navigation.to_typed_measure(digits)
 
-    def on_pending_digits_changed(self, digits: str):
-        self.presenter.show_pending_digits(digits)
-
     def jump_to_performance_span_start(self):
         self.navigation.jump_to_span(self.region_5.current_row_data(), is_start=True)
 
@@ -684,6 +704,11 @@ class MainWindow(QMainWindow):
         self.playback.toggle_pause_resume()
 
     def audition_phrase(self):
+        # Enter's dual behaviour, now global (bound via the Preview QAction):
+        # complete a typed bar number if one is pending, else preview the
+        # current phrase (or stop it early if already playing).
+        if self.navigation.commit_pending_digits():
+            return
         self.playback.audition_phrase()
 
     def increase_preview_bars(self):
@@ -750,6 +775,10 @@ class MainWindow(QMainWindow):
         self.presenter.select_all_region_3()
 
     def on_region_3_vertical_move(self):
+        # An in-slice Up/Down still cancels a half-typed bar number, the
+        # same as any real cursor move (NavigationController clears it for
+        # Left/Right/Home/End/Find).
+        self.navigation.clear_pending_digits()
         self._audition_current_selection()
 
     # --- focus (delegators) -------------------------------------------

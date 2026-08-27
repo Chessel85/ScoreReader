@@ -339,10 +339,14 @@ def test_enter_keypress_with_no_pending_digits_starts_phrase_audition(
     window, qtbot, null_synth, many_measures_score
 ):
     load_and_wait(window, qtbot, many_measures_score)
+    # Enter is the window-wide Preview shortcut now, not a
+    # TimelineListWidget.keyPressEvent branch - needs a shown, focused window.
+    _show(window, qtbot)
+    _focus(window.region_3)
     no_lead_in(window)
     null_synth.played.clear()
 
-    qtbot.keyClick(window.region_3, Qt.Key.Key_Return)
+    qtbot.keyClick(window.focusWidget(), Qt.Key.Key_Return)
 
     assert window.sequencer.is_playing is True
     assert null_synth.played[0]["midi_notes"] == [60]

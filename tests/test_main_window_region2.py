@@ -18,9 +18,9 @@ def test_playback_menu_shortcuts(window):
         "resuming is Space, not Ctrl+Space again - so 'Resume' in its own "
         "name was misleading"
     )
-    # Enter/Return is now a real global shortcut (user-requested
-    # 2026-08-26), enabled everywhere except the Note region - see
-    # test_preview_action_is_enabled_everywhere_except_the_note_region.
+    # Enter/Return is a real global shortcut (user-requested 2026-08-26),
+    # always enabled - including the Note region - see
+    # test_preview_action_is_enabled_in_every_region_and_the_status_bar.
     assert window.preview_action.shortcut() == QKeySequence(Qt.Key.Key_Enter)
     assert QKeySequence(Qt.Key.Key_Return) in window.preview_action.shortcuts()
     assert window.mute_action.shortcut() == QKeySequence(Qt.Key.Key_F8)

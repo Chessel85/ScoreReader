@@ -256,6 +256,18 @@ PHASE C - NAVIGATION AND WINDOW CHROME                    (8 tasks)
           (files/long tune/, 130 measures on paper, notes end ~112, rest is
           trailing empty padding - same pattern C5 excludes). Added
           score_long_tune fixture, tested jump to measure 100.
+        > FOLLOW-UP 2026-08-27 (user-requested): made the feature global,
+          matching Play/Pause/Stop/Preview/tempo. The buffer moved from
+          TimelineListWidget to NavigationController.pending_digits
+          (reversing D-2's per-widget choice - a bar jump is a
+          position-wide action, not a per-row one). main_window.setup_
+          shortcuts binds bare 0-9 and Escape as WindowShortcuts; Enter is
+          the Preview QAction routing through audition_phrase, which
+          commits a pending number before previewing. Any cursor move
+          (NavigationController) clears the buffer. FocusController's
+          Note-region carve-out for the Preview action
+          (update_preview_action_enabled) is gone - the action is simply
+          always enabled now.
 
 [x] C5  Audible boundary notification ("doh" sound) - Ref 2 AC4, Ref 3 AC4
         > DONE 2026-08-06. D-9: synthesized through the existing SynthEngine
@@ -1348,6 +1360,14 @@ D-2  Global navigation keystrokes vs per-widget handling
      C1/C2/C3 extend the same widget rather than adding a MainWindow-level
      event filter or WindowShortcut context. Revisit only if Tab-ping-ponging
      back to the Note region proves inefficient in practice.
+     AMENDED 2026-08-27 (user-requested): the digit-then-Enter bar jump (C4)
+     is carved out as global - it's a position-wide jump like Go to Measure,
+     not a per-row move, and shares no meaning with digits in other regions.
+     Now bare 0-9/Escape WindowShortcuts + the Preview QAction's Enter,
+     feeding NavigationController. The ARROW-key family (step event, step
+     bar, Home/End, Find Next/Prev) stays per-widget and Note-region-only
+     exactly as decided here - those genuinely collide with Region 2's list
+     navigation.
 
 D-3  Mechanism for forcing screen reader announcements from PySide6
      Needed for Ref 1 AC4, Ref 3 AC3 and Ref 5. Candidates: QAccessible
