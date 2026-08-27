@@ -77,16 +77,25 @@ class StatusBarWidget(QStatusBar):
     PREVIEW_LENGTH_FIELD = 7
     FIELD_COUNT = 8
 
+    # The "nothing loaded" text for each field - shown at startup and again
+    # after File > Close (see reset()).
+    DEFAULT_FIELDS = [
+        "Measure - beat -", "Key: -", "Time: -", "Playback tempo: -",
+        "Playback: Stopped", "Metronome: Off", "Position Announcer: Off",
+        "Preview length: 2 bars",
+    ]
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._fields = [_StatusField(self, i, self) for i in range(self.FIELD_COUNT)]
         for field in self._fields:
             self.addWidget(field)
-        self.set_fields([
-            "Measure - beat -", "Key: -", "Time: -", "Playback tempo: -",
-            "Playback: Stopped", "Metronome: Off", "Position Announcer: Off",
-            "Preview length: 2 bars",
-        ])
+        self.set_fields(self.DEFAULT_FIELDS)
+
+    def reset(self) -> None:
+        """Back to the startup defaults - File > Close, when there is no
+        longer a score to describe."""
+        self.set_fields(self.DEFAULT_FIELDS)
 
     def set_fields(self, texts: List[str]) -> None:
         for field, text in zip(self._fields, texts):

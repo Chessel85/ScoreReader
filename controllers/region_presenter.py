@@ -62,6 +62,19 @@ class RegionPresenter(QObject):
         leftover labels."""
         self.last_performance_row_labels = None
 
+    def clear_all(self) -> None:
+        """File > Close: blank every region and the status bar back to the
+        way they look before any score is opened. The one method here that
+        must run with self.music_data already None - it is the inverse of a
+        load's refresh, not part of one."""
+        self.region_1.clear()
+        self.region_2.load_score_structure([])
+        self.region_3.clear()
+        self.region_4.clear()
+        self.region_5.clear()
+        self.status_bar.reset()
+        self.last_performance_row_labels = None
+
     def refresh_all(self, play_all: bool = True) -> None:
         if not self.music_data:
             return

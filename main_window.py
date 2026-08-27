@@ -321,6 +321,7 @@ class MainWindow(QMainWindow):
         # Kept as individual attributes: the names the tests and the rest of
         # the window already use.
         self.clear_preferences_action = actions.clear_preferences
+        self.close_action = actions.close
         self.performance_report_action = actions.performance_report
         self.play_stop_action = actions.play_stop
         self.pause_resume_action = actions.pause_resume
@@ -464,6 +465,41 @@ class MainWindow(QMainWindow):
         self._save_current_score_config()
         self.session.load(file_path)
 
+    def close_score(self):
+        """File > Close: commit the loaded score's .rsc, then blank the
+        window back to how it looks before any file is opened - without
+        quitting the app.
+
+        Cross-controller orchestration, so it lives in the shell alongside
+        _on_score_loaded (its rough inverse). A no-op with nothing loaded,
+        or while a load is still in flight - the same guards
+        load_score_from_file uses. The config must be written before the
+        score is dropped (persistence reads session.music_data), so the
+        order here is load-bearing the way _on_score_loaded's is."""
+        if self._music_data is None or self.session.is_loading():
+            return
+        self._save_current_score_config()
+
+        self.playback.detach_score()
+        self.session.close()
+
+        self.setWindowTitle("Recall Score")
+        self.close_action.setEnabled(False)
+        # Reverts "go to bar N"'s vocabulary to nothing score-specific -
+        # go_to_bar_phrases(0) is []. Safe whether or not voice control is
+        # currently listening (see _on_score_loaded's own call).
+        self.voice_control.rebuild_grammar(0)
+        # A find target is just a (category, key) tag, not a reference into
+        # the old score, but "back to first run" means nothing is armed.
+        self.navigation.current_find_target = None
+
+        self.presenter.clear_all()
+        self.persistence.refresh_clear_action()
+        self.metronome_action.setChecked(False)
+        self.position_announcer_action.setChecked(False)
+
+        self.region_1.setFocus()
+
     def open_ultimate_guitar_import_dialog(self):
         """Experimental (feature/ug-import): File > Import from Ultimate
         Guitar... - no self._music_data guard, same as open_file_dialog,
@@ -533,6 +569,7 @@ class MainWindow(QMainWindow):
         effect before the first audition, or the opening chord includes
         voices the user had switched off."""
         self.setWindowTitle(f"Recall Score - {os.path.basename(music_data.file_path)}")
+        self.close_action.setEnabled(True)
 
         # Ref 19: "go to bar N"'s numeric vocabulary is bounded to this
         # score's own real measure numbers - see audio/voice_commands.

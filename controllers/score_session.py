@@ -70,6 +70,12 @@ class ScoreSession(QObject):
         if self._load_thread is not None:
             self._load_thread.wait()
 
+    def close(self) -> None:
+        """File > Close: drop the loaded score. The synth and the (already
+        finished) load thread are untouched - only "what is loaded" changes,
+        back to the None it started at."""
+        self.music_data = None
+
     def set_uk_terms(self, uk_terms: bool) -> None:
         """The dialect is a GLOBAL preference, but MusicData carries its own
         copy for rendering - so it is applied both here and to each score as

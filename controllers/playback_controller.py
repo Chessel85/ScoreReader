@@ -145,6 +145,19 @@ class PlaybackController(QObject):
         self.sequencer.finished.connect(self._on_sequencer_finished)
         self.apply_mixer(music_data.mixer)
 
+    def detach_score(self) -> None:
+        """File > Close: the inverse of attach_score. Silence anything
+        sounding or scheduled and drop the score's Sequencer, so the
+        controller is back to its pre-load state. The synth stays alive
+        (it is a process-long singleton), so an explicit stop_all_notes()
+        is needed here where closeEvent can rely on synth.close()."""
+        self.cancel_preview()
+        if self.sequencer is not None:
+            self.sequencer.stop()
+        self.sequencer = None
+        self._muted = False
+        self.synth.stop_all_notes()
+
     def apply_mixer(self, mixer) -> None:
         """Wishlist #4: push a score's saved volume/pan overrides onto their
         channels.

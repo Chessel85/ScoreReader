@@ -23,6 +23,7 @@ class Actions:
     recent_files_menu: Optional[QMenu] = None
     import_from_ultimate_guitar: Optional[QAction] = None
     save_ug_import: Optional[QAction] = None
+    close: Optional[QAction] = None
     exit: Optional[QAction] = None
     open_folder: Optional[QAction] = None
     clear_preferences: Optional[QAction] = None
@@ -139,6 +140,20 @@ class MenuBuilder:
             "Save Ultimate Guitar Import &As...", self.slots.save_ultimate_guitar_import_as,
             status_tip="Save the current Ultimate Guitar import to a file",
         )
+        # Close the loaded score (commit its .rsc, blank the window back to
+        # first-run) without quitting the app. No mnemonic - it carries the
+        # OS-standard Ctrl+W, so an Alt-only access key would only be one
+        # more thing for NVDA to announce as a pseudo-shortcut (the same
+        # reasoning as Reorder Attributes/Parts etc.), and "C"/"l"/"o" all
+        # already collide with siblings in this menu. Disabled until a
+        # score is loaded (main_window.py keeps it in sync, like Clear
+        # Preferences).
+        a.close = self._action(
+            "Close", self.slots.close_score, QKeySequence.Close,
+            status_tip="Close the current score and save its preferences",
+        )
+        a.close.setEnabled(False)
+
         a.exit = self._action("E&xit", self.window.close, QKeySequence.Quit)
 
         # Moved here from Edit (user-requested review, 2026-08-26): these are
@@ -159,6 +174,7 @@ class MenuBuilder:
         file_menu.addMenu(a.recent_files_menu)
         file_menu.addAction(a.import_from_ultimate_guitar)
         file_menu.addAction(a.save_ug_import)
+        file_menu.addAction(a.close)
         file_menu.addSeparator()
         file_menu.addAction(a.open_folder)
         file_menu.addAction(a.clear_preferences)

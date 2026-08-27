@@ -276,6 +276,80 @@ def test_a_sub_staffs_own_toggle_survives_reload_under_an_off_part(
     )
 
 
+# --- File > Close -----------------------------------------------------
+
+def test_close_action_disabled_until_a_score_is_loaded(window, qtbot, minimal_score):
+    assert window.close_action.isEnabled() is False
+
+    load_and_wait(window, qtbot, minimal_score)
+    assert window.close_action.isEnabled() is True
+
+    window.close_score()
+    assert window.close_action.isEnabled() is False
+
+
+def test_close_score_commits_the_current_config(window, qtbot, minimal_score):
+    from persistence import score_config
+
+    load_and_wait(window, qtbot, minimal_score)
+    window.toggle_metronome()
+
+    window.close_score()
+
+    saved = score_config.load_for(minimal_score)
+    assert saved is not None
+    assert saved.metronome_enabled is True
+
+
+def test_close_score_reverts_to_first_run_state(window, qtbot, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+    assert window.region_1.count() > 0
+    assert window.region_3.count() > 0
+
+    window.close_score()
+
+    assert window._music_data is None
+    assert window.sequencer is None
+    assert window.windowTitle() == "Recall Score"
+    assert window.region_1.count() == 0
+    assert window.region_2.model_manager.roots == []
+    assert window.region_3.count() == 0
+    assert window.region_4.count() == 0
+    assert window.status_bar._fields[0].text() == "Measure - beat -"
+    assert window.clear_preferences_action.isEnabled() is False
+    assert window.clear_preferences_action.text() == "&Clear Preferences"
+    assert window.metronome_action.isChecked() is False
+    assert window.position_announcer_action.isChecked() is False
+
+
+def test_close_score_is_a_noop_with_nothing_loaded(window):
+    window.close_score()  # must not raise
+
+    assert window._music_data is None
+    assert window.windowTitle() == "Recall Score"
+
+
+def test_a_score_can_be_opened_again_after_being_closed(window, qtbot, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+    window.close_score()
+
+    load_and_wait(window, qtbot, minimal_score)
+
+    assert window._music_data is not None
+    assert window.windowTitle() == "Recall Score - minimal_4_4.musicxml"
+    assert window.region_3.count() > 0
+    assert window.close_action.isEnabled() is True
+
+
+def test_closing_the_window_after_close_score_still_works(window, qtbot, minimal_score):
+    """closeEvent calls _save_current_score_config and stops the sequencer -
+    both must tolerate there being no loaded score / no sequencer."""
+    load_and_wait(window, qtbot, minimal_score)
+    window.close_score()
+
+    window.close()  # must not raise
+
+
 # --- File > Recent Files -----------------------------------------------
 
 def test_recent_files_menu_shows_a_placeholder_when_empty(window):
