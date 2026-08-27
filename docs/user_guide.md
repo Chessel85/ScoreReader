@@ -193,10 +193,10 @@ several sound together. Every move plays what's now current through
 MIDI, using each part's own instrument sound from the file.
 
 A small ornamental note that decorates the main note (a grace note) is
-included in the reading rather than skipped - for example "B grace A"
-means a grace note on B leads into the main note A. It's also briefly
-sounded before the main note plays, so you hear the ornament, not just
-its name.
+included in the reading rather than skipped - for example "A grace B"
+means the main note A is decorated by a grace note on B. It's also
+briefly sounded before the main note plays, so you hear the ornament,
+not just its name.
 
 ### 3.5 Region 4: Note Attributes
 
@@ -778,8 +778,8 @@ note in Region 3/4 that already shows it.
 A grace note - a small ornamental note attached to a main note, such as
 an acciaccatura or appoggiatura - is read and sounded along with the
 note it decorates, rather than skipped. Region 3 reads it as, for
-example, "B grace A": the grace note's own name, the word "grace", then
-the main note's name. It's briefly sounded just before the main note
+example, "A grace B": the main note's name, the word "grace", then the
+grace note's own name. It's briefly sounded just before the main note
 plays, so the ornament itself is audible, not only described.
 
 ### 9.6 Quick Lookup by Number (Ctrl+1 through Ctrl+9)

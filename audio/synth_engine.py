@@ -502,8 +502,8 @@ class SynthEngine:
         retrigger: bool = True,
         grace_duration_ms: Optional[int] = None,
     ):
-        """Sounds grace_events briefly, then main_events - "B grace A"
-        played as two quick successive attacks instead of play_chord's
+        """Sounds grace_events briefly, then main_events - the "A grace B"
+        note played as two quick successive attacks instead of play_chord's
         default of stacking every pitch into one simultaneous chord (which
         is what made a grace note look and sound like an extra chord tone -
         see models/note_data.py's GraceNote). Used only when

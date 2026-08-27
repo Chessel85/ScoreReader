@@ -53,12 +53,13 @@ class NoteRenderer:
 
         step_str = note.step_name
         if note.grace_notes:
-            # Ref MusicXML <grace> support: "B grace A" rather than a
+            # Ref MusicXML <grace> support: "A grace B" - the main note
+            # first, then the ornamenting grace note(s) - rather than a
             # separate phantom chord tone (reported bug - see
             # parsers/timeline_builder.py's pending_grace). Shared by both
             # Region 3 and Region 4 since both read this same "step" pair.
             grace_str = ", ".join(g.step_name for g in note.grace_notes)
-            step_str = f"{grace_str} grace {step_str}"
+            step_str = f"{step_str} grace {grace_str}"
 
         pairs = {"text": step_str} if is_stave_text else {"step": step_str}
         if note.octave is not None:

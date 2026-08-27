@@ -105,12 +105,13 @@ def test_grace_note_group_attaches_in_document_order(timeline, grace_note_group_
 
 
 def test_grace_note_renders_as_grace_phrase_in_region_3(timeline, grace_note_score):
-    """The user-requested display: "B grace A", not "B, A" (which would
-    read as an ordinary two-note chord) - shared by Region 3 and Region 4
-    since both read MusicData._note_attribute_pairs' "step" value."""
+    """The user-requested display: "A grace B" (main note first, then the
+    ornamenting grace note), not "B, A" (which would read as an ordinary
+    two-note chord) - shared by Region 3 and Region 4 since both read
+    MusicData._note_attribute_pairs' "step" value."""
     md = timeline(grace_note_score)
 
-    assert md.get_region_3_data()[0] == "B grace A"
+    assert md.get_region_3_data()[0] == "A grace B"
 
 
 def _note_by_pitch(md, step_name, octave):
