@@ -7,10 +7,11 @@ State at review time: all 806 tests pass; `pyflakes` clean apart from S8 below.
 
 ## Current state (updated 2026-08-27) — read this first
 
-**Done:** S1, S2, S3, S5, S8. **Open:** S4, S6, S7, S9, S10, S11.
-Suggested next order: **S6 → S4 → S9 → S7 → S10 → S11**
+**Done:** S1, S2, S3, S5, S8, S10. **Open:** S4, S6, S7, S9. **S11 raised, not
+actioned** (it is a design question — see its entry for the recommendation).
+Suggested next order: **S6 → S4 → S9 → S7**
 (S6/S9 are contained; S4 needs care around process shutdown; S7 touches
-`models/`; S10 is mechanical but large; S11 is a design question, not an edit).
+`models/`).
 
 Tree state now: **1,010 tests pass**, `pyflakes` is **completely clean**
 across `models/ parsers/ widgets/ controllers/ audio/ persistence/ workers/
@@ -331,13 +332,51 @@ that doesn't.
 **Fix:** rename to `_refresh_all_item_texts_and_notify` (or similar) so the
 signal is visible in the name. Behaviour must not change.
 
-### S10 — `tests/test_main_window.py` is 4,457 lines (Low)
+### S10 — `tests/test_main_window.py` was 4,457 lines — **DONE (2026-08-27)**
 
-Largest file in the repo. Split by feature area
-(`test_main_window_dialogs.py`, `_navigation.py`, `_focus.py`) along the
-controller boundaries. S1 and S5 are now done, so the boundaries to split
-along already exist — including the newest, `ScoreEditController` (the
-Instruments / Key Signature / Reorder Parts dialog tests).
+Split into **12 feature modules** along the controller / feature boundaries,
+each 130–880 lines:
+
+| module | area |
+|---|---|
+| `test_main_window_navigation.py` | load, timeline nav, boundary cues, status bar, typed-measure jumps, file loading |
+| `test_main_window_focus.py` | F6 panes, Tab/Shift+Tab region cycle, app-focus tracking, focus-gated action enablement |
+| `test_main_window_menus.py` | menu shortcuts/mnemonics, Ctrl+T/G/F wiring, About dialog |
+| `test_main_window_find.py` | Find dialog + Alt+Right/Left occurrence cycling |
+| `test_main_window_playback.py` | play/pause/stop, phrase audition, Preview + lead-in, Shift+Space, tempo offset, metronome, announcer, F/S/D |
+| `test_main_window_attributes.py` | Reorder Attributes dialog + Region 4 attribute menu |
+| `test_main_window_region2.py` | mute/solo, Region 2 collapse/expand |
+| `test_main_window_score_edit.py` | `ScoreEditController`: Mixer / Instruments / Key Signature / Reorder Parts |
+| `test_main_window_persistence.py` | UK/US terminology, Ref 27 per-file `.rsc`, window title, Recent Files |
+| `test_main_window_performance.py` | Region 5, Performance Report, Guitar Pro load |
+| `test_main_window_ug_import.py` | File > Import from Ultimate Guitar + `.ug` round trip |
+| `test_main_window_misc_dialogs.py` | voice-control + Tuner dialog wiring |
+
+Shared infrastructure moved so there is exactly one copy:
+
+- **`window` fixture → `tests/conftest.py`** (needs `MainWindow`, so
+  conftest now imports it at module scope).
+- **`no_lead_in` / `load_and_wait` / `_show` / `_focus` → new
+  `tests/support/main_window_helpers.py`**, imported by every split module
+  that uses them. The old inline `def _show` / `def _focus` are gone.
+- **`_fake_ug_import_dialog` / `_fake_ug_source` / `_load_ug_import` → the
+  same helper module**, because the Recent Files and Reorder Parts tests
+  (now in `_persistence` / `_score_edit`) each need a loaded UG score too.
+
+Per-section helpers that only one module uses (`_select_find_target`,
+`_mnemonic`, `_fake_mixer_dialog`, `_fake_instrument_dialog`,
+`_fake_key_signature_dialog`, `_fake_part_order_dialog`, `_fake_tuner_dialog`,
+`_region_3_labels`, `_region_5_labels`) stayed with their tests.
+
+**Verification:** `1,010 passed` — identical count to the pre-split baseline,
+no test lost or renamed. `pyflakes` on the 12 new modules + the helper module
++ `conftest.py` is clean apart from four pre-existing `local variable
+'dialog' is assigned to but never used` warnings in the Mixer tests, carried
+over verbatim from the original file (they were there before this split and
+`tests/` is outside the documented `pyflakes` gate). One straddling
+`@pytest.mark.parametrize("focus_target", …)` decorator had to be kept with
+its test when picking the cut line — worth knowing if the modules are
+re-partitioned again.
 
 ### S11 — `main_window.py` is still mostly delegators (Low, judgement call)
 
@@ -354,6 +393,56 @@ they are constructed before the controllers exist, and `FocusController`
 depends on `window.focusWidget()` rather than `QApplication.focusWidget()`
 (see `CLAUDE.md`). Treat this as a design question to raise, not a
 mechanical edit.
+
+**Investigated 2026-08-27 — recommendation: leave it as-is (or do only the
+tiny variant below). Do NOT undo the facade.**
+
+What the numbers actually are:
+
+- `main_window.py` is **1,180 lines / 105 methods**, 73 of them
+  single-statement (delegators + 7 `@property`).
+- The widget → `window()` coupling is already **small and localised**: only
+  **three** region widgets touch it — `timeline_list_widget.py` (~11 methods
+  via a `_main_window()` helper), `region5_list_widget.py` (2), and
+  `region4_list_widget.py` (1) — plus `region_focus_cycle.py`'s mixin
+  (`focus_next_region` / `focus_previous_region`, all four item-view
+  regions). `region1` / `region2` / `region_property` / `status_bar` widgets
+  reach into the window **zero** times.
+- So the "large block that would disappear" is really **~16 delegators**,
+  and most are genuine one-liners (`self.navigation.timeline_left()`).
+
+Why removing them is not worth it:
+
+1. **The tests drive `window.<method>()` directly**, not just the widgets —
+   e.g. `window.navigate_timeline_right()`, `window.audition_phrase()`,
+   `window.increase_preview_bars()` are called straight from the split test
+   modules. Deleting the delegator means every such call site moves to
+   `window.navigation.timeline_right()` etc., spreading controller-internal
+   structure across ~200 test call sites. That is a bigger, riskier diff
+   than the one it removes, and it erodes the "stable API the tests drive"
+   property the facade exists for.
+2. **The construction-order constraint is real.** Widgets are built in
+   `setup_ui` before `setup_controllers`. Handing each widget a controller
+   ref means either a two-phase `widget.set_controllers(...)` wiring step
+   (new surface, new "did you forget to wire it" failure mode) or
+   reordering construction (controllers need widgets too — `RegionPresenter`
+   owns them). `self.window()` at call time sidesteps both.
+3. **A few of these aren't pure delegators** and would have to move
+   wholesale into a controller anyway (`increase_preview_bars` persists +
+   announces; `jump_to_performance_span_start` reads
+   `region_5.current_row_data()` then calls `navigation`) — i.e. real
+   cross-cutting wiring, exactly what the shell is documented to keep.
+
+If some reduction is still wanted, the **only** low-risk slice: give
+`RegionFocusCycleMixin` and `TimelineListWidget` / `Region5ListWidget` /
+`Region4ListWidget` a `_controllers` attribute set once at the end of
+`setup_controllers` (a single explicit wiring line, not per-widget), and let
+those four call `self._controllers.navigation` / `.playback` / `.focus`
+directly. That removes ~16 window methods **without touching any test** as
+long as the identically-named `window.*` delegators are kept for the tests —
+which defeats most of the point. Net: the churn/risk clearly exceeds the
+benefit. **Recommend closing S11 as "considered, declined"** unless the
+window crosses ~1,500 lines again.
 
 ## Notes for whoever picks this up
 

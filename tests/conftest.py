@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from main_window import MainWindow
 from models.music_data import MusicData
 from tests.support.null_live_midi_input import NullMidiInputManager
 from tests.support.null_synth import NullSynth
@@ -521,6 +522,15 @@ def timeline():
 def null_synth() -> NullSynth:
     """Recording stand-in for SynthEngine. Never touches audio hardware."""
     return NullSynth()
+
+
+@pytest.fixture
+def window(qtbot, null_synth):
+    # uk_terms=False: deterministic regardless of the machine's own OS
+    # locale (F4/D-6) - every existing assertion here expects US wording.
+    w = MainWindow(synth=null_synth, uk_terms=False)
+    qtbot.addWidget(w)
+    return w
 
 
 @pytest.fixture
