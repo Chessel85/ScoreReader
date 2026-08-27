@@ -31,6 +31,7 @@ _redirect_stdio_if_headless()
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 from main_window import MainWindow
+from widgets.accessible_menu_style import AccessibleMenuStyle
 
 
 def _app_icon_path():
@@ -46,6 +47,9 @@ def _app_icon_path():
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Recall Score")
+    # Let the menu highlight rest on disabled items so a screen reader
+    # announces them ("Close, unavailable") instead of skipping them.
+    app.setStyle(AccessibleMenuStyle(app.style()))
     icon_path = _app_icon_path()
     if icon_path:
         app.setWindowIcon(QIcon(icon_path))
