@@ -54,6 +54,15 @@ def six_eight_score() -> str:
 
 
 @pytest.fixture
+def triplet_bar_score() -> str:
+    """One part: bar 1 is twelve eighth-note triplets in 4/4, bar 2 four
+    plain quarter notes. beat_position is quantised to 2dp at parse time,
+    so this is the fixture that exercises bar_bounds_quarters' snap-back
+    (a triplet bar otherwise resolved to 15.9967-style drift)."""
+    return _require(FIXTURES_DIR / "triplet_bar.musicxml")
+
+
+@pytest.fixture
 def rest_score() -> str:
     """One part, one complete 4/4 bar: quarter C, quarter rest, quarter E, F.
 

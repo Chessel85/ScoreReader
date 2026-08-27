@@ -229,7 +229,17 @@ class PlaybackEventBuilder:
         ts_num, ts_den = current.time_sig
         beat_quarters = 4.0 / float(ts_den or 4)
         start = current.quarters_from_start - (current.beat_position - 1.0) * beat_quarters
-        return start, start + float(ts_num or 4) * beat_quarters
+        end = start + float(ts_num or 4) * beat_quarters
+        # beat_position is itself quantised to 2dp at parse time (see
+        # TimelineBuilder's _MeasureOffsetWalker), so subtracting
+        # (beat_position - 1) * beat_quarters leaks that rounding error into
+        # start/end - e.g. a bar of triplets came out as (11.9967, 15.9967)
+        # instead of (12.0, 16.0), which drifted a looping Preview's
+        # bar-line restart. Real bar lines fall on 2dp-clean quarter
+        # positions for every realistic metre, so snapping to that same
+        # precision removes the artefact without disturbing a genuine
+        # fractional bar start (a pickup's negative notional start included).
+        return round(start, 2), round(end, 2)
 
     def span_ms_to_quarters(self, start_index: int, end_quarters: float) -> int:
         """Real milliseconds from the slice at start_index to an elapsed-

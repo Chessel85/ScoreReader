@@ -1917,6 +1917,22 @@ def test_bar_bounds_follow_a_mid_score_time_signature_change(timeline, ts_change
     assert md.bar_bounds_quarters(8) == (7.0, 11.0)
 
 
+def test_bar_bounds_snap_past_beat_position_rounding_in_a_triplet_bar(
+    timeline, triplet_bar_score
+):
+    """beat_position is stored to 2dp at parse time, so deriving the bar
+    line as quarters_from_start - (beat_position - 1) * beat_quarters leaked
+    that rounding into the result - a full bar of triplets came out as
+    (11.9967, 15.9967) instead of (12.0, 16.0), drifting a looping
+    Preview's restart. Every slice in the triplet bar must resolve to the
+    clean bar line, and the plain bar after it too."""
+    md = timeline(triplet_bar_score)
+
+    for i in range(12):  # every triplet in bar 1
+        assert md.bar_bounds_quarters(i) == (0.0, 4.0)
+    assert md.bar_bounds_quarters(12) == (4.0, 8.0)  # bar 2, first quarter
+
+
 def test_bar_bounds_of_a_pickup_bar_end_on_the_real_bar_line(timeline, score_bourree_full):
     """Ref 17: a pickup's notional bar starts before the piece does. The
     END is what Preview's loop needs, and it is the real bar line."""
