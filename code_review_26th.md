@@ -7,18 +7,14 @@ State at review time: all 806 tests pass; `pyflakes` clean apart from S8 below.
 
 ## Current state (updated 2026-08-27) — read this first
 
-**Done:** S1, S2, S3, S5, S8, S10. **Open:** S4, S6, S7, S9. **S11 raised, not
+**Done:** S1, S2, S3, S4, S5, S6, S7, S8, S9, S10. **S11 raised, not
 actioned** (it is a design question — see its entry for the recommendation).
-Suggested next order: **S6 → S4 → S9 → S7**
-(S6/S9 are contained; S4 needs care around process shutdown; S7 touches
-`models/`).
+Every numbered issue is now closed; nothing outstanding.
 
-Tree state now: **1,010 tests pass**, `pyflakes` is **completely clean**
-across `models/ parsers/ widgets/ controllers/ audio/ persistence/ workers/
-tests/manual/ main.py main_window.py`. All five completed fixes are
-**committed and pushed to `main`** (version `2026.1.32`), so `HEAD` is a
-clean, green starting point — capture your corpus baseline from it BEFORE
-you start editing.
+Tree state now: **1,013 tests pass** (the +3 over the earlier 1,010 are S4's
+new `stop()` tests), `pyflakes` clean across `models/ parsers/ widgets/
+controllers/ audio/ persistence/ workers/ tests/manual/ main.py
+main_window.py`. All fixes are **committed and pushed to `main`**.
 
 **Line numbers in the open entries were re-verified on 2026-08-27** and are
 current as of that point. They will drift again as you edit — confirm with
@@ -177,16 +173,26 @@ forgiving, neither reachable in any corpus file): a `<staff>` or
 `<time-modification>` element present but with empty/malformed text no
 longer raises.
 
-### S4 — `VoiceRecognitionManager.stop()` blocks the GUI thread up to 6 s (Medium)
+### S4 — `VoiceRecognitionManager.stop()` blocked the GUI thread up to 6 s — **DONE (2026-08-27)**
 
-`audio/voice_recognition.py:354` — `process.wait(timeout=3.0)` followed by
-`reader_thread.join(timeout=3.0)` on the main thread, reachable from
-`toggle_voice_control` and `closeEvent`. A wedged worker freezes the UI, and
-NVDA with it.
+Was `process.wait(timeout=3.0)` then `reader_thread.join(timeout=3.0)` inline
+on the Qt main thread (reached from `VoiceControlController._disconnect` /
+`.close` and `start()`'s restart path) — up to 6 s of frozen UI, NVDA with
+it, if the worker hung.
 
-**Fix:** send `stop`, then drive the wait from a `QTimer` polling
-`process.poll()`, or perform the join on a daemon thread. Cap the synchronous
-path at roughly 200 ms.
+`stop()` now detaches `self._process` / `self._reader_thread` synchronously
+(so `is_running` goes `False` at once and a following `start()` builds a
+fresh worker rather than adopting this one), gives the worker a ~200 ms grace
+period to exit on the calling thread — it almost always does, having only a
+PortAudio input stream to close — and hands anything slower to `_reap_worker`
+(wait → kill → join) on a daemon thread. `_on_worker_exit` gained a
+`process is self._process` guard so a late EOF from a stopped worker can't
+fire the ready callback and report a newly started one as failed.
+
+Three new tests (`tests/test_voice_recognition.py`) with a `_FakeProcess`
+stand-in that honours `wait()` timeouts like `Popen`: prompt detach, no
+block on a wedged worker + background reap, and the no-worker no-op. Suite is
+now 1,013 (was 1,010).
 
 ### S5 — Business logic in the shell — **DONE (2026-08-27)**
 
@@ -229,44 +235,30 @@ The other `_show_*_dialog` methods were audited at the same time
 live MIDI input, voice control, tuner) and are already clean wiring — signal
 connections plus a controller call — so they were left alone.
 
-### S6 — 10x duplicated focus save/restore boilerplate (Medium)
+### S6 — 10x duplicated focus save/restore boilerplate — **DONE (2026-08-27)**
 
-`previous_focus = self.focusWidget()` … `if previous_focus is not None:
-previous_focus.setFocus()` appears verbatim in 10 dialog methods in
-`main_window.py`. Given the project's dialog-focus invariant, this is exactly
-the thing that should not be hand-copied.
+The verbatim `previous_focus = self.focusWidget()` … `if previous_focus is
+not None: previous_focus.setFocus()` in ten `_show_*_dialog` methods is now
+one `@contextmanager _preserving_focus(self)` — `self.focusWidget()` (not
+`QApplication.focusWidget()`, same reason `FocusController` uses it) with a
+`finally` so an exception mid-dialog still restores focus. Every call site is
+`with self._preserving_focus():` around its existing body; behaviour
+unchanged, covered by the existing dialog tests.
 
-**Fix:** one `@contextmanager def _preserving_focus(self)`, or a
-`_run_dialog(dialog) -> bool` helper that also performs `exec()`, used by all ten.
+### S7 — Uncached linear scans beside their cached siblings — **DONE (2026-08-27)**
 
-### S7 — Uncached linear scans beside their cached siblings (Low, performance)
+Both O(N) scans in `models/timeline_navigator.py` now cache. Neither depends
+on `active_voice_filter` and `timeline_slices` is never reassigned after
+construction, so both caches are built lazily once and live **outside**
+`invalidate_cache()`:
 
-**Locations updated after S1 — this code MOVED.** The two scans now live in
-`models/timeline_navigator.py`:
-`TimelineNavigator.first_event_index_of_measure` (line 159) and
-`TimelineNavigator.slice_index_at_or_after_quarters` (line 194). What is
-still in `models/music_data.py` at lines 407/426 are one-line **delegators** —
-editing those achieves nothing. Fix it in the navigator.
+- `first_event_index_of_measure` → a `measure -> first index` dict.
+- `slice_index_at_or_after_quarters` → `bisect.bisect_left` over a once-built
+  list of `quarters_from_start` (monotonically non-decreasing across the
+  timeline, so `bisect` is sound).
 
-Both are O(N) full scans, while `first_visible_event_index_of_measure` /
-`last_visible_event_index_of_measure` in the same class are cached dicts
-(invalidated by `TimelineNavigator.invalidate_cache`, which
-`MusicData._invalidate_visibility_cache` delegates to).
-
-**Fix:** `first_event_index_of_measure` is unfiltered, so it can use a
-plain cached `measure -> first index` dict built once (the timeline never
-changes after construction — no filter invalidation needed, unlike its
-visible-only siblings). `slice_index_at_or_after_quarters` should be
-`bisect.bisect_left` over a cached list of `quarters_from_start`.
-**Precondition verified:** `quarters_from_start` is monotonically
-non-decreasing across the timeline — checked over 9 real MusicXML and MIDI
-files, zero violations — so `bisect` is sound.
-
-Not currently hot (spans are few), but it will matter on a long score during
-Region 5 jumps.
-
-**Verification:** this touches `models/`, so run BOTH corpus gates in
-`tests/manual/`, not just the suite.
+Verified behaviour-preserving with `tests/manual/model_fingerprint.py` over
+the 56-file corpus: **86,496 lines, zero differences**. Full suite green.
 
 ### S8 — Dead code and stale artifacts — **DONE (2026-08-27)**
 
@@ -315,22 +307,14 @@ Region 5 jumps.
 `pyflakes` across `models/ parsers/ widgets/ controllers/ audio/ persistence/
 workers/ tests/manual/ main.py main_window.py` is now **completely clean**.
 
-### S9 — `_refresh_all_item_texts` emits a signal as a side effect (Low)
+### S9 — `_refresh_all_item_texts` emitted a signal as a side effect — **DONE (2026-08-27)**
 
-`widgets/region2_list_widget.py:295` — a method named "refresh texts" also
-fires `filter_changed`, which is the only reason `unmute_all` / `unsolo_all`
-work at all.
-
-**Correction to the original entry:** it has **four** call sites
+Renamed to `_refresh_all_item_texts_and_notify`, with a docstring spelling
+out that the `filter_changed` emit is load-bearing. All four call sites
 (`apply_muted_node_keys`, `apply_soloed_node_keys`, `unmute_all`,
-`unsolo_all` — lines 253, 258, 283, 288), and all four genuinely need the
-emit: the two restore-from-`ScoreConfig` paths change the effective voice
-filter just as the two clear-all paths do. So the "split the emit out to the
-call sites that need it" option is NOT available — there is no call site
-that doesn't.
-
-**Fix:** rename to `_refresh_all_item_texts_and_notify` (or similar) so the
-signal is visible in the name. Behaviour must not change.
+`unsolo_all`) genuinely need it — the two restore-from-`ScoreConfig` paths
+change the effective voice filter just as the two clear-all paths do — so
+splitting the emit out was not an option. Behaviour unchanged.
 
 ### S10 — `tests/test_main_window.py` was 4,457 lines — **DONE (2026-08-27)**
 
