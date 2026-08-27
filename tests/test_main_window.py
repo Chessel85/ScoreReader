@@ -2553,6 +2553,40 @@ def test_preview_lead_in_counts_through_a_whole_bar_before_a_pickup_plays(
     assert play_offset == pytest.approx(last_count_offset + beat_ms, abs=1)
 
 
+def test_preview_from_a_pickup_bar_does_not_wait_out_the_beats_it_replaces(
+    window, qtbot, null_synth, score_bourree_full
+):
+    """A pickup bar's NOTIONAL start is before the piece begins, so
+    MusicData.bar_bounds_quarters returns a NEGATIVE start for it
+    (score_bourree_full's one-beat 4/4 anacrusis starts at -3.0 quarters).
+    PlaybackController._refresh_preview_span clamps that at 0 before
+    deriving offset_ms - the silent lead the preview waits through before
+    the first note sounds - because looping a pickup must repeat the pickup
+    NOTES, not the three empty beats the pickup replaces.
+
+    Without the clamp offset_ms comes out at 1500ms here (3 quarters at
+    120bpm): a second and a half of silence at the top of every loop
+    iteration. Nothing else in the suite pins this - the sibling lead-in
+    tests above assert count-in timing RELATIVE to the play offset, so they
+    stay green either way, and the clamp survived an S8 dead-code sweep only
+    because it was read closely (its duplicate in _build_preview_run really
+    was dead and was removed). Hence this test.
+    """
+    load_and_wait(window, qtbot, score_bourree_full)
+    window.playback.set_preview_settings(PreviewSettings(lead_in_bars=0, lead_in_beats=0))
+    assert window._music_data.active_event_index == 0  # already inside the pickup
+
+    window.audition_phrase()
+
+    run = window.playback._preview
+    assert run is not None
+    assert run.is_pickup is True, "bar_bounds_quarters must report a negative bar start here"
+    assert run.offset_ms == 0, (
+        "a pickup preview starts on its own first note - it must not wait out "
+        "the beats the anacrusis replaces"
+    )
+
+
 def test_preview_lead_in_pads_a_fractional_pickup_with_a_silent_remainder(
     window, qtbot, null_synth, score_bourree_full
 ):

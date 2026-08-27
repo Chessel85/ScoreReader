@@ -194,7 +194,6 @@ def read_midi_source(file_path: str) -> MidiSource:
         # on the same (channel, pitch) - a FIFO queue per pair handles the
         # rare case of overlapping same-pitch retriggers in performance
         # order.
-        pending: Dict[Tuple[int, int], List[int]] = {}
         offs_by_key: Dict[Tuple[int, int], List[int]] = {}
         for off_tick, channel, pitch in note_offs:
             offs_by_key.setdefault((channel, pitch), []).append(off_tick)

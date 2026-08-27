@@ -297,6 +297,26 @@ class PlaybackController(QObject):
         self._mixer_edit_original = None
         self._mixer_edit_working = None
 
+    def end_mixer_edit(self, accepted: bool) -> None:
+        """S5: close out a mixer edit session - commit or revert, then
+        silence anything the dialog's own Preview button (Alt+W) left
+        running.
+
+        `is_preview_active` as well as the Sequencer's own flags: a preview
+        can have a count-in or a loop pending that `is_playing`/`is_paused`
+        cannot see, so checking the Sequencer alone would leave it running
+        after the dialog closed.
+        """
+        if accepted:
+            self.commit_mixer_edit()
+        else:
+            self.cancel_mixer_edit()
+        sequencer_running = self.sequencer is not None and (
+            self.sequencer.is_playing or self.sequencer.is_paused
+        )
+        if self.is_preview_active or sequencer_running:
+            self.stop()
+
     # --- transport ---------------------------------------------------
 
     def toggle_play_stop(self) -> None:
@@ -498,13 +518,13 @@ class PlaybackController(QObject):
         start_bar = self.music_data.bar_bounds_quarters(start_index)
         end_bar = self.music_data.bar_bounds_quarters(end_index)
         # A pickup bar's (Ref 17) NOTIONAL start is before the piece begins,
-        # so its unclamped bar start comes back negative - the signal both
-        # is_pickup and the clamp below key off.
+        # so its unclamped bar start comes back negative - that is the
+        # signal is_pickup keys off. The matching clamp lives in
+        # _refresh_preview_span, which needs it to derive offset_ms and
+        # recomputes it per loop iteration; a duplicate sat here unused
+        # from the commit that moved that calculation out (5eb1101), and
+        # was removed rather than kept in sync with nothing reading it.
         is_pickup = bool(start_bar and start_bar[0] < 0)
-        # Clamped at 0 for a pickup bar, whose NOTIONAL start is before the
-        # piece begins - looping it must repeat the pickup notes, not the
-        # empty beats the pickup replaces.
-        bar_start_quarters = max(0.0, start_bar[0]) if start_bar else start_slice.quarters_from_start
         end_quarters = end_bar[1] if end_bar else start_slice.quarters_from_start
 
         run = _PreviewRun(

@@ -76,6 +76,23 @@ class RegionPresenter(QObject):
         self.region_2.apply_muted_node_keys(parts_muted, staves_muted, voices_muted)
         self.region_2.apply_soloed_node_keys(parts_soloed, staves_soloed, voices_soloed)
 
+    # --- Region 2 in-place edits (S5) ---------------------------------
+    #
+    # ScoreEditController drives these; they live here because this stays
+    # the only controller that touches widgets. All three are deliberately
+    # in-place mutations rather than a load_score_structure rebuild, which
+    # would reset every node back to enabled and discard the user's own
+    # mute/solo toggles and expand state.
+
+    def rename_part(self, part_id: str, name: str) -> None:
+        self.region_2.rename_part(part_id, name)
+
+    def rename_voice(self, part_id: str, staff_id: int, voice_id: int, label: str) -> None:
+        self.region_2.rename_voice(part_id, staff_id, voice_id, label)
+
+    def reorder_parts(self, part_id_order) -> None:
+        self.region_2.reorder_parts(part_id_order)
+
     # --- timeline / regions 3, 4, 5 -----------------------------------
 
     def update_timeline_views(self, play_all: bool = True, announce_measure: bool = False) -> None:

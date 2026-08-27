@@ -21,6 +21,7 @@ from controllers.live_midi_input_controller import LiveMidiInputController
 from controllers.navigation_controller import NavigationController
 from controllers.playback_controller import PlaybackController
 from controllers.region_presenter import RegionPresenter
+from controllers.score_edit_controller import ScoreEditController
 from controllers.score_persistence import ScorePersistenceController
 from controllers.score_session import ScoreSession
 from controllers.tuner_controller import TunerController
@@ -296,6 +297,11 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         self.attributes = AttributeController(self.session, self.presenter, self)
+        # S5: the score-data edits behind the Instruments, Key Signature and
+        # Reorder Parts dialogs. Built after the presenter, which it drives
+        # for every Region 2 label/order change - this controller touches no
+        # widgets itself.
+        self.score_edit = ScoreEditController(self.session, self.presenter)
         self.persistence = ScorePersistenceController(self.session, self.region_2)
         # Wired here rather than through VoiceControlController's own
         # constructor: RegionPresenter doesn't exist yet at that point in
@@ -786,14 +792,9 @@ class MainWindow(QMainWindow):
         if not self._music_data:
             return
         previous_focus = self.focusWidget()
-        parts = [(p.part_id, p.name) for p in self._music_data.parts_info]
-        dialog = PartOrderDialog(self, parts=parts)
+        dialog = PartOrderDialog(self, parts=self.score_edit.part_rows())
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            new_order = dialog.part_order()
-            if new_order != [p.part_id for p in self._music_data.parts_info]:
-                self._music_data.reorder_parts(new_order)
-                self.region_2.reorder_parts(new_order)
-                self.presenter.update_timeline_views(play_all=False)
+            self.score_edit.reorder_parts(dialog.part_order())
         if previous_focus is not None:
             previous_focus.setFocus()
 
@@ -976,17 +977,7 @@ class MainWindow(QMainWindow):
         dialog.volume_changed.connect(self.playback.set_mixer_volume)
         dialog.pan_changed.connect(self.playback.set_mixer_pan)
         dialog.preview_requested.connect(self.playback.audition_phrase)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.playback.commit_mixer_edit()
-        else:
-            self.playback.cancel_mixer_edit()
-        # is_preview_active as well as is_playing: the dialog's own Preview
-        # button (Alt+W) can leave a count-in or a loop running, neither of
-        # which the Sequencer's own flags can see.
-        if self.playback.is_preview_active or (
-            self.sequencer is not None and (self.sequencer.is_playing or self.sequencer.is_paused)
-        ):
-            self.playback.stop()
+        self.playback.end_mixer_edit(dialog.exec() == QDialog.DialogCode.Accepted)
         if previous_focus is not None:
             previous_focus.setFocus()
 
@@ -1116,102 +1107,42 @@ class MainWindow(QMainWindow):
             self.voice_control.resume_listening()
 
     def _show_instrument_dialog(self):
-        """S5: rename a part and/or change its playback instrument, for
-        both MusicXML and MIDI scores - "piano may not always be a suitable
-        default", and some MIDI files carry no track names at all
-        (BluePeter.mid).
+        """S5: rename a part and/or change its playback instrument, for both
+        MusicXML and MIDI scores ("piano may not always be a suitable
+        default"), plus wishlist #8's per-percussion-item name/sound rows.
 
-        Applying goes through MusicData.apply_part_overrides, which also
-        keeps NoteData.part_name in sync - Region 2's part row is updated
-        in place (rename_part, never a full load_score_structure rebuild,
-        which would reset every on/off toggle back to enabled) and Region
-        3/4/5 through the normal update_timeline_views refresh, same as any
-        other display-only change.
-
-        Wishlist #8 follow-up: a percussion part also contributes one
-        dialog row per distinct item it carries (MusicData.
-        get_percussion_items_for_part). Applying those goes through the new
-        MusicData.apply_percussion_overrides, which also recomputes the
-        affected voices' labels (part.voice_names) - Region 2 is told about
-        each one via region_2.rename_voice (mirrors rename_part: an
-        in-place label update, never a load_score_structure rebuild, which
-        would reset every mute/solo toggle and expand state)."""
+        Wiring only - ScoreEditController.apply_instrument_overrides owns
+        what the five results mean and how they reach Region 2 and the
+        timeline views."""
         if not self._music_data:
             return
         previous_focus = self.focusWidget()
-        rows = [
-            (p.part_id, p.name, p.gmidi_program) for p in self._music_data.parts_info
-        ]
-        percussion_part_ids = [p.part_id for p in self._music_data.parts_info if p.is_percussion]
-        percussion_rows = {
-            part_id: self._music_data.get_percussion_items_for_part(part_id)
-            for part_id in percussion_part_ids
-        }
         dialog = InstrumentDialog(
             self,
-            rows=rows,
-            percussion_part_ids=percussion_part_ids,
-            percussion_rows=percussion_rows,
+            rows=self.score_edit.instrument_rows(),
+            percussion_part_ids=self.score_edit.percussion_part_ids(),
+            percussion_rows=self.score_edit.percussion_rows(),
             auto_correct_enabled=self._music_data.percussion_auto_correct_enabled,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            (
-                name_overrides,
-                program_overrides,
-                item_name_overrides,
-                item_sound_overrides,
-                auto_correct_enabled,
-            ) = dialog.overrides()
-            percussion_changed = (
-                item_name_overrides
-                or item_sound_overrides
-                or auto_correct_enabled != self._music_data.percussion_auto_correct_enabled
-            )
-            if name_overrides or program_overrides:
-                self._music_data.apply_part_overrides(name_overrides, program_overrides)
-                for part_id, name in name_overrides.items():
-                    self.region_2.rename_part(part_id, name)
-            if percussion_changed:
-                self._music_data.percussion_item_name_overrides.update(item_name_overrides)
-                self._music_data.percussion_item_overrides.update(item_sound_overrides)
-                self._music_data.percussion_auto_correct_enabled = auto_correct_enabled
-                self._music_data.apply_percussion_overrides()
-                for part in self._music_data.parts_info:
-                    if not part.is_percussion:
-                        continue
-                    for (staff_id, voice_id), label in part.voice_names.items():
-                        self.region_2.rename_voice(part.part_id, staff_id, voice_id, label)
-            if name_overrides or program_overrides or percussion_changed:
-                self.presenter.update_timeline_views(play_all=False)
+            self.score_edit.apply_instrument_overrides(*dialog.overrides())
         if previous_focus is not None:
             previous_focus.setFocus()
 
     def _show_key_signature_dialog(self):
         """S6: a single whole-piece key signature override, for MIDI files
-        that lack correct (or any) key metadata - its own dialog, not
-        folded into Instruments above (see widgets/key_signature_dialog.py's
-        own docstring for why).
+        that lack correct (or any) key metadata - its own dialog, not folded
+        into Instruments above (see widgets/key_signature_dialog.py's own
+        docstring for why).
 
-        Applying goes through MusicData.apply_key_signature_override, which
-        re-spells MIDI notes in place - update_timeline_views picks that up
-        for Region 3/4, and Region 1's credits / the status bar's key field
-        need their own direct refresh since neither is part of that
-        refresh's normal scope."""
+        Wiring only - ScoreEditController.apply_key_signature_override owns
+        applying it and refreshing what it affects."""
         if not self._music_data:
             return
         previous_focus = self.focusWidget()
-        current_key = (
-            self._music_data.key_signature_override_fifths,
-            self._music_data.key_signature_override_mode,
-        )
-        dialog = KeySignatureDialog(self, current_key=current_key)
+        dialog = KeySignatureDialog(self, current_key=self.score_edit.current_key_override())
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            key_fifths, key_mode = dialog.key_override()
-            if (key_fifths, key_mode) != current_key:
-                self._music_data.apply_key_signature_override(key_fifths, key_mode)
-                self.presenter.update_timeline_views(play_all=False)
-                self.presenter.refresh_region_1()
-                self.presenter.update_status_bar()
+            self.score_edit.apply_key_signature_override(*dialog.key_override())
         if previous_focus is not None:
             previous_focus.setFocus()
 
