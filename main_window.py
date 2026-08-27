@@ -1,6 +1,7 @@
 # main_window.py
 import os
 import sys
+from contextlib import contextmanager
 from typing import Optional
 
 from PySide6.QtCore import QLocale, QUrl, Qt
@@ -791,12 +792,10 @@ class MainWindow(QMainWindow):
         reset every on/off toggle back to enabled)."""
         if not self._music_data:
             return
-        previous_focus = self.focusWidget()
-        dialog = PartOrderDialog(self, parts=self.score_edit.part_rows())
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.score_edit.reorder_parts(dialog.part_order())
-        if previous_focus is not None:
-            previous_focus.setFocus()
+        with self._preserving_focus():
+            dialog = PartOrderDialog(self, parts=self.score_edit.part_rows())
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.score_edit.reorder_parts(dialog.part_order())
 
     # --- presentation (delegators) ------------------------------------
 
@@ -883,6 +882,22 @@ class MainWindow(QMainWindow):
 
     # --- dialogs -------------------------------------------------------
 
+    @contextmanager
+    def _preserving_focus(self):
+        """Restore keyboard focus to whatever held it before a modal dialog
+        opened - the project's dialog-focus invariant (see CLAUDE.md /
+        feedback_dialog_initial_focus). self.focusWidget() rather than
+        QApplication.focusWidget() is deliberate: it reports focus within
+        this window's subtree, the same reason FocusController uses it. The
+        finally clause means an exception raised mid-dialog still restores
+        focus instead of stranding it."""
+        previous_focus = self.focusWidget()
+        try:
+            yield
+        finally:
+            if previous_focus is not None:
+                previous_focus.setFocus()
+
     def _show_goto_measure_dialog(self):
         current_measure = None
         if self._music_data:
@@ -917,20 +932,18 @@ class MainWindow(QMainWindow):
     def _show_tempo_offset_dialog(self):
         """Unlike GotoMeasureDialog there's no obvious "next place" for
         focus after a tempo change, so it returns to wherever it was."""
-        previous_focus = self.focusWidget()
-        current_offset = self._music_data.playback_tempo_offset if self._music_data else 0.0
-        beat_unit_name = (
-            self._music_data.tempo_beat_unit_name_at() if self._music_data else "quarter"
-        )
-        dialog = TempoOffsetDialog(
-            self, current_offset=current_offset, beat_unit_name=beat_unit_name
-        )
-        if dialog.exec() == QDialog.DialogCode.Accepted and self._music_data:
-            offset = dialog.tempo_offset()
-            if offset is not None:
-                self.playback.set_tempo_offset(offset)
-        if previous_focus is not None:
-            previous_focus.setFocus()
+        with self._preserving_focus():
+            current_offset = self._music_data.playback_tempo_offset if self._music_data else 0.0
+            beat_unit_name = (
+                self._music_data.tempo_beat_unit_name_at() if self._music_data else "quarter"
+            )
+            dialog = TempoOffsetDialog(
+                self, current_offset=current_offset, beat_unit_name=beat_unit_name
+            )
+            if dialog.exec() == QDialog.DialogCode.Accepted and self._music_data:
+                offset = dialog.tempo_offset()
+                if offset is not None:
+                    self.playback.set_tempo_offset(offset)
 
     def _show_preview_settings_dialog(self):
         """Playback > Preview Settings... (Ctrl+Shift+V) - the count-in
@@ -941,29 +954,25 @@ class MainWindow(QMainWindow):
         habit, not a property of one piece. Pushed to the controller as
         well as saved, so it applies to the very next Enter without a
         reload."""
-        previous_focus = self.focusWidget()
-        dialog = PreviewSettingsDialog(
-            self, settings=self.playback.preview_settings, uk_terms=self._uk_terms
-        )
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            settings = dialog.preview_settings()
-            self.playback.set_preview_settings(settings)
-            app_settings.set_preview_settings(settings)
-        if previous_focus is not None:
-            previous_focus.setFocus()
+        with self._preserving_focus():
+            dialog = PreviewSettingsDialog(
+                self, settings=self.playback.preview_settings, uk_terms=self._uk_terms
+            )
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                settings = dialog.preview_settings()
+                self.playback.set_preview_settings(settings)
+                app_settings.set_preview_settings(settings)
 
     def _show_performance_report_dialog(self):
         """Ref 29: read-only, no live signal wiring - build from current
         data, exec, restore previous focus."""
         if not self._music_data:
             return
-        previous_focus = self.focusWidget()
-        dialog = PerformanceReportDialog(
-            self, lines=self._music_data.get_performance_report_lines()
-        )
-        dialog.exec()
-        if previous_focus is not None:
-            previous_focus.setFocus()
+        with self._preserving_focus():
+            dialog = PerformanceReportDialog(
+                self, lines=self._music_data.get_performance_report_lines()
+            )
+            dialog.exec()
 
     def _show_mixer_dialog(self):
         """Wishlist #4. rows/commit/cancel all live on PlaybackController -
@@ -972,14 +981,12 @@ class MainWindow(QMainWindow):
         and decide commit vs. revert from exec()'s result."""
         if not self._music_data:
             return
-        previous_focus = self.focusWidget()
-        dialog = MixerDialog(self, rows=self.playback.begin_mixer_edit())
-        dialog.volume_changed.connect(self.playback.set_mixer_volume)
-        dialog.pan_changed.connect(self.playback.set_mixer_pan)
-        dialog.preview_requested.connect(self.playback.audition_phrase)
-        self.playback.end_mixer_edit(dialog.exec() == QDialog.DialogCode.Accepted)
-        if previous_focus is not None:
-            previous_focus.setFocus()
+        with self._preserving_focus():
+            dialog = MixerDialog(self, rows=self.playback.begin_mixer_edit())
+            dialog.volume_changed.connect(self.playback.set_mixer_volume)
+            dialog.pan_changed.connect(self.playback.set_mixer_pan)
+            dialog.preview_requested.connect(self.playback.audition_phrase)
+            self.playback.end_mixer_edit(dialog.exec() == QDialog.DialogCode.Accepted)
 
     def _show_live_midi_input_dialog(self):
         """Options > Live MIDI Input Settings... (Ctrl+Shift+L). Pure view
@@ -988,25 +995,23 @@ class MainWindow(QMainWindow):
         result, the same shape _show_mixer_dialog already has. Unlike the
         Mixer dialog, this needs no loaded score at all - the feature is
         global, not per-score."""
-        previous_focus = self.focusWidget()
-        dialog = LiveMidiInputDialog(
-            self,
-            devices=self.live_midi.available_devices(),
-            settings=self.live_midi.begin_settings_edit(),
-        )
-        dialog.instrument_changed.connect(self.live_midi.preview_instrument)
-        dialog.volume_changed.connect(self.live_midi.preview_volume)
-        dialog.pan_changed.connect(self.live_midi.preview_pan)
-        dialog.refresh_requested.connect(
-            lambda: dialog.set_devices(self.live_midi.available_devices())
-        )
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.live_midi.commit_settings_edit(dialog.result_settings())
-        else:
-            self.live_midi.cancel_settings_edit()
-        self.live_midi_input_action.setChecked(self.live_midi.settings.enabled)
-        if previous_focus is not None:
-            previous_focus.setFocus()
+        with self._preserving_focus():
+            dialog = LiveMidiInputDialog(
+                self,
+                devices=self.live_midi.available_devices(),
+                settings=self.live_midi.begin_settings_edit(),
+            )
+            dialog.instrument_changed.connect(self.live_midi.preview_instrument)
+            dialog.volume_changed.connect(self.live_midi.preview_volume)
+            dialog.pan_changed.connect(self.live_midi.preview_pan)
+            dialog.refresh_requested.connect(
+                lambda: dialog.set_devices(self.live_midi.available_devices())
+            )
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.live_midi.commit_settings_edit(dialog.result_settings())
+            else:
+                self.live_midi.cancel_settings_edit()
+            self.live_midi_input_action.setChecked(self.live_midi.settings.enabled)
 
     def _show_voice_control_dialog(self):
         """Options > Voice Control Settings... (Ref 19). Pure view (see
@@ -1014,25 +1019,23 @@ class MainWindow(QMainWindow):
         its signals and decides commit vs. revert from exec()'s result, the
         same shape _show_live_midi_input_dialog already has. Needs no loaded
         score at all - the feature is global, not per-score."""
-        previous_focus = self.focusWidget()
-        dialog = VoiceControlDialog(
-            self,
-            devices=self.voice_control.available_devices(),
-            settings=self.voice_control.begin_settings_edit(),
-        )
-        dialog.refresh_requested.connect(
-            lambda: dialog.set_devices(self.voice_control.available_devices())
-        )
-        dialog.test_requested.connect(self._show_voice_control_test_dialog)
-        dialog.cue_volume_changed.connect(self.voice_control.preview_cue_volume)
-        dialog.cue_pan_changed.connect(self.voice_control.preview_cue_pan)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.voice_control.commit_settings_edit(dialog.result_settings())
-        else:
-            self.voice_control.cancel_settings_edit()
-        self.voice_control_action.setChecked(self.voice_control.settings.enabled)
-        if previous_focus is not None:
-            previous_focus.setFocus()
+        with self._preserving_focus():
+            dialog = VoiceControlDialog(
+                self,
+                devices=self.voice_control.available_devices(),
+                settings=self.voice_control.begin_settings_edit(),
+            )
+            dialog.refresh_requested.connect(
+                lambda: dialog.set_devices(self.voice_control.available_devices())
+            )
+            dialog.test_requested.connect(self._show_voice_control_test_dialog)
+            dialog.cue_volume_changed.connect(self.voice_control.preview_cue_volume)
+            dialog.cue_pan_changed.connect(self.voice_control.preview_cue_pan)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.voice_control.commit_settings_edit(dialog.result_settings())
+            else:
+                self.voice_control.cancel_settings_edit()
+            self.voice_control_action.setChecked(self.voice_control.settings.enabled)
 
     def _show_tuner_dialog(self):
         """Tools > Tuner (speculative feature - see the tuner plan). Pure
@@ -1043,53 +1046,51 @@ class MainWindow(QMainWindow):
         (listening_requested/listening_stopped, wired here) rather than
         being a persistent toggle - needs no loaded score at all, the
         feature is global, not per-score."""
-        previous_focus = self.focusWidget()
-        dialog = TunerDialog(
-            self,
-            devices=self.tuner.available_devices(),
-            settings=self.tuner.begin_settings_edit(),
-        )
-        dialog.target_changed.connect(self.tuner.set_target)
-        dialog.threshold_changed.connect(self.tuner.set_signal_threshold)
-        dialog.device_changed.connect(self.tuner.start_listening)
-        dialog.refresh_requested.connect(
-            lambda: dialog.set_devices(self.tuner.available_devices())
-        )
-        dialog.listening_requested.connect(self.tuner.start_listening)
-        dialog.listening_stopped.connect(self.tuner.stop_listening)
-        self.tuner.pitch_result_changed.connect(dialog.update_pitch_display)
-        # dialog.announce, not a controller-side QAccessible call - see
-        # controllers/tuner_controller.py's module docstring GOTCHA and
-        # widgets/tuner_dialog.py's own announce() for why: the controller
-        # has no widget of its own to target, and a QAccessibleAnnouncement
-        # Event aimed at a non-widget QObject was silently dropped. This was
-        # briefly left unconnected during accuracy testing (a plain ~1s
-        # throttle made the dialog hard to navigate with NVDA - talked over
-        # while trying to Tab around), but the controller now pushes a
-        # bounded WAITING/REPORTING sequence instead (see that module's
-        # THIRD/FOURTH live-testing reports), which doesn't have that
-        # problem - and, being a QAccessibleAnnouncementEvent, reaches NVDA
-        # regardless of which control currently has keyboard focus.
-        self.tuner.announcement_requested.connect(dialog.announce)
-        # Seeded explicitly, not left to TunerDialog.__init__'s own trailing
-        # target_changed emission - that emission fires BEFORE the connect()
-        # above runs (it happens during TunerDialog(...) construction, three
-        # lines up), so it was never actually received. Reported live: with
-        # no target ever reaching the controller, TunerCapture searched the
-        # wrong (stale default 440Hz) band and the old _handle_pitch_result
-        # skipped feedback entirely whenever _target_string was None -
-        # together those made the tuner look totally unresponsive. See
-        # controllers/tuner_controller.py's module docstring.
-        self.tuner.set_target(dialog.current_string(), dialog.current_offset(), dialog.current_a4_hz())
-        self.tuner.set_signal_threshold(dialog.current_threshold_percent())
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.tuner.commit_settings_edit(dialog.result_settings())
-        else:
-            self.tuner.cancel_settings_edit()
-        self.tuner.pitch_result_changed.disconnect(dialog.update_pitch_display)
-        self.tuner.announcement_requested.disconnect(dialog.announce)
-        if previous_focus is not None:
-            previous_focus.setFocus()
+        with self._preserving_focus():
+            dialog = TunerDialog(
+                self,
+                devices=self.tuner.available_devices(),
+                settings=self.tuner.begin_settings_edit(),
+            )
+            dialog.target_changed.connect(self.tuner.set_target)
+            dialog.threshold_changed.connect(self.tuner.set_signal_threshold)
+            dialog.device_changed.connect(self.tuner.start_listening)
+            dialog.refresh_requested.connect(
+                lambda: dialog.set_devices(self.tuner.available_devices())
+            )
+            dialog.listening_requested.connect(self.tuner.start_listening)
+            dialog.listening_stopped.connect(self.tuner.stop_listening)
+            self.tuner.pitch_result_changed.connect(dialog.update_pitch_display)
+            # dialog.announce, not a controller-side QAccessible call - see
+            # controllers/tuner_controller.py's module docstring GOTCHA and
+            # widgets/tuner_dialog.py's own announce() for why: the controller
+            # has no widget of its own to target, and a QAccessibleAnnouncement
+            # Event aimed at a non-widget QObject was silently dropped. This was
+            # briefly left unconnected during accuracy testing (a plain ~1s
+            # throttle made the dialog hard to navigate with NVDA - talked over
+            # while trying to Tab around), but the controller now pushes a
+            # bounded WAITING/REPORTING sequence instead (see that module's
+            # THIRD/FOURTH live-testing reports), which doesn't have that
+            # problem - and, being a QAccessibleAnnouncementEvent, reaches NVDA
+            # regardless of which control currently has keyboard focus.
+            self.tuner.announcement_requested.connect(dialog.announce)
+            # Seeded explicitly, not left to TunerDialog.__init__'s own trailing
+            # target_changed emission - that emission fires BEFORE the connect()
+            # above runs (it happens during TunerDialog(...) construction, three
+            # lines up), so it was never actually received. Reported live: with
+            # no target ever reaching the controller, TunerCapture searched the
+            # wrong (stale default 440Hz) band and the old _handle_pitch_result
+            # skipped feedback entirely whenever _target_string was None -
+            # together those made the tuner look totally unresponsive. See
+            # controllers/tuner_controller.py's module docstring.
+            self.tuner.set_target(dialog.current_string(), dialog.current_offset(), dialog.current_a4_hz())
+            self.tuner.set_signal_threshold(dialog.current_threshold_percent())
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.tuner.commit_settings_edit(dialog.result_settings())
+            else:
+                self.tuner.cancel_settings_edit()
+            self.tuner.pitch_result_changed.disconnect(dialog.update_pitch_display)
+            self.tuner.announcement_requested.disconnect(dialog.announce)
 
     def _show_voice_control_test_dialog(self, device_name: str, confidence_threshold: float):
         """Voice Control Settings' Test... button. Pauses the real listening
@@ -1116,18 +1117,16 @@ class MainWindow(QMainWindow):
         timeline views."""
         if not self._music_data:
             return
-        previous_focus = self.focusWidget()
-        dialog = InstrumentDialog(
-            self,
-            rows=self.score_edit.instrument_rows(),
-            percussion_part_ids=self.score_edit.percussion_part_ids(),
-            percussion_rows=self.score_edit.percussion_rows(),
-            auto_correct_enabled=self._music_data.percussion_auto_correct_enabled,
-        )
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.score_edit.apply_instrument_overrides(*dialog.overrides())
-        if previous_focus is not None:
-            previous_focus.setFocus()
+        with self._preserving_focus():
+            dialog = InstrumentDialog(
+                self,
+                rows=self.score_edit.instrument_rows(),
+                percussion_part_ids=self.score_edit.percussion_part_ids(),
+                percussion_rows=self.score_edit.percussion_rows(),
+                auto_correct_enabled=self._music_data.percussion_auto_correct_enabled,
+            )
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.score_edit.apply_instrument_overrides(*dialog.overrides())
 
     def _show_key_signature_dialog(self):
         """S6: a single whole-piece key signature override, for MIDI files
@@ -1139,12 +1138,10 @@ class MainWindow(QMainWindow):
         applying it and refreshing what it affects."""
         if not self._music_data:
             return
-        previous_focus = self.focusWidget()
-        dialog = KeySignatureDialog(self, current_key=self.score_edit.current_key_override())
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.score_edit.apply_key_signature_override(*dialog.key_override())
-        if previous_focus is not None:
-            previous_focus.setFocus()
+        with self._preserving_focus():
+            dialog = KeySignatureDialog(self, current_key=self.score_edit.current_key_override())
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.score_edit.apply_key_signature_override(*dialog.key_override())
 
     def _show_about_dialog(self):
         AboutDialog(self).exec()
