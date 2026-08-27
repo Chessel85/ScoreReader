@@ -250,12 +250,12 @@ class Region2ListWidget(RegionFocusCycleMixin, QTreeWidget):
         unmuted. Never rebuilds the tree, so the fresh-load collapsed
         state this always runs right after is left untouched."""
         self.model_manager.apply_muted_node_keys(parts_muted, staves_muted, voices_muted)
-        self._refresh_all_item_texts()
+        self._refresh_all_item_texts_and_notify()
 
     def apply_soloed_node_keys(self, parts_soloed: set, staves_soloed: set, voices_soloed: set) -> None:
         """The soloed counterpart to apply_muted_node_keys."""
         self.model_manager.apply_soloed_node_keys(parts_soloed, staves_soloed, voices_soloed)
-        self._refresh_all_item_texts()
+        self._refresh_all_item_texts_and_notify()
 
     def toggle_mute_current(self) -> None:
         """F8 (via the Playback menu's Mute action) - mutes/unmutes the
@@ -280,19 +280,23 @@ class Region2ListWidget(RegionFocusCycleMixin, QTreeWidget):
     def unmute_all(self) -> None:
         """Alt+F8 (via the Playback menu's Unmute All action)."""
         self.model_manager.clear_all_mute()
-        self._refresh_all_item_texts()
+        self._refresh_all_item_texts_and_notify()
 
     def unsolo_all(self) -> None:
         """Alt+F9 (via the Playback menu's Unsolo All action)."""
         self.model_manager.clear_all_solo()
-        self._refresh_all_item_texts()
+        self._refresh_all_item_texts_and_notify()
 
     def _refresh_item_text(self, node: Region2Node) -> None:
         item = self._item_by_node_id.get(node.node_id)
         if item is not None:
             item.setText(0, node_status_label(node))
 
-    def _refresh_all_item_texts(self) -> None:
+    def _refresh_all_item_texts_and_notify(self) -> None:
+        """Rewrites every row's on/off status label AND emits filter_changed.
+        The emit is not incidental: all four callers (the two restore-from-
+        ScoreConfig paths and the two clear-all paths) change the effective
+        voice filter, so Region 3 must be told - hence the name says so."""
         for node_id, item in self._item_by_node_id.items():
             node = self.model_manager.node(node_id)
             if node is not None:
