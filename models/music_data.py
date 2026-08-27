@@ -1182,6 +1182,12 @@ class MusicData:
         directly (not quarter-note terms) precisely so this is a plain sum."""
         return self.score_tempo_display_bpm(index) + self.playback_tempo_offset
 
+    def effective_tempo_display_str(self, index: Optional[int] = None) -> str:
+        """effective_tempo_display_bpm() rounded for display - the bare
+        number F/S/D announce (RegionPresenter.announce_tempo) and the same
+        rounding the status bar's playback-tempo field already uses."""
+        return self._format_tempo_number(self.effective_tempo_display_bpm(index))
+
     def effective_tempo_bpm(self, index: Optional[int] = None) -> float:
         """Quarter-note BPM for real playback timing (Sequencer,
         get_duration_ms_for_index) - converts the display-unit offset back

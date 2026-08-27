@@ -8,6 +8,7 @@ from PySide6.QtGui import QValidator
 from audio.metronome import METRONOME_OFFBEAT_NOTE
 from models.preview_settings import PreviewSettings
 from persistence import app_settings
+from widgets import accessible_announcer
 from widgets.tempo_offset_dialog import TempoOffsetDialog
 from tests.support.main_window_helpers import _focus, _show, load_and_wait, no_lead_in
 
@@ -37,6 +38,27 @@ def test_tempo_reset_returns_to_the_score_default(window, qtbot, minimal_score):
 
     assert window._music_data.playback_tempo_offset == 0
     assert window.status_bar._fields[3].text() == "Playback tempo: 120 quarter notes per minute (score default)"
+
+
+def test_tempo_keys_announce_the_new_tempo_number(window, qtbot, monkeypatch, minimal_score):
+    """F/S/D nudge the playback tempo without moving focus off the Note
+    region, so the only prior trace was the status bar's playback-tempo
+    field - never heard by someone not focused there. Just the bare number,
+    per the user (not "N quarter notes per minute")."""
+    announcements = []
+    monkeypatch.setattr(
+        accessible_announcer.QAccessible,
+        "updateAccessibility",
+        lambda event: announcements.append(event.message()),
+    )
+    load_and_wait(window, qtbot, minimal_score)
+    announcements.clear()
+
+    window.tempo_faster()   # 120 -> 130
+    window.tempo_slower()   # 130 -> 120
+    window.tempo_reset()    # -> 120 (score default)
+
+    assert announcements == ["130.", "120.", "120."]
 
 
 def test_tempo_keys_do_not_move_the_timeline_or_reaudition(window, qtbot, null_synth, minimal_score):

@@ -243,6 +243,19 @@ class RegionPresenter(QObject):
         message = f"Preview {bars} {label}{plural}."
         accessible_announcer.announce(self.region_3, message)
 
+    def announce_tempo(self) -> None:
+        """F/S/D (main_window.tempo_faster/tempo_slower/tempo_reset) nudge
+        the playback tempo without moving focus off the Note region, so -
+        like announce_preview_length - the only prior trace of the new
+        value was the status bar's playback-tempo field, which a
+        screen-reader user isn't focused on. Just the bare number, per the
+        user: not "N quarter notes per minute"."""
+        if not self.music_data:
+            return
+        accessible_announcer.announce(
+            self.region_3, f"{self.music_data.effective_tempo_display_str()}."
+        )
+
     def refresh_region_5(self) -> None:
         """Ref 29: recomputes Region 5's rows for the current position.
 

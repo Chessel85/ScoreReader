@@ -716,12 +716,15 @@ class MainWindow(QMainWindow):
 
     def tempo_faster(self):
         self.playback.tempo_faster()
+        self.presenter.announce_tempo()
 
     def tempo_slower(self):
         self.playback.tempo_slower()
+        self.presenter.announce_tempo()
 
     def tempo_reset(self):
         self.playback.tempo_reset()
+        self.presenter.announce_tempo()
 
     def toggle_metronome(self):
         self.metronome_action.setChecked(self.playback.toggle_metronome())
