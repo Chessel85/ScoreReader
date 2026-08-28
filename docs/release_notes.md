@@ -1,5 +1,9 @@
 # Recall Score Release Notes
 
+## 2026.1.35
+
+* Stopped the metronome click sounding when moving up and down a chord 
+
 ## 2026.1.34
 
 * Implemented comprehensive find feature

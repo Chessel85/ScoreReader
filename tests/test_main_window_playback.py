@@ -898,6 +898,31 @@ def test_navigating_onto_a_beat_plays_a_click_alongside_the_note(
     assert null_synth.clicks[0]["pitch"] == METRONOME_OFFBEAT_NOTE  # not beat 1 - regular click
 
 
+def test_no_click_when_moving_up_or_down_within_a_chord(
+    window, qtbot, null_synth, chord_score
+):
+    """An Up/Down move inside the current slice (stepping through a chord's
+    notes) is not a timeline move - it stays on the same beat - so it must
+    sound the note only, never re-fire the metronome click or the spoken
+    beat position."""
+    load_and_wait(window, qtbot, chord_score)
+    window.toggle_metronome()
+    window.toggle_position_announcer()
+    _show(window, qtbot)
+    _focus(window.region_3)
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Right)  # onto the D+F chord on beat 2
+    assert window.region_3.count() > 1, "the second slice must be a chord"
+    null_synth.clicks.clear()
+    null_synth.words.clear()
+    played_before = len(null_synth.played)
+
+    qtbot.keyClick(window.region_3, Qt.Key.Key_Down)
+
+    assert null_synth.clicks == []
+    assert null_synth.words == []
+    assert len(null_synth.played) > played_before, "the note itself still sounds"
+
+
 def test_no_click_on_navigation_when_metronome_is_off(
     window, qtbot, null_synth, minimal_score
 ):

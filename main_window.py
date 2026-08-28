@@ -768,8 +768,11 @@ class MainWindow(QMainWindow):
     def _play_boundary_cue(self):
         self.playback.play_boundary_cue()
 
-    def _audition_current_selection(self):
-        self.playback.audition_selection(self.presenter.selected_region_3_indices())
+    def _audition_current_selection(self, with_position_cues: bool = True):
+        self.playback.audition_selection(
+            self.presenter.selected_region_3_indices(),
+            with_position_cues=with_position_cues,
+        )
 
     def select_all_region_3(self):
         self.presenter.select_all_region_3()
@@ -779,7 +782,10 @@ class MainWindow(QMainWindow):
         # same as any real cursor move (NavigationController clears it for
         # Left/Right/Home/End/Find).
         self.navigation.clear_pending_digits()
-        self._audition_current_selection()
+        # An Up/Down within the current slice is not a timeline move, so it
+        # sounds the note only - no metronome click, no spoken beat position
+        # (both would just repeat at the same position).
+        self._audition_current_selection(with_position_cues=False)
 
     # --- focus (delegators) -------------------------------------------
 

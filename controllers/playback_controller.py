@@ -836,10 +836,19 @@ class PlaybackController(QObject):
             program=self.BOUNDARY_GM_PROGRAM,
         )
 
-    def audition_selection(self, selected_indices: List[int]) -> None:
+    def audition_selection(
+        self, selected_indices: List[int], with_position_cues: bool = True
+    ) -> None:
         """Sound the given Region 3 rows, plus the click and spoken position
         if they are on. Indices are passed in rather than read off the
-        widget, so this stays widget-free."""
+        widget, so this stays widget-free.
+
+        `with_position_cues=False` sounds only the notes: an Up/Down move
+        within the current slice (e.g. stepping through a chord's notes)
+        stays on the same timeline position and beat, so re-firing the
+        metronome click and the spoken beat position there is just noise -
+        those cues belong to real timeline movement (arrow / Ctrl+arrow /
+        Alt+arrow / go-to-bar), which always passes the default True."""
         if not self.music_data or self._muted:
             return
 
@@ -854,6 +863,9 @@ class PlaybackController(QObject):
         # still carries its own duration, so no slice-wide duration_ms is
         # needed here.
         sound_events(self.synth, self.music_data, events, retrigger=True, grace_events=grace_events)
+
+        if not with_position_cues:
+            return
 
         # Ref 14 AC3: fires even with no events at all (a metronome-only
         # beat marker), which is why it isn't folded into `if events`.
