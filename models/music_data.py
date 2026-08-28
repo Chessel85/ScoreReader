@@ -4,10 +4,13 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from models import vocabulary
+from models.barline_mark import BarlineMark
+from models.clef_change_mark import ClefChangeMark
 from models.coda_mark import CodaMark
 from models.direction_mark import DirectionMark
 from models.direction_span import DirectionSpan
 from models.ending_span import EndingSpan
+from models.measure_style_mark import MeasureStyleMark
 from models.event_slice import EventSlice
 from models.fine_mark import FineMark
 from models.find_index import FindIndex
@@ -180,6 +183,14 @@ class MusicData:
     # Report only - deliberately NO Region 5 row (D15).
     direction_spans: List[DirectionSpan] = field(default_factory=list)
     direction_marks: List[DirectionMark] = field(default_factory=list)
+    # P4: <bar-style> points (M6), mid-part <clef> changes (M7),
+    # <measure-style> points (M8). MusicXML-only - MIDI/GP/UG stub them
+    # empty. Findable, listed in the Performance Report, and shown as a
+    # one-shot Region 5 row at their own measure (D15 bars only pedal/
+    # octave-shift from Region 5, not these).
+    barline_marks: List[BarlineMark] = field(default_factory=list)
+    clef_change_marks: List[ClefChangeMark] = field(default_factory=list)
+    measure_style_marks: List[MeasureStyleMark] = field(default_factory=list)
     total_measures: int = 0
 
     # Segno/Coda/D.C./D.S./Fine navigation marks, same side-channel pattern
@@ -981,6 +992,48 @@ class MusicData:
                 )
             )
 
+        # P4: barline / clef-change / measure-style one-shot rows, gated on
+        # the mark's own measure (a point mark, like segno below - not a
+        # per-slice sticky value). D15 keeps only pedal/octave-shift out of
+        # Region 5; these three stay in (rare, structural).
+        for mark in self.barline_marks:
+            if mark.measure == slice_.measure:
+                label = (
+                    "Double barline" if mark.kind == "double_barline"
+                    else f"{mark.style.capitalize()} barline"
+                )
+                rows.append(
+                    PerformanceRegionRow(
+                        label=f"{label}: {bar_word} {mark.measure}",
+                        jump_target_measure=mark.measure,
+                    )
+                )
+
+        _clef_pids = {m.part_id for m in self.clef_change_marks}
+        for mark in self.clef_change_marks:
+            if mark.measure != slice_.measure:
+                continue
+            prefix = ""
+            if len(_clef_pids) > 1:
+                name = next((p.name for p in self.parts_info if p.part_id == mark.part_id), None)
+                prefix = f"{name}: " if name else ""
+            rows.append(
+                PerformanceRegionRow(
+                    label=f"{prefix}Clef change: {mark.label}, staff {mark.staff}",
+                    jump_target_measure=mark.measure,
+                    jump_target_quarters=mark.quarters_from_start,
+                )
+            )
+
+        for mark in self.measure_style_marks:
+            if mark.measure == slice_.measure:
+                rows.append(
+                    PerformanceRegionRow(
+                        label=f"{mark.label.capitalize()}: {bar_word} {mark.measure}",
+                        jump_target_measure=mark.measure,
+                    )
+                )
+
         # Segno/Coda/D.C./D.S./Fine: one-shot rows, like the time-sig/tempo
         # rows below - unlike repeat/ending/hairpin spans, each of these is a
         # single point, not a start/end pair, so the gate is a direct
@@ -1237,6 +1290,22 @@ class MusicData:
         lines.append(f"Other directions: {len(_other_dirs)}")
         for mark in _other_dirs:
             lines.append(f"Direction {mark.label}: {bar_word} {mark.measure}")
+
+        # P4: bar-style points (M6), mid-part clef changes (M7),
+        # measure-style points (M8).
+        lines.append(f"Barline changes: {len(self.barline_marks)}")
+        for mark in self.barline_marks:
+            lines.append(f"{mark.style.capitalize()} barline: {bar_word} {mark.measure}")
+
+        lines.append(f"Clef changes: {len(self.clef_change_marks)}")
+        for mark in self.clef_change_marks:
+            lines.append(
+                f"Clef change: {mark.label}, staff {mark.staff}, {bar_word} {mark.measure}"
+            )
+
+        lines.append(f"Measure style markers: {len(self.measure_style_marks)}")
+        for mark in self.measure_style_marks:
+            lines.append(f"{mark.label.capitalize()}: {bar_word} {mark.measure}")
 
         def _label_suffix(label: str) -> str:
             return f" {label}" if label and label != "1" else ""

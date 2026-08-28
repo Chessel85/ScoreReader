@@ -12,10 +12,13 @@ from models.duration_units import (
     quarter_length_to_display_name,
     tuplet_word,
 )
+from models.barline_mark import BarlineMark
+from models.clef_change_mark import ClefChangeMark
 from models.coda_mark import CodaMark
 from models.direction_mark import DirectionMark
 from models.direction_span import DirectionSpan
 from models.ending_span import EndingSpan
+from models.measure_style_mark import MeasureStyleMark
 from models.event_slice import EventSlice
 from models.fine_mark import FineMark
 from models.hairpin_span import HairpinSpan
@@ -33,7 +36,12 @@ from models.repeat_span import RepeatSpan
 from models.segno_mark import SegnoMark
 from models.tempo_change import TempoChange
 from models.to_coda_mark import ToCodaMark
-from models.vocabulary import articulation_name, dynamic_name, spell_out_minor_chord
+from models.vocabulary import (
+    articulation_name,
+    clef_name,
+    dynamic_name,
+    spell_out_minor_chord,
+)
 from parsers.xml_source import read_musicxml_root
 
 # Synthetic parts a real MusicXML file can carry alongside its notated
@@ -390,6 +398,11 @@ class _FirstPartScan:
     measure_start_quarters: Dict[int, float] = field(default_factory=dict)
     measure_ts_fifths: Dict[int, Tuple[int, int, int]] = field(default_factory=dict)
     tempo_changes: List[TempoChange] = field(default_factory=list)
+    # P4/M6: raw (measure, bar-style, location) collected during the walk;
+    # resolved to barline_marks after the loop, once the last measure number
+    # is known (the D16 final-light-heavy filter needs it).
+    raw_barlines: List[Tuple[int, str, str]] = field(default_factory=list)
+    barline_marks: List[BarlineMark] = field(default_factory=list)
     repeat_spans: List[RepeatSpan] = field(default_factory=list)
     ending_spans: List[EndingSpan] = field(default_factory=list)
     hairpin_spans: List[HairpinSpan] = field(default_factory=list)
@@ -569,6 +582,13 @@ class _PartState:
         default_factory=dict
     )
 
+    # P4/M7: the clef identity (sign, line, clef-octave-change) currently in
+    # force per staff. The first entry for a staff seeds this silently; a
+    # later, different one is a ClefChangeMark. Per part (D5).
+    clef_by_staff: Dict[int, Tuple[str, Optional[str], Optional[str]]] = field(
+        default_factory=dict
+    )
+
     def __post_init__(self):
         self.refresh_bar_shape()
 
@@ -711,6 +731,13 @@ class TimelineBuilder:
         # facts, not score-wide ones (D5).
         self.direction_spans: List[DirectionSpan] = []
         self.direction_marks: List[DirectionMark] = []
+        # P4: <barline>/<bar-style> points (M6, score-wide - populated in
+        # _scan_first_part), mid-part <clef> changes (M7) and
+        # <measure-style> points (M8) - the last two per-part/per-staff (D5),
+        # populated in _handle_attributes.
+        self.barline_marks: List[BarlineMark] = []
+        self.clef_change_marks: List[ClefChangeMark] = []
+        self.measure_style_marks: List[MeasureStyleMark] = []
         # Segno/Coda/D.C./D.S./Fine navigation marks, same side-channel
         # pattern - see _step_direction_jump_marks.
         self.segno_marks: List[SegnoMark] = []
@@ -781,6 +808,7 @@ class TimelineBuilder:
         measure_start_quarters = scan.measure_start_quarters
         measure_ts_fifths = scan.measure_ts_fifths
         self.tempo_changes = scan.tempo_changes
+        self.barline_marks = scan.barline_marks
         self.repeat_spans = scan.repeat_spans
         self.ending_spans = scan.ending_spans
         self.hairpin_spans = scan.hairpin_spans
@@ -828,6 +856,9 @@ class TimelineBuilder:
 
                     if elem.tag == "attributes":
                         part_state.refresh_bar_shape(measure_state.walker)
+                        self._handle_attributes(
+                            elem, part_state, measure_state, measure_start_quarters
+                        )
                     elif elem.tag == "direction":
                         self._handle_direction(
                             elem, part_state, measure_state, sink, measure_start_quarters
@@ -1055,6 +1086,73 @@ class TimelineBuilder:
             self._close_direction_span(
                 part_state, kind, last_m_num, end_beat, end_quarters
             )
+
+    # --- P4: mid-part clef changes and measure styles ----------------
+
+    def _handle_attributes(
+        self, elem, part_state, measure_state, measure_start_quarters
+    ) -> None:
+        """P4/M7/M8: an <attributes> element's <clef> and <measure-style>
+        children. Divisions / time / key are already applied by the walker
+        (_apply_attributes); this is only the two findable facts on top.
+        Per-part/per-staff (D5)."""
+        walker = measure_state.walker
+        m_num = measure_state.m_num
+        offset_q = walker.offset_divs / walker.divisions
+        beat_pos = part_state.beat_position(m_num, offset_q)
+        quarters = measure_start_quarters.get(m_num, 0.0) + offset_q
+
+        for clef_el in elem.findall("clef"):
+            try:
+                staff = int(clef_el.attrib.get("number", "1"))
+            except ValueError:
+                staff = 1
+            sign = clef_el.findtext("sign")
+            line = clef_el.findtext("line")
+            oct_change = clef_el.findtext("clef-octave-change")
+            identity = (sign, line, oct_change)
+            prev = part_state.clef_by_staff.get(staff)
+            part_state.clef_by_staff[staff] = identity
+            if prev is not None and prev != identity:
+                self.clef_change_marks.append(
+                    ClefChangeMark(
+                        part_id=part_state.part_id,
+                        staff=staff,
+                        label=clef_name(sign, line, oct_change),
+                        measure=m_num,
+                        beat_position=beat_pos,
+                        quarters_from_start=quarters,
+                    )
+                )
+
+        for ms_el in elem.findall("measure-style"):
+            try:
+                ms_staff = int(ms_el.attrib.get("number", "1"))
+            except ValueError:
+                ms_staff = 1
+            for child in ms_el:
+                if child.tag == "multiple-rest":
+                    count = (child.text or "").strip()
+                    kind = "multi_measure_rest"
+                    label = f"{count}-bar rest" if count else "multi-measure rest"
+                elif child.tag in ("measure-repeat", "beat-repeat", "slash"):
+                    # These carry type="start"/"stop"; record the start only,
+                    # so the region reads as one presence point, not two.
+                    if child.attrib.get("type") == "stop":
+                        continue
+                    kind = "measure_repeat"
+                    label = child.tag.replace("-", " ")
+                else:
+                    continue
+                self.measure_style_marks.append(
+                    MeasureStyleMark(
+                        kind=kind,
+                        part_id=part_state.part_id,
+                        staff=ms_staff,
+                        label=label,
+                        measure=m_num,
+                    )
+                )
 
     def _handle_harmony(self, elem, part_state, measure_state, sink) -> None:
         """<harmony> is a <measure> child like <direction>, not a <note>
@@ -1706,6 +1804,18 @@ class TimelineBuilder:
             )
 
         scan.tempo_changes.sort(key=lambda c: c.quarters_from_start)
+
+        # P4/M6/D16: drop a light-heavy on the very last measure (every score
+        # ends with one and the End key already goes there); a light-heavy
+        # anywhere else is a real section marker, kept as `other_barline`.
+        last_m = max(scan.measure_start_quarters) if scan.measure_start_quarters else 0
+        for m_num, style, location in scan.raw_barlines:
+            if style == "light-heavy" and m_num == last_m:
+                continue
+            kind = "double_barline" if style == "light-light" else "other_barline"
+            spoken = "double" if style == "light-light" else style.replace("-", " ")
+            scan.barline_marks.append(BarlineMark(kind, spoken, m_num, location))
+
         return scan
 
     def _step_barline(
@@ -1753,6 +1863,19 @@ class TimelineBuilder:
                 scan.ending_spans.append(
                     EndingSpan(number=number, start_measure=start, end_measure=m_num)
                 )
+
+        # P4/M6: a <bar-style> that isn't a repeat barline (those are
+        # repeat_spans already) and isn't a plain one. Buffered raw - the
+        # final-light-heavy filter (D16) runs after the measure loop.
+        style_el = barline_parent.find("bar-style")
+        if (
+            repeat_el is None
+            and style_el is not None
+            and style_el.text
+            and style_el.text.strip() not in ("regular", "normal", "")
+        ):
+            location = barline_parent.attrib.get("location", "right")
+            scan.raw_barlines.append((m_num, style_el.text.strip(), location))
 
         return open_repeat_measure
 

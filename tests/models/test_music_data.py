@@ -4,6 +4,8 @@
 The real characterisation suite is A2. These tests exist to show the
 ElementTree-only path works and is wired up correctly.
 """
+import pathlib
+
 import pytest
 
 from models.event_slice import EventSlice
@@ -2557,6 +2559,128 @@ def test_p3_offered_direction_targets_never_read_zero_occurrences(
     construction."""
     for score in (pedal_score, octave_shift_score, rehearsal_mark_score,
                   direction_lines_score, unknown_direction_score):
+        md = timeline(score)
+        for target, count in md.available_find_targets_with_counts():
+            assert count >= 1
+
+
+# --- P4: barlines, clef changes, measure styles -----------------------
+
+
+def test_p4_clef_change_findable_reported_and_shown_in_region_5(
+    timeline, clef_change_score
+):
+    """M7: a mid-part clef change is a Find target, a Performance Report
+    line, and a one-shot Region 5 row at its own measure. Only one part
+    changes clef here, so the label is NOT part-prefixed (D5)."""
+    md = timeline(clef_change_score)
+    assert "clef_change" in _marking_keys(md)
+
+    target = _find_target(md, "clef_change", "marking")
+    first = md.find_occurrence(target, from_index=0, direction=1)
+    second = md.find_occurrence(target, from_index=first, direction=1)
+    wrapped = md.find_occurrence(target, from_index=second, direction=1)
+    assert first is not None and second != first and wrapped == first
+
+    lines = md.get_performance_report_lines()
+    assert "Clef changes: 2" in lines
+    assert "Clef change: bass, staff 1, Measure 2" in lines
+
+    labels = {r.label for i in range(len(md.timeline_slices))
+              for r in md.get_performance_region_rows(i)}
+    assert "Clef change: bass, staff 1" in labels
+    assert not any(": Clef change" in l for l in labels)  # no part prefix
+
+
+def test_p4_clef_change_region_5_label_matches_find_report_wording(
+    timeline, clef_change_score
+):
+    """D3: the Region 5 clef-change row and the Performance Report line use
+    the same core string ("Clef change: <clef>, staff <n>")."""
+    md = timeline(clef_change_score)
+    r5 = [r.label for i in range(len(md.timeline_slices))
+          for r in md.get_performance_region_rows(i)
+          if r.label.startswith("Clef change")]
+    report = [l for l in md.get_performance_report_lines()
+              if l.startswith("Clef change")]
+    assert "Clef change: bass, staff 1" in r5
+    assert any("Clef change: bass, staff 1" in l for l in report)
+
+
+def test_p4_double_barline_findable_and_no_final_barline_target(
+    timeline, double_barline_score
+):
+    """M6/D16: "Double barline" is offered with one occurrence; the trailing
+    light-heavy never becomes a target."""
+    md = timeline(double_barline_score)
+    keys = _marking_keys(md)
+    assert "double_barline" in keys
+    assert "other_barline" not in keys  # the final light-heavy was dropped
+
+    target, count = next(
+        (t, c) for t, c in md.available_find_targets_with_counts()
+        if t.key == "double_barline"
+    )
+    assert count == 1
+    labels = {r.label for i in range(len(md.timeline_slices))
+              for r in md.get_performance_region_rows(i)}
+    assert "Double barline: measure 2" in labels
+
+
+def test_p4_measure_style_marks_findable_and_reported(
+    timeline, measure_style_score
+):
+    """M8: multi-measure rest and measure repeat are each their own Find
+    target and Performance Report line."""
+    md = timeline(measure_style_score)
+    keys = _marking_keys(md)
+    assert {"multi_measure_rest", "measure_repeat"} <= keys
+
+    lines = md.get_performance_report_lines()
+    assert "Measure style markers: 2" in lines
+    assert "2-bar rest: Measure 1" in lines
+
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+_REAL_SCORES = sorted(
+    p for d in ("files", "examples")
+    for p in (_REPO_ROOT / d).rglob("*")
+    if p.suffix.lower() in (".xml", ".musicxml", ".mxl")
+)
+
+
+@pytest.mark.parametrize("real_score_path", _REAL_SCORES, ids=lambda p: p.name)
+def test_p4_no_final_barline_target_on_any_real_file(real_score_path):
+    """D16 regression pin: no file in files/ or examples/ ever offers a
+    "Final barline" target, and any barline target it does offer never
+    resolves onto the score's own last measure."""
+    from models.music_data import MusicData
+
+    md = MusicData(file_path=str(real_score_path))
+    labels = {t.label for t in md.available_find_targets()}
+    assert "Final barline" not in labels
+
+    last_measure = md.total_measures
+    for mark in md.barline_marks:
+        assert mark.measure != last_measure
+
+
+def test_p4_plain_score_offers_no_barline_clef_or_measure_style_targets(
+    timeline, dynamics_articulation_fingering_score
+):
+    """Corollary 1: a plain score must not grow the Find dialog."""
+    md = timeline(dynamics_articulation_fingering_score)
+    keys = _marking_keys(md)
+    for k in ("clef_change", "double_barline", "other_barline",
+              "multi_measure_rest", "measure_repeat"):
+        assert k not in keys
+
+
+def test_p4_offered_targets_never_read_zero_occurrences(
+    timeline, clef_change_score, double_barline_score, measure_style_score,
+):
+    """D13."""
+    for score in (clef_change_score, double_barline_score, measure_style_score):
         md = timeline(score)
         for target, count in md.available_find_targets_with_counts():
             assert count >= 1

@@ -38,6 +38,12 @@ class TimelineBuild:
     # Collected per part, not first-part-only (D5).
     direction_spans: List[Any] = field(default_factory=list)
     direction_marks: List[Any] = field(default_factory=list)
+    # P4: <bar-style> points (M6), mid-part <clef> changes (M7),
+    # <measure-style> points (M8). MusicXML-only; the other builders stub
+    # these empty.
+    barline_marks: List[Any] = field(default_factory=list)
+    clef_change_marks: List[Any] = field(default_factory=list)
+    measure_style_marks: List[Any] = field(default_factory=list)
     segno_marks: List[Any] = field(default_factory=list)
     coda_marks: List[Any] = field(default_factory=list)
     to_coda_marks: List[Any] = field(default_factory=list)
@@ -63,6 +69,9 @@ class TimelineBuild:
             hairpin_spans=builder.hairpin_spans,
             direction_spans=builder.direction_spans,
             direction_marks=builder.direction_marks,
+            barline_marks=builder.barline_marks,
+            clef_change_marks=builder.clef_change_marks,
+            measure_style_marks=builder.measure_style_marks,
             segno_marks=builder.segno_marks,
             coda_marks=builder.coda_marks,
             to_coda_marks=builder.to_coda_marks,
@@ -81,6 +90,9 @@ class TimelineBuild:
         music_data.hairpin_spans = self.hairpin_spans
         music_data.direction_spans = self.direction_spans
         music_data.direction_marks = self.direction_marks
+        music_data.barline_marks = self.barline_marks
+        music_data.clef_change_marks = self.clef_change_marks
+        music_data.measure_style_marks = self.measure_style_marks
         music_data.segno_marks = self.segno_marks
         music_data.coda_marks = self.coda_marks
         music_data.to_coda_marks = self.to_coda_marks

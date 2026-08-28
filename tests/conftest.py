@@ -307,6 +307,29 @@ def unknown_direction_score() -> str:
 
 
 @pytest.fixture
+def clef_change_score() -> str:
+    """P4 (find_feature_plan.md, M7): two parts, three 4/4 bars each. P1
+    switches treble->bass->treble (two ClefChangeMark); P2 stays treble
+    (none). One contributing part -> no Region 5 part-prefix."""
+    return _require(FIXTURES_DIR / "clef_change.musicxml")
+
+
+@pytest.fixture
+def double_barline_score() -> str:
+    """P4 (M6/D16): three 4/4 bars - a <bar-style>light-light</bar-style>
+    ending bar 2 (one "double_barline" mark) and a light-heavy ending the
+    last bar (dropped - every score has one)."""
+    return _require(FIXTURES_DIR / "double_barline.musicxml")
+
+
+@pytest.fixture
+def measure_style_score() -> str:
+    """P4 (M8): two 4/4 bars - an <attributes>/<measure-style> with a
+    <multiple-rest> (bar 1) and a <measure-repeat> (bar 2)."""
+    return _require(FIXTURES_DIR / "measure_style.musicxml")
+
+
+@pytest.fixture
 def stave_text_score() -> str:
     """Two parts, one 4/4 bar each. P1 carries every generic-stave-text case
     on its own four notes: a bare tempo word with no metronome sibling

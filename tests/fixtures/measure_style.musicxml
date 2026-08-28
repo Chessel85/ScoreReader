@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- P4 (find_feature_plan.md, M8): two 4/4 bars.
+       bar 1 <attributes><measure-style><multiple-rest>2</multiple-rest>
+             -> MeasureStyleMark(kind="multi_measure_rest", "2-bar rest")
+       bar 2 <attributes><measure-style><measure-repeat type="start"/>
+             -> MeasureStyleMark(kind="measure_repeat", "measure repeat")
+     None of the sample-set files carry a <measure-style>; this is the only
+     coverage. -->
+<score-partwise version="4.0">
+  <part-list>
+    <score-part id="P1"><part-name>Test Part</part-name>
+      <score-instrument id="P1-I1"><instrument-name>Test Instrument</instrument-name></score-instrument>
+      <midi-instrument id="P1-I1"><midi-channel>1</midi-channel><midi-program>1</midi-program></midi-instrument>
+    </score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <key><fifths>0</fifths></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <clef number="1"><sign>G</sign><line>2</line></clef>
+        <measure-style><multiple-rest>2</multiple-rest></measure-style>
+      </attributes>
+      <note><rest measure="yes"/><duration>4</duration><voice>1</voice><staff>1</staff></note>
+    </measure>
+    <measure number="2">
+      <attributes>
+        <measure-style><measure-repeat type="start">1</measure-repeat></measure-style>
+      </attributes>
+      <note><pitch><step>C</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><type>whole</type><staff>1</staff></note>
+    </measure>
+  </part>
+</score-partwise>

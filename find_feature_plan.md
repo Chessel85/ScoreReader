@@ -1,13 +1,12 @@
 # Comprehensive Find — implementation plan
 
-Status: **P0 + P1 + P2 + P3 implemented (2026-08-28)**; P4–P6 still plan only. Written
-2026-08-28 after auditing every MusicXML file in `files/` and `examples/`
-against the MusicXML 4.0 element reference
+Status: **P0 + P1 + P2 + P3 + P4 implemented (2026-08-28)**; P5–P6 still plan
+only. Written 2026-08-28 after auditing every MusicXML file in `files/` and
+`examples/` against the MusicXML 4.0 element reference
 (https://www.w3.org/2021/06/musicxml40/musicxml-reference/elements/).
 
-P0, P1, P2 and P3 delivered as specified below — see the "P0 — DONE" / "P1 —
-DONE" / "P2 — DONE" / "P3 — DONE" notes in §5 for the concrete edit lists and
-any deviations.
+P0–P4 delivered as specified below — see the "P0 — DONE" … "P4 — DONE" notes
+in §5 for the concrete edit lists and any deviations.
 
 Audience: an implementing agent (Sonnet) working phase by phase. Each phase is
 independently shippable, has its own tests, and leaves the app working.
@@ -701,6 +700,75 @@ Report lists them by bar range; Region 5 is unchanged from today while stepping
 through the piece, and the performance cue does not fire on pedal changes.
 
 ### P4 — Barlines, clefs, measure styles (M6–M8)
+
+> **P4 — DONE (2026-08-28).** Implemented per the closed design decisions
+> (D5 per-part clef/measure-style collection, D12 order, D16 no final
+> barline). Edits:
+> - New models: `models/barline_mark.py` (`BarlineMark`, score-wide, kinds
+>   `double_barline`/`other_barline`, carries `style`/`measure`/`location`),
+>   `models/clef_change_mark.py` (`ClefChangeMark`, per part/staff, quarters
+>   + beat_position like its `DirectionMark` cousin),
+>   `models/measure_style_mark.py` (`MeasureStyleMark`, kinds
+>   `multi_measure_rest`/`measure_repeat`).
+> - `models/vocabulary.py`: new `clef_name(sign, line, octave_change)` →
+>   `"treble"` / `"bass"` / `"alto"` / `"treble 8vb"` / `"tab"` /
+>   `"percussion"`, lowercase, no `" stave"` suffix — deliberately separate
+>   from `MusicXMLReader`'s own `"Treble stave"` sign map (that names a
+>   whole staff in Region 2).
+> - `parsers/timeline_builder.py`: `_FirstPartScan` gains `raw_barlines`
+>   (buffered) + `barline_marks`; `_step_barline` reads `<bar-style>` when
+>   there is no sibling `<repeat>`; `_scan_first_part` post-loop resolves
+>   the buffer, dropping a `light-heavy` on `max(measure_start_quarters)`
+>   (D16). `_PartState.clef_by_staff` tracks the `(sign, line,
+>   clef-octave-change)` in force per staff; new `_handle_attributes` hook
+>   (called from `build()`'s measure walk beside `refresh_bar_shape`) emits
+>   a `ClefChangeMark` for a later, different clef and a `MeasureStyleMark`
+>   per `<measure-style>` child (`measure-repeat`/`beat-repeat`/`slash`
+>   record the `type != "stop"` end only, so the region reads as one point).
+> - `models/timeline_build.py`: 3 new fields + `from_builder` + `apply_to`.
+>   MIDI/GP/UG builders each stub the 3 lists empty (D4).
+> - `models/find_target.py`: 5 `MARKING_KINDS` entries (`clef_change`,
+>   `double_barline`, `other_barline`, `multi_measure_rest`,
+>   `measure_repeat`) — generic dialog labels like `other_direction`.
+> - `models/find_index.py`: 5 marking branches, all via
+>   `first_visible_event_index_of_measure` (the `barline/@location` last-vs-
+>   first nuance is deliberately deferred — uniform with every other point
+>   marking). Uncached, like all markings.
+> - `models/music_data.py`: 3 fields; `get_performance_report_lines` gains
+>   "Barline changes" / "Clef changes" / "Measure style markers" blocks
+>   between "Other directions" and "Segno marks" (D12); `get_performance_
+>   region_rows` gains one-shot rows for all three, gated on the mark's own
+>   measure (the segno/coda point-mark pattern, not the prev-slice diff).
+>   D15 keeps only pedal/octave-shift out of Region 5, so these stay in.
+>   Clef-change Region 5 rows are part-prefixed only when >1 part
+>   contributes (D5), inline (clef marks aren't in `direction_*`).
+>
+> Deviations / decisions while implementing:
+> - **`<rest measure="yes"/>` still produces a slice**, so a multi-rest
+>   bar's `multi_measure_rest` mark resolves to a real index — no special
+>   handling needed.
+> - **`other_barline` Region 5 label** matches the report wording
+>   (`"{style.capitalize()} barline: {bar} N"`, e.g. "Light heavy barline")
+>   rather than an ad-hoc `"Barline: light heavy"`.
+> - Fixtures: `clef_change` (P1 treble→bass→treble, P2 no change — pins
+>   "first clef isn't a change" + no part prefix), `double_barline`
+>   (light-light mid-score + light-heavy final — pins D16), `measure_style`
+>   (`multiple-rest` + `measure-repeat`) + conftest fixtures. Tests: 5
+>   parser characterisation tests in `test_timeline_characterisation.py`
+>   (incl. the non-final light-heavy → `other_barline` case, reusing
+>   `repeat_ending_then_dc_al_coda`), 7 find/Region-5/report/D13/D16 tests
+>   in `test_music_data.py` — the D16 pin is parametrised over every file in
+>   `files/` + `examples/`. Full suite: 1108 passed.
+> - §7 gate (git-worktree baseline at HEAD `3008f12`, both harnesses).
+>   **Parser fingerprint:** purely the 3 new fixture blocks — zero removed
+>   lines, no existing file's slices / beats / durations / spans /
+>   `total_measures` touched. **Model fingerprint:** every diff line is a
+>   new fixture block, a new `find marking/<kind>` occurrence list, the 3
+>   new Performance Report keys appended to each file's `report=` line, or a
+>   new `('Clef change: …' / 'Double barline: …')` one-shot Region 5 row on
+>   `chopin-etude` / `i-see-angels` / `Way To Go` / the dc-al-coda fixture
+>   — no navigation walk, Region 3/4 text, playback/grace event, bar bound,
+>   or key-override round trip changed.
 
 1. `_step_barline` already parses `<barline>` inside `_scan_first_part` — extend it
    to record `bar-style` as points, skipping the styles already represented by

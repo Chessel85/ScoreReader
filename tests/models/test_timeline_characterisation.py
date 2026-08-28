@@ -1227,3 +1227,63 @@ def test_p3_ordinary_score_has_no_direction_spans_or_marks(timeline, minimal_sco
     md = timeline(minimal_score)
     assert md.direction_spans == []
     assert md.direction_marks == []
+
+
+# --- P4: barlines, clef changes, measure styles ------------------------
+
+
+def test_p4_clef_change_lands_on_the_right_part_staff_measure(
+    timeline, clef_change_score
+):
+    """M7: a mid-part <clef> that differs from the one in force is a
+    ClefChangeMark; the staff's FIRST clef never is, and a part that never
+    changes clef contributes nothing (D5)."""
+    md = timeline(clef_change_score)
+
+    assert [(m.part_id, m.staff, m.label, m.measure) for m in md.clef_change_marks] == [
+        ("P1", 1, "bass", 2),
+        ("P1", 1, "treble", 3),
+    ]
+
+
+def test_p4_double_and_final_barline_d16(timeline, double_barline_score):
+    """M6/D16: a <bar-style>light-light</bar-style> becomes one
+    `double_barline` mark; the trailing light-heavy on the last measure is
+    dropped (the End key already goes there)."""
+    md = timeline(double_barline_score)
+
+    assert [(m.kind, m.style, m.measure) for m in md.barline_marks] == [
+        ("double_barline", "double", 2),
+    ]
+
+
+def test_p4_non_final_light_heavy_is_kept_as_other_barline(
+    timeline, repeat_ending_then_dc_al_coda_score
+):
+    """D16: a light-heavy that is NOT the last measure is a real section
+    marker and is recorded under `other_barline`."""
+    md = timeline(repeat_ending_then_dc_al_coda_score)
+
+    assert [(m.kind, m.style, m.measure) for m in md.barline_marks] == [
+        ("other_barline", "light heavy", 4),
+    ]
+
+
+def test_p4_measure_style_children_become_marks(timeline, measure_style_score):
+    """M8: <multiple-rest> -> multi_measure_rest; <measure-repeat> ->
+    measure_repeat (the slash family collapses to one kind, D2)."""
+    md = timeline(measure_style_score)
+
+    assert [(m.kind, m.label, m.measure) for m in md.measure_style_marks] == [
+        ("multi_measure_rest", "2-bar rest", 1),
+        ("measure_repeat", "measure repeat", 2),
+    ]
+
+
+def test_p4_ordinary_score_grows_none_of_the_new_lists(timeline, minimal_score):
+    """Corollary 1: a plain score offers no barline / clef / measure-style
+    marks."""
+    md = timeline(minimal_score)
+    assert md.barline_marks == []
+    assert md.clef_change_marks == []
+    assert md.measure_style_marks == []

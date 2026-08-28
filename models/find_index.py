@@ -198,6 +198,23 @@ class FindIndex:
         if kind == "other_direction":
             return [first_of(m.measure)
                     for m in data.direction_marks if m.kind == "other_direction"]
+        # P4: barline / clef-change / measure-style points, all resolved to
+        # the first visible event of their measure (uniform with every other
+        # point marking - the barline @location nuance is deferred).
+        if kind == "clef_change":
+            return [first_of(m.measure) for m in data.clef_change_marks]
+        if kind == "double_barline":
+            return [first_of(m.measure)
+                    for m in data.barline_marks if m.kind == "double_barline"]
+        if kind == "other_barline":
+            return [first_of(m.measure)
+                    for m in data.barline_marks if m.kind == "other_barline"]
+        if kind == "multi_measure_rest":
+            return [first_of(m.measure)
+                    for m in data.measure_style_marks if m.kind == "multi_measure_rest"]
+        if kind == "measure_repeat":
+            return [first_of(m.measure)
+                    for m in data.measure_style_marks if m.kind == "measure_repeat"]
         if kind == "key_signature_change":
             return list(self.key_signature_change_indices())
         if kind == "time_signature_change":

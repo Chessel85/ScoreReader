@@ -133,6 +133,49 @@ def articulation_name(tag: str) -> str:
     return ARTICULATION_NAMES.get(tag, tag.replace("-", " "))
 
 
+def clef_name(sign, line=None, octave_change=None) -> str:
+    """P4 (find_feature_plan.md M7): the spoken name of a mid-part clef
+    CHANGE ("bass", "treble 8vb", "alto") - lowercase, no " stave" suffix.
+
+    Deliberately separate from parsers/musicXML_reader.py's own sign->name
+    map ("Treble stave", "Bass stave"), which names a whole staff in
+    Region 2; this names a change event in Region 5 / Find. `line`/
+    `octave_change` come straight off the <clef> element as text.
+    """
+    sign = (sign or "G").strip()
+    try:
+        line_n = int(str(line).strip()) if line is not None and str(line).strip() else None
+    except ValueError:
+        line_n = None
+    try:
+        oct_n = int(str(octave_change).strip()) if octave_change is not None and str(octave_change).strip() else 0
+    except ValueError:
+        oct_n = 0
+
+    if sign == "TAB":
+        return "tab"
+    if sign == "percussion":
+        return "percussion"
+    if sign == "C":
+        base = {3: "alto", 4: "tenor", 1: "soprano", 2: "mezzo-soprano", 5: "baritone"}.get(line_n, "C clef")
+    elif sign == "G":
+        base = "treble"
+    elif sign == "F":
+        base = "bass"
+    else:
+        base = sign.lower()
+
+    if oct_n == -1:
+        return f"{base} 8vb"
+    if oct_n == 1:
+        return f"{base} 8va"
+    if oct_n == -2:
+        return f"{base} 15mb"
+    if oct_n == 2:
+        return f"{base} 15ma"
+    return base
+
+
 # A minor chord's usual written abbreviation is a bare trailing "m" ("Am",
 # "Am7") - reported: NVDA reads that as the letter "m", not the word
 # "minor", while every other abbreviation seen in practice (Cmaj7, Dsus4,

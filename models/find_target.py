@@ -91,4 +91,13 @@ MARKING_KINDS: List[Tuple[str, str]] = [
     ("bracket_line_end", "Bracket line end"),
     # D6 catch-all: any <direction-type> child with no explicit handler.
     ("other_direction", "Direction"),
+    # P4: barlines (M6), mid-part clef changes (M7), measure styles (M8).
+    # Like other_direction the dialog label is generic - the specific
+    # style/clef shows in Region 5 and the Performance Report. D16: there is
+    # deliberately no "Final barline" target (every score ends with one).
+    ("clef_change", "Clef change"),
+    ("double_barline", "Double barline"),
+    ("other_barline", "Barline change"),
+    ("multi_measure_rest", "Multi-measure rest"),
+    ("measure_repeat", "Measure repeat"),
 ]

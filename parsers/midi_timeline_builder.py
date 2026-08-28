@@ -44,6 +44,10 @@ class MidiTimelineBuilder:
         # P3: MusicXML-only, like the span lists above.
         self.direction_spans: List = []
         self.direction_marks: List = []
+        # P4: MusicXML-only (bar-style / mid-part clef / measure-style).
+        self.barline_marks: List = []
+        self.clef_change_marks: List = []
+        self.measure_style_marks: List = []
         self.segno_marks: List = []
         self.coda_marks: List = []
         self.to_coda_marks: List = []
