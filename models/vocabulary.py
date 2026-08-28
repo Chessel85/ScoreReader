@@ -176,4 +176,11 @@ def attribute_label(attribute_key: str, uk_terms: bool) -> str:
     wiring, this only affects rendered text."""
     if attribute_key == "measure":
         return bar_word(uk_terms)
+    # P1 (find_feature_plan.md): the attribute key is "grace" (one token),
+    # but it reads as "grace note" everywhere it's shown. Every other new
+    # P1 key ("tie", "slur", "tuplet", "fermata", "arpeggio", "accidental",
+    # "glissando", "technique", "other notation") already reads correctly
+    # as-is and passes straight through.
+    if attribute_key == "grace":
+        return "grace note"
     return attribute_key

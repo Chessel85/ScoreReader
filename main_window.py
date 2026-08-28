@@ -1001,7 +1001,12 @@ class MainWindow(QMainWindow):
         then cycle further occurrences without reopening this dialog."""
         if not self._music_data:
             return
-        dialog = FindDialog(self, targets=self._music_data.available_find_targets())
+        targets_with_counts = self._music_data.available_find_targets_with_counts()
+        dialog = FindDialog(
+            self,
+            targets=[t for t, _ in targets_with_counts],
+            counts={t: c for t, c in targets_with_counts},
+        )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             target = dialog.selected_target()
             if target is not None:

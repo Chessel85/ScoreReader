@@ -1035,3 +1035,126 @@ def test_stave_text_against_the_real_etude_file(timeline, score_etude_1_tablatur
     assert set(step_names[2:]) == {"III", "IV", "V", "VIII"}, "verbatim roman numerals, never converted to digits"
 
     assert _stave_text_notes(md, "P2") == []
+
+
+# --- P1 (find_feature_plan.md): note-attached notations made findable ------
+
+def _notes(md, part_id=None):
+    return [
+        n for s in md.timeline_slices for n in s.notes
+        if part_id is None or n.part_id == part_id
+    ]
+
+
+def test_tie_and_slur_types_land_on_the_right_notes(timeline, tie_and_slur_score):
+    """A2/A3: notations/tied and notations/slur type strings, read with
+    findall so a note that both ends and begins a tie keeps both."""
+    c, d, e, f = _notes(md := timeline(tie_and_slur_score), "P1")
+    assert (c.tie, c.slur) == ("start", "start")
+    assert (d.tie, d.slur) == ("stop, start", None)
+    assert (e.tie, e.slur) == ("stop", "stop")
+    assert (f.tie, f.slur) == (None, None), "the plain note carries neither"
+
+
+def test_tuplet_reads_the_time_modification_word(timeline, triplet_bar_score):
+    """A4: a tuplet is folded into the duration name already; `tuplet` is
+    the separate findable fact, spoken via duration_units.tuplet_word."""
+    md = timeline(triplet_bar_score)
+    triplet_notes = [n for n in _notes(md) if n.tuplet is not None]
+    assert len(triplet_notes) == 12
+    assert {n.tuplet for n in triplet_notes} == {"triplet"}
+    assert [n.tuplet for n in _notes(md)][12:] == [None, None, None, None]
+
+
+def test_fermata_reads_bare_and_shaped(timeline, fermata_and_arpeggio_score):
+    """A5: a bare <fermata/> is "fermata"; a shaped one prefixes the shape."""
+    notes = _notes(timeline(fermata_and_arpeggio_score), "P1")
+    fermatas = [n.fermata for n in notes]
+    assert fermatas == [None, None, "fermata", "angled fermata", None]
+
+
+def test_chord_arpeggiate_is_the_arpeggio_attribute_not_a_strum(
+    timeline, fermata_and_arpeggio_score
+):
+    """A6/D7: <arpeggiate> on a real chord (2+ notes at one offset) is the
+    conventional "roll this chord" and becomes `arpeggio` on every chord
+    member - never a strum stroke."""
+    md = timeline(fermata_and_arpeggio_score)
+    chord = md.timeline_slices[0].notes
+    assert len(chord) == 2
+    assert {n.arpeggio for n in chord} == {"arpeggio up"}
+    assert all(n.strum is None for n in chord)
+    assert all(n.part_id == "P1" for n in chord), "no synthetic Chords stroke was added"
+
+
+def test_single_note_arpeggiate_still_becomes_a_strum_stroke(
+    timeline, chord_and_stroke_same_note_score
+):
+    """D7 regression: a lone note's <arpeggiate> keeps its existing meaning -
+    a per-note pick direction feeding a Chords-part stroke - and gets no
+    `arpeggio` attribute."""
+    md = timeline(chord_and_stroke_same_note_score)
+    notes = _notes(md)
+    assert all(n.arpeggio is None for n in notes)
+    strokes = [n for n in notes if n.strum is not None]
+    assert [(n.part_id, n.strum) for n in strokes] == [("chords", "down stroke")]
+
+
+def test_only_cautionary_or_editorial_accidentals_are_recorded(
+    timeline, cautionary_accidental_score
+):
+    """A7/D14: a plain printed <accidental> is already spoken inside the
+    step name, so it must leave the `accidental` key absent - only a
+    cautionary or editorial one is findable."""
+    cs, df, e, f = _notes(timeline(cautionary_accidental_score), "P1")
+    assert cs.accidental == "cautionary sharp"
+    assert df.accidental == "editorial flat"
+    assert e.accidental is None, "a plain <accidental>natural</accidental> is not recorded"
+    assert f.accidental is None
+
+
+def test_tier2_technique_merges_and_excludes_fret_string(
+    timeline, technical_tier2_score
+):
+    """A8: notations/technical children beyond fret/string/fingering/pluck
+    become the comma-joined `technique` attribute; fret/string keep their
+    own keys and never appear in it."""
+    c, d, e, f = _notes(timeline(technical_tier2_score), "P1")
+    assert c.technique == "hammer on"
+    assert d.technique == "harmonic, up bow"
+    assert (e.technique, e.fret, e.string) == ("pull off", 3, 2)
+    assert f.technique is None
+
+
+def test_unknown_notations_children_hit_the_catch_all(
+    timeline, unknown_notation_score
+):
+    """A10/D6: an invented <notations> child still becomes the findable
+    `other_notation` attribute (tag, hyphens as spaces) rather than being
+    dropped silently - the mechanism that makes the feature comprehensive."""
+    c, d, e, f = _notes(timeline(unknown_notation_score), "P1")
+    assert c.other_notation == "invented notation"
+    assert d.other_notation == "another new thing"
+    assert e.other_notation is None
+    assert f.other_notation is None
+
+
+def test_grace_summary_is_populated_from_the_grace_group(
+    timeline, grace_note_group_score
+):
+    """A1: `grace` is a spoken summary ("acciaccatura"/"appoggiatura",
+    comma-joined) distinct from the grace_notes list, which still drives
+    the "A grace B" step rendering."""
+    md = timeline(grace_note_group_score)
+    main_note = md.timeline_slices[0].notes[0]
+    assert main_note.grace == "acciaccatura, acciaccatura"
+    assert md._note_attribute_pairs(main_note)["step"] == "A grace B, C"
+
+
+def test_ordinary_score_carries_none_of_the_new_notation_keys(
+    timeline, minimal_score
+):
+    """No regression: a plain score leaves every P1 field None."""
+    for n in _notes(timeline(minimal_score)):
+        assert (n.tie, n.slur, n.tuplet, n.fermata, n.arpeggio) == (None,) * 5
+        assert (n.accidental, n.technique, n.glissando, n.grace, n.other_notation) == (None,) * 5

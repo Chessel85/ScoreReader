@@ -1418,7 +1418,9 @@ def test_move_attribute_order_boundary_and_unknown_key_are_no_ops():
     original = list(md.attribute_order)
 
     assert md.move_attribute_order("step", up=True) is False, "step is already first"
-    assert md.move_attribute_order("strum", up=False) is False, "strum is already last"
+    assert md.move_attribute_order("other notation", up=False) is False, (
+        "'other notation' (the D6 catch-all) is the last attribute (P1)"
+    )
     assert md.move_attribute_order("not-a-real-attribute", up=True) is False
     assert md.attribute_order == original
 
@@ -2000,8 +2002,24 @@ def test_available_find_targets_attribute_labels_and_order_match_attribute_order
 
     attribute_targets = [t for t in md.available_find_targets() if t.category == "attribute"]
 
-    assert [t.key for t in attribute_targets] == ["dynamic", "articulation", "fingering", "pluck"]
-    assert all(t.label == attribute_label(t.key, md.uk_terms) for t in attribute_targets)
+    # The "any" targets (value is None) appear in attribute_order order, one
+    # per present optional key.
+    any_targets = [t for t in attribute_targets if t.value is None]
+    assert [t.key for t in any_targets] == ["dynamic", "articulation", "fingering", "pluck"]
+
+    # A value-expanded key's per-value targets (D1/D2) sit immediately after
+    # its "any" target, sharing the plain attribute label.
+    keys_in_order = [t.key for t in attribute_targets]
+    assert keys_in_order == [
+        "dynamic", "dynamic",  # any + forte
+        "articulation", "articulation", "articulation",  # any + staccato + trill
+        "fingering",  # not value-expanded
+        "pluck",  # not value-expanded
+    ]
+    for t in attribute_targets:
+        base = attribute_label(t.key, md.uk_terms)
+        expected = f"{base} (any)" if (t.value is None and t.key in {"dynamic", "articulation"}) else base
+        assert t.label == expected
 
 
 def test_available_find_targets_attributes_respect_the_active_voice_filter(
@@ -2259,3 +2277,97 @@ def test_find_occurrence_for_key_signature_change_suppressed_by_an_override(
     md.key_signature_override_fifths = 0
 
     assert md.find_occurrence(target, from_index=0, direction=1) is None
+
+
+# --- P1 (find_feature_plan.md): new note-attached notations are findable ---
+
+def test_p1_notation_keys_are_offered_with_shared_labels(timeline, tie_and_slur_score):
+    """A2/A3/D3: the new keys surface as attribute Find targets, labelled
+    from vocabulary.attribute_label - "tie"/"slur" pass straight through."""
+    md = timeline(tie_and_slur_score)
+    any_targets = {
+        t.key: t.label
+        for t in md.available_find_targets()
+        if t.category == "attribute" and t.value is None
+    }
+    assert any_targets == {"tie": "tie (any)", "slur": "slur (any)"}
+
+
+def test_p1_value_expanded_keys_split_into_per_value_targets(timeline, tie_and_slur_score):
+    """D1/D2: tie and slur are in VALUE_EXPANDED_KEYS, so each distinct
+    type gets its own target alongside the "any" one."""
+    md = timeline(tie_and_slur_score)
+    tie_values = sorted(
+        t.value for t in md.available_find_targets()
+        if t.key == "tie" and t.value is not None
+    )
+    assert tie_values == ["start", "stop"]
+
+
+def test_p1_grace_is_offered_as_a_single_any_target(timeline, grace_note_score):
+    """A1/D2: `grace` is NOT value-expanded - one "grace note" target, no
+    per-value rows."""
+    md = timeline(grace_note_score)
+    grace_targets = [t for t in md.available_find_targets() if t.key == "grace"]
+    assert len(grace_targets) == 1
+    assert grace_targets[0].value is None
+    assert grace_targets[0].label == "grace note"
+
+
+def test_p1_catch_all_makes_an_invented_element_findable(timeline, unknown_notation_score):
+    """D6: the whole point - an element nobody enumerated is still a
+    findable, spoken target keyed by its own tag."""
+    md = timeline(unknown_notation_score)
+    values = sorted(
+        t.value for t in md.available_find_targets()
+        if t.key == "other notation" and t.value is not None
+    )
+    assert values == ["another new thing", "invented notation"]
+
+    target = FindTarget("attribute", "other notation", "other notation", "invented notation")
+    assert md.timeline_slices[md.find_occurrence(target, from_index=99, direction=1)].notes[0].step_name == "C"
+
+
+def test_p1_find_occurrence_walks_fermata_positions(timeline, fermata_and_arpeggio_score):
+    """A5: Find on the "fermata" target visits exactly the two fermata
+    slices and wraps."""
+    md = timeline(fermata_and_arpeggio_score)
+    target = _find_target(md, "fermata")
+
+    first = md.find_occurrence(target, from_index=0, direction=1)
+    second = md.find_occurrence(target, from_index=first, direction=1)
+    wrapped = md.find_occurrence(target, from_index=second, direction=1)
+
+    assert md.timeline_slices[first].beat_position == 2.0
+    assert md.timeline_slices[second].beat_position == 3.0
+    assert wrapped == first
+
+
+def test_p1_keys_absent_from_a_plain_score_are_not_offered(
+    timeline, dynamics_articulation_fingering_score
+):
+    """Corollary 1: growing the catalogue must not grow the dialog for a
+    score that has none of the new artefacts."""
+    md = timeline(dynamics_articulation_fingering_score)
+    keys = {t.key for t in md.available_find_targets() if t.category == "attribute"}
+    assert not (keys & {
+        "tie", "slur", "tuplet", "fermata", "arpeggio",
+        "accidental", "technique", "glissando", "grace", "other notation",
+    })
+
+
+def test_p1_technique_value_target_matches_one_of_a_comma_joined_list(
+    timeline, technical_tier2_score
+):
+    """D1: the D4 note carries "harmonic, up bow"; a value target for
+    "up bow" must match it via membership, not == on the whole string."""
+    md = timeline(technical_tier2_score)
+    target = FindTarget("attribute", "technique", "technique", "up bow")
+    index = md.find_occurrence(target, from_index=0, direction=1)
+    assert md.timeline_slices[index].notes[0].step_name == "D"
+
+
+def test_p1_other_notation_is_the_last_display_attribute():
+    """D9: the catch-all stays last so the pinned move_attribute_order
+    boundary test keeps meaning something."""
+    assert MusicData.DISPLAY_ATTRIBUTE_ORDER[-1] == "other notation"

@@ -1,13 +1,9 @@
-Preview seems to be playing the first event in the next bar beyond the length of the preview  but can no longer reproduce this.
 There isn't a way to find grace notes.
 * Think the glitch i hear at start up is a real problem. is very noticeable when on speakers. and sometimes the quality of the midi rendering is crackly. or is this only when running from command prompt?
-* work with gemini on onstructions to give claude to make it write a good user manual
-* Write a new user guide before doing a new release.
 * Need to review file formats; midi 0 and ultimate guitar need assumptions about bars revisiting.
 * do we need to do the task on making file open robust against file formats that are not understood
 * when metronome is on, but moving up and down a chord, do not sound the metronome click.
 * A mute option so midi is not played. - can do this by setting score to 0 volume  in the mixer so wait to see if this feature is requested later by others
 * There are more performance indicators that need catering for.  speed up and slow down instructions over a period of time.  Fret position indicators whether just a one off or over a duration.  Related are barre instructions.  Perhaps chord indocators above the stave should fall into this category also.
-* Quick attribute look up.  Use control + number row to make screen reader announce that number attribute from the attribute list e.g. Pressing control + 2 announces octave.  Can the app push text to the screen reader?
 * Notes need to account for staff symbol e.g. a piano bass stave (without a treble) seems to play too high
 * Want an audio indicator of crossing a barline. Or does the metronome already do that?

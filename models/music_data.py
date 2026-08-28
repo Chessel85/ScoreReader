@@ -557,6 +557,12 @@ class MusicData:
         "step", "octave", "midi", "text", "measure", "beat position", "duration",
         "part", "stave", "voice", "string", "fret",
         "dynamic", "articulation", "fingering", "pluck", "strum",
+        # P1 (find_feature_plan.md, D9): note-attached notations, grouped
+        # after the existing optional tail. "other notation" is the D6
+        # catch-all and stays last (a pinned move_attribute_order test
+        # relies on that).
+        "tie", "slur", "tuplet", "grace", "arpeggio", "fermata",
+        "accidental", "glissando", "technique", "other notation",
     ]
     # A voice with no entry in voice_display_attributes uses this - today's
     # plain-note-name behaviour, not an empty display.
@@ -1070,6 +1076,11 @@ class MusicData:
         """The Find dialog's list, computed fresh from the loaded score -
         see FindIndex.available_targets."""
         return self.find_index.available_targets()
+
+    def available_find_targets_with_counts(self) -> List[Tuple[FindTarget, int]]:
+        """The Find dialog's list plus each row's occurrence count (D13) -
+        see FindIndex.available_targets_with_counts."""
+        return self.find_index.available_targets_with_counts()
 
     def find_occurrence(self, target: FindTarget, from_index: int, direction: int) -> Optional[int]:
         """The next/previous occurrence of `target` - see

@@ -77,3 +77,37 @@ class NoteData:
     # every ordinary note; never set on a grace note itself (a grace note
     # doesn't get a NoteData of its own at all).
     grace_notes: Optional[List[GraceNote]] = None
+
+    # P1 (find_feature_plan.md) - note-attached notations made findable.
+    # All Optional[str], populated only by TimelineBuilder (MusicXML);
+    # the MIDI/GP/UG builders never set them, so they stay None there.
+    # Absence is the mechanism Region 3/4/Find use to know not to render
+    # a row - same convention as string/fret/dynamic above.
+    #
+    # tie   - notations/tied type(s): "start" / "stop" / "start, stop"
+    # slur  - notations/slur type(s): "start" / "stop"
+    # tuplet- time-modification: "triplet" / "5 in the time of 4"
+    # fermata - notations/fermata: "fermata" (+ shape when not normal)
+    # arpeggio - notations/arpeggiate|non-arpeggiate, CHORD notes only
+    #            (D7): "arpeggio up" / "arpeggio down" / "arpeggio" /
+    #            "non-arpeggio"
+    # accidental - a <accidental> child, ONLY when cautionary="yes" or
+    #              editorial="yes" (D14): "cautionary sharp", ...
+    # technique - notations/technical child(ren) beyond fret/string/
+    #             fingering/pluck, comma-joined spoken names
+    # glissando - notations/glissando|slide: "glissando start", ...
+    # grace - a spoken summary of grace_notes ("acciaccatura" /
+    #         "appoggiatura", comma-joined) - distinct from the list
+    #         above, which drives the "A grace B" step rendering
+    # other_notation - D6 catch-all: any unrecognised <notations> child
+    #                  tag, hyphens as spaces
+    tie: Optional[str] = None
+    slur: Optional[str] = None
+    tuplet: Optional[str] = None
+    fermata: Optional[str] = None
+    arpeggio: Optional[str] = None
+    accidental: Optional[str] = None
+    technique: Optional[str] = None
+    glissando: Optional[str] = None
+    grace: Optional[str] = None
+    other_notation: Optional[str] = None

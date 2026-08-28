@@ -1,6 +1,6 @@
 # models/find_target.py
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -12,11 +12,44 @@ class FindTarget:
     the identifier MusicData.find_occurrence scans for; `label` is the
     exact text shown in the dialog and read by a screen reader. Marking
     labels are copied verbatim from MusicData.get_performance_region_rows's
-    own wording, so Find and Region 5 never disagree on vocabulary."""
+    own wording, so Find and Region 5 never disagree on vocabulary.
+
+    `value` is the value-level Find refinement (D1): None means "any
+    occurrence of this key" and matches on presence; a set value ("staccato",
+    "forte") matches only notes whose comma-joined value list for `key`
+    contains it. Only keys in VALUE_EXPANDED_KEYS are ever offered with a
+    value - see FindIndex.available_targets."""
 
     category: str
     key: str
     label: str
+    value: Optional[str] = None
+
+
+# The attribute keys whose distinct values each get their own Find target
+# (D1/D2, user decision 2026-08-28). An explicit allow-list, not a count
+# threshold: the question is whether the value carries musical identity a
+# performer would navigate by ("find the next trill", "find the next fff"),
+# not how many distinct values there happen to be. Everything not listed
+# here - fret, string, fingering, pluck, text (stave text), strum, fermata,
+# grace, arpeggio - is offered as a single "any" target only.
+#
+# Some keys here (chord symbol, other notation) are produced by later
+# phases; listing them now is harmless - a key absent from the score simply
+# never expands.
+VALUE_EXPANDED_KEYS = frozenset({
+    "articulation", "technique", "dynamic", "accidental",
+    "tie", "slur", "glissando", "tuplet",
+    "chord symbol", "other notation",
+})
+
+
+def occurrence_label(count: int) -> str:
+    """"1 occurrence" / "N occurrences" - shared by the Find dialog and any
+    future caller so the wording stays in one place (D13). An occurrence is
+    a timeline position, not a note: a chord whose notes all carry the same
+    articulation counts once, matching what one Alt+Right press visits."""
+    return f"{count} occurrence" if count == 1 else f"{count} occurrences"
 
 
 # The closed set of performance-marking types the parser can recognize, in

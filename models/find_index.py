@@ -11,10 +11,10 @@ available_find_targets/find_occurrence, so call sites and tests are
 unchanged.
 """
 import bisect
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 from models import vocabulary
-from models.find_target import MARKING_KINDS, FindTarget
+from models.find_target import MARKING_KINDS, VALUE_EXPANDED_KEYS, FindTarget
 
 
 class FindIndex:
@@ -33,7 +33,11 @@ class FindIndex:
         # iterations or one tuple-comparison pass with no per-note
         # formatting, and key_signature_change additionally depends on the
         # S6 key override, which does not flow through that hook.
-        self._attribute_candidate_cache: Dict[str, List[int]] = {}
+        #
+        # D1: keyed on (key, value) - value None is the "any" target, a set
+        # value is one per-value refinement - so the per-value targets each
+        # get their own cached list rather than sharing the key's.
+        self._attribute_candidate_cache: Dict[Tuple[str, Optional[str]], List[int]] = {}
 
     def invalidate_cache(self) -> None:
         """Drop the cached attribute-target occurrence lists - see
@@ -95,13 +99,25 @@ class FindIndex:
         data = self.data
 
         if target.category == "attribute":
-            return [
-                i for i in range(len(data.timeline_slices))
-                if any(
-                    target.key in data._note_attribute_pairs(n)
-                    for n in data._visible_notes(index=i)
-                )
-            ]
+            key = target.key
+            want = target.value
+            result: List[Optional[int]] = []
+            for i in range(len(data.timeline_slices)):
+                for n in data._visible_notes(index=i):
+                    pairs = data._note_attribute_pairs(n)
+                    raw = pairs.get(key)
+                    if raw is None:
+                        continue
+                    if want is None:
+                        result.append(i)
+                        break
+                    # Several keys hold a comma-joined list (articulation,
+                    # fingering, technique, ...) - match membership over the
+                    # split values, never == on the whole string (D1).
+                    if want in [v.strip() for v in raw.split(",")]:
+                        result.append(i)
+                        break
+            return result
 
         kind = target.key
         first_of = data.first_visible_event_index_of_measure
@@ -154,30 +170,94 @@ class FindIndex:
             return list(self.tempo_change_indices())
         return []
 
+    def _distinct_values_by_key(
+        self, voice_tuples: Set[Tuple[str, int, int]]
+    ) -> Dict[str, List[str]]:
+        """attribute key -> its distinct comma-split values across the whole
+        score, restricted to VALUE_EXPANDED_KEYS (D1/D2). One pass over
+        _real_timeline_slices (the stable, marker-free timeline - same scan
+        shape as NoteRenderer.attribute_keys_for_voices), so
+        available_targets() never scans once per key. Values come back
+        sorted for a deterministic dialog order (available_targets then
+        re-sorts by count)."""
+        buckets: Dict[str, Set[str]] = {}
+        for event_slice in self.data._real_timeline_slices:
+            for note in event_slice.notes:
+                if (note.part_id, note.staff, note.voice) not in voice_tuples:
+                    continue
+                pairs = self.data._note_attribute_pairs(note)
+                for key in VALUE_EXPANDED_KEYS:
+                    raw = pairs.get(key)
+                    if raw is None:
+                        continue
+                    bucket = buckets.setdefault(key, set())
+                    for value in raw.split(","):
+                        value = value.strip()
+                        if value:
+                            bucket.add(value)
+        return {key: sorted(values) for key, values in buckets.items()}
+
     def available_targets(self) -> List[FindTarget]:
-        """The Find dialog's list (widgets/find_dialog.py), always computed
-        fresh from the currently loaded score's own parsed data - never a
-        fixed static menu. Attribute targets are the optional (non-
-        CORE_ATTRIBUTE_KEYS) keys actually present on a note in one of the
-        currently active voices (Ref 7); marking targets are whichever of
-        MARKING_KINDS actually occur anywhere in the score (structural,
-        like Region 5 - not filtered by voice)."""
+        """The Find dialog's list (widgets/find_dialog.py) - see
+        available_targets_with_counts, of which this is the count-less
+        projection kept for callers that only need the targets."""
+        return [target for target, _ in self.available_targets_with_counts()]
+
+    def available_targets_with_counts(self) -> List[Tuple[FindTarget, int]]:
+        """The Find dialog's list plus each row's occurrence count (D13),
+        always computed fresh from the currently loaded score's own parsed
+        data - never a fixed static menu.
+
+        Attribute targets are the optional (non-CORE_ATTRIBUTE_KEYS) keys
+        actually present on a note in one of the currently active voices
+        (Ref 7); each such key gets an "any" target, and - for the keys in
+        VALUE_EXPANDED_KEYS - one target per distinct value (D1/D2), ordered
+        most-common-first. Marking targets are whichever of MARKING_KINDS
+        actually occur anywhere in the score (structural, like Region 5 -
+        not filtered by voice).
+
+        Every target's occurrence list is computed exactly once here, via
+        the cached sorted_candidate_indices path, and both its presence
+        (offered only when non-empty - so no row ever reads "0 occurrences")
+        and its count are read off that same list."""
         data = self.data
         voice_tuples = (
             data.active_voice_filter if data.active_voice_filter is not None
             else data._all_voice_tuples()
         )
-        present_attribute_keys = data.attribute_keys_for_voices(voice_tuples)
-        targets = [
-            FindTarget("attribute", key, vocabulary.attribute_label(key, data.uk_terms))
-            for key in present_attribute_keys
+        present_attribute_keys = [
+            key for key in data.attribute_keys_for_voices(voice_tuples)
             if key not in data.CORE_ATTRIBUTE_KEYS
         ]
+        distinct_values = self._distinct_values_by_key(voice_tuples)
+
+        results: List[Tuple[FindTarget, int]] = []
+        for key in present_attribute_keys:
+            base_label = vocabulary.attribute_label(key, data.uk_terms)
+            expanded = key in VALUE_EXPANDED_KEYS and distinct_values.get(key)
+            any_label = f"{base_label} (any)" if expanded else base_label
+            any_target = FindTarget("attribute", key, any_label)
+            any_indices = self.sorted_candidate_indices(any_target)
+            if not any_indices:
+                continue
+            results.append((any_target, len(any_indices)))
+            if not expanded:
+                continue
+            value_rows: List[Tuple[FindTarget, int]] = []
+            for value in distinct_values[key]:
+                target = FindTarget("attribute", key, base_label, value)
+                indices = self.sorted_candidate_indices(target)
+                if indices:
+                    value_rows.append((target, len(indices)))
+            value_rows.sort(key=lambda row: (-row[1], row[0].value or ""))
+            results.extend(value_rows)
+
         for kind_id, label in MARKING_KINDS:
             candidate = FindTarget("marking", kind_id, label)
-            if any(i is not None for i in self.candidate_indices_for_target(candidate)):
-                targets.append(candidate)
-        return targets
+            indices = self.sorted_candidate_indices(candidate)
+            if indices:
+                results.append((candidate, len(indices)))
+        return results
 
     def sorted_candidate_indices(self, target: FindTarget) -> List[int]:
         """candidate_indices_for_target(), de-duplicated, None-filtered and
@@ -185,10 +265,11 @@ class FindIndex:
         Attribute-target lists are cached (see __init__); marking-target
         lists are rebuilt each call."""
         if target.category == "attribute":
-            cached = self._attribute_candidate_cache.get(target.key)
+            cache_key = (target.key, target.value)
+            cached = self._attribute_candidate_cache.get(cache_key)
             if cached is None:
                 cached = self._compute_sorted_candidates(target)
-                self._attribute_candidate_cache[target.key] = cached
+                self._attribute_candidate_cache[cache_key] = cached
             return cached
         return self._compute_sorted_candidates(target)
 

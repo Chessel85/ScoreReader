@@ -87,6 +87,21 @@ class NoteRenderer:
             ("fingering", note.fingering),
             ("pluck", note.pluck),
             ("strum", note.strum),
+            # P1 (find_feature_plan.md): note-attached notations. The
+            # attribute key is the spoken word; "other notation" carries a
+            # space, like "beat position". `grace` is the spoken summary
+            # NoteData.grace holds - the grace_notes list still drives the
+            # separate "A grace B" step rendering above.
+            ("tie", note.tie),
+            ("slur", note.slur),
+            ("tuplet", note.tuplet),
+            ("grace", note.grace),
+            ("arpeggio", note.arpeggio),
+            ("fermata", note.fermata),
+            ("accidental", note.accidental),
+            ("glissando", note.glissando),
+            ("technique", note.technique),
+            ("other notation", note.other_notation),
         ):
             if value is not None:
                 pairs[key] = str(value)

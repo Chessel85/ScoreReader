@@ -139,6 +139,14 @@ def dynamics_articulation_fingering_score() -> str:
 
 
 @pytest.fixture
+def chord_all_staccato_score() -> str:
+    """P0 value-level Find: a three-note chord whose notes all carry the
+    same <staccato>, then one further single staccato note - so "Find
+    articulation" has 2 occurrences (positions), not 4 (notes)."""
+    return _require(FIXTURES_DIR / "chord_all_staccato.musicxml")
+
+
+@pytest.fixture
 def multi_value_technical_score() -> str:
     """One guitar note carrying two <fingering> and three <pluck> marks in
     one notations/technical block (F3/Ref 16 AC3 regression - a naive
@@ -214,6 +222,44 @@ def chord_and_stroke_same_note_score() -> str:
     coincidence files/Three Blind Mice.mxl's bar 4 has (see CLAUDE.md's
     "Reported, redesigned" note on the synthetic Chords/Lyrics feature)."""
     return _require(FIXTURES_DIR / "chord_and_stroke_same_note.musicxml")
+
+
+@pytest.fixture
+def tie_and_slur_score() -> str:
+    """P1 (find_feature_plan.md, A2/A3): one 4/4 bar of four quarters
+    carrying notations/tied and notations/slur marks; the fourth note is
+    plain (the absence case)."""
+    return _require(FIXTURES_DIR / "tie_and_slur.musicxml")
+
+
+@pytest.fixture
+def fermata_and_arpeggio_score() -> str:
+    """P1 (A5/A6, D7): one 4/4 bar - a two-note chord with <arpeggiate>
+    on both members (arpeggio, not strum), then two fermata notes (bare
+    and shaped), then a plain note."""
+    return _require(FIXTURES_DIR / "fermata_and_arpeggio.musicxml")
+
+
+@pytest.fixture
+def cautionary_accidental_score() -> str:
+    """P1 (A7, D14): one 4/4 bar - a cautionary sharp, an editorial flat,
+    a plain natural (must leave the `accidental` key absent), a plain
+    note."""
+    return _require(FIXTURES_DIR / "cautionary_accidental.musicxml")
+
+
+@pytest.fixture
+def technical_tier2_score() -> str:
+    """P1 (A8): one 4/4 bar - notations/technical children beyond
+    fret/string/fingering/pluck become the `technique` attribute."""
+    return _require(FIXTURES_DIR / "technical_tier2.musicxml")
+
+
+@pytest.fixture
+def unknown_notation_score() -> str:
+    """P1 (A10/D6): one 4/4 bar - invented <notations> children become the
+    `other notation` catch-all attribute rather than vanishing."""
+    return _require(FIXTURES_DIR / "unknown_notation.musicxml")
 
 
 @pytest.fixture

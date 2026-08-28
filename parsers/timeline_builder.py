@@ -412,6 +412,21 @@ class _NoteReading:
     voice_override: Optional[int] = None
 
 
+# P1 (find_feature_plan.md, D6): the <notations> child tags this parser
+# recognises and handles explicitly. Anything under <notations> NOT in here
+# becomes the `other_notation` catch-all attribute (value = tag, hyphens as
+# spaces), so a rare or future exporter element is still findable rather
+# than vanishing silently. Adding a real handler for a tag means adding it
+# here in the same commit, which automatically removes it from the catch-all.
+# `footnote`/`level` are editorial metadata with no performance meaning -
+# deliberately recognised (i.e. ignored) rather than surfaced as noise.
+_RECOGNISED_NOTATION_TAGS = frozenset({
+    "tied", "slur", "tuplet", "glissando", "slide", "ornaments",
+    "technical", "articulations", "dynamics", "fermata",
+    "arpeggiate", "non-arpeggiate", "accidental-mark", "footnote", "level",
+})
+
+
 @dataclass
 class _NoteMarks:
     """Everything hanging off a <note> that isn't its pitch. All optional by
@@ -425,6 +440,17 @@ class _NoteMarks:
     dynamic: Optional[str] = None
     strum: Optional[str] = None
     lyric_text: Optional[str] = None
+    # P1: note-attached notations made findable - see NoteData's own field
+    # comments for each one's value vocabulary.
+    tie: Optional[str] = None
+    slur: Optional[str] = None
+    tuplet: Optional[str] = None
+    fermata: Optional[str] = None
+    arpeggio: Optional[str] = None
+    accidental: Optional[str] = None
+    technique: Optional[str] = None
+    glissando: Optional[str] = None
+    other_notation: Optional[str] = None
 
 
 @dataclass
@@ -516,6 +542,13 @@ class _MeasureState:
     pending_grace: Dict[Tuple[int, int], List[Tuple[NoteData, bool, Tuple[int, float]]]] = field(
         default_factory=dict
     )
+    # P1/D7: id() of every <note> element in this measure that belongs to a
+    # chord (carries <chord/>, or is the first note of a group whose next
+    # sibling does). An <arpeggiate>/<non-arpeggiate> mark on one of these
+    # is the real "roll this chord" notation and becomes the `arpeggio`
+    # attribute; the same mark on a lone note stays re-read as a strum
+    # stroke, the existing behaviour.
+    chord_member_ids: Set[int] = field(default_factory=set)
 
     def key_for(self, offset_q: float) -> Tuple[int, float]:
         """The (measure, offset) bucket key. Rounded to 4dp so two notes
@@ -695,6 +728,16 @@ class TimelineBuilder:
                     ),
                 )
 
+                # <chord/> is only ever on consecutive <note> siblings
+                # (MusicXML spec), so a plain adjacency scan finds every
+                # chord member, first note included (D7).
+                note_elems = [e for e in m if e.tag == "note"]
+                for i, ne in enumerate(note_elems):
+                    if ne.find("chord") is not None:
+                        measure_state.chord_member_ids.add(id(ne))
+                        if i > 0:
+                            measure_state.chord_member_ids.add(id(note_elems[i - 1]))
+
                 for elem in m:
                     result = measure_state.walker.step(elem)
 
@@ -829,7 +872,10 @@ class TimelineBuilder:
                 return
             if pitch.voice_override is not None:
                 voice = pitch.voice_override
-            marks = self._read_notations(elem, staff, note_offset_divs, measure_state)
+            marks = self._read_notations(
+                elem, staff, note_offset_divs, measure_state,
+                is_chord_member=id(elem) in measure_state.chord_member_ids,
+            )
 
         offset_q = note_offset_divs / walker.divisions
         quarter_len = dur_divs / walker.divisions
@@ -857,6 +903,15 @@ class TimelineBuilder:
             pluck=marks.pluck,
             duration_name_us=duration_name_us,
             percussion_source_key=pitch.percussion_source_key,
+            tie=marks.tie,
+            slur=marks.slur,
+            tuplet=marks.tuplet,
+            fermata=marks.fermata,
+            arpeggio=marks.arpeggio,
+            accidental=marks.accidental,
+            technique=marks.technique,
+            glissando=marks.glissando,
+            other_notation=marks.other_notation,
         )
 
         key = measure_state.key_for(offset_q)
@@ -877,6 +932,13 @@ class TimelineBuilder:
                 GraceNote(step_name=g.step_name, midi_pitch=g.midi_pitch, slash=slash)
                 for g, slash, _ in grace_list
             ]
+            # P1: a spoken summary of the grace group, its own findable
+            # attribute - the grace_notes list above still drives the
+            # "A grace B" step rendering, untouched.
+            note_obj.grace = ", ".join(
+                "acciaccatura" if slash else "appoggiatura"
+                for _, slash, _ in grace_list
+            )
 
         sink.add(key, note_obj, walker)
 
@@ -985,10 +1047,16 @@ class TimelineBuilder:
             midi_pitch=(octave + 1) * 12 + step_offsets.get(step, 0) + alter,
         )
 
-    def _read_notations(self, elem, staff, note_offset_divs, measure_state) -> "_NoteMarks":
+    def _read_notations(
+        self, elem, staff, note_offset_divs, measure_state, is_chord_member: bool = False
+    ) -> "_NoteMarks":
         """Everything hanging off a note that isn't its pitch: technical
         (fret/string/fingering/pluck), articulations and ornaments, its
-        dynamic, a strum/pick direction, and its first lyric."""
+        dynamic, a strum/pick direction, its first lyric, and (P1) the
+        note-attached notations made findable - ties, slurs, tuplet,
+        fermata, chord arpeggio, cautionary/editorial accidental, tier-2
+        playing techniques, glissando/slide, and a catch-all for anything
+        else under <notations> (D6)."""
         marks = _NoteMarks()
 
         tech_el = elem.find("notations/technical")
@@ -1045,12 +1113,104 @@ class TimelineBuilder:
         # Chords-part "stroke" entry. Left None (not inferred) when absent,
         # same "leave unstated" convention.
         arpeggiate_el = elem.find("notations/arpeggiate")
-        if arpeggiate_el is not None:
+        non_arpeggiate_el = elem.find("notations/non-arpeggiate")
+        if is_chord_member:
+            # D7: on a real chord, <arpeggiate>/<non-arpeggiate> keeps its
+            # conventional "roll this chord" meaning and becomes the
+            # findable `arpeggio` attribute (never a strum stroke).
+            if arpeggiate_el is not None:
+                marks.arpeggio = {
+                    "up": "arpeggio up", "down": "arpeggio down"
+                }.get(arpeggiate_el.attrib.get("direction"), "arpeggio")
+            elif non_arpeggiate_el is not None:
+                marks.arpeggio = "non-arpeggio"
+        elif arpeggiate_el is not None:
+            # A lone note's <arpeggiate> has no real arpeggio meaning, so
+            # it stays re-read as a per-note pick/strum direction feeding
+            # an extra Chords-part stroke entry (see _handle_note).
             arp_direction = arpeggiate_el.attrib.get("direction")
             if arp_direction == "up":
                 marks.strum = "up stroke"
             elif arp_direction == "down":
                 marks.strum = "down stroke"
+
+        # --- P1: note-attached notations made findable -----------------
+        # <tied>/<slur> can each appear twice on one note (a note that ends
+        # one slur and begins the next), so findall - never find (F3 bug).
+        tie_types = [
+            e.attrib.get("type") for e in elem.findall("notations/tied")
+            if e.attrib.get("type")
+        ]
+        marks.tie = ", ".join(tie_types) or None
+        slur_types = [
+            e.attrib.get("type") for e in elem.findall("notations/slur")
+            if e.attrib.get("type")
+        ]
+        marks.slur = ", ".join(slur_types) or None
+
+        # Tuplet: folded into the duration NAME already (_duration_display_
+        # name) - this is the separate findable fact. <time-modification> is
+        # a direct <note> child, not a notations child.
+        time_mod_el = elem.find("time-modification")
+        if time_mod_el is not None:
+            actual_el = time_mod_el.find("actual-notes")
+            normal_el = time_mod_el.find("normal-notes")
+            if actual_el is not None and actual_el.text:
+                actual = int(actual_el.text.strip())
+                word = tuplet_word(actual)
+                if word is not None:
+                    marks.tuplet = word
+                elif normal_el is not None and normal_el.text:
+                    marks.tuplet = f"{actual} in the time of {int(normal_el.text.strip())}"
+                else:
+                    marks.tuplet = str(actual)
+
+        fermata_el = elem.find("notations/fermata")
+        if fermata_el is not None:
+            shape = (fermata_el.text or "").strip()
+            marks.fermata = "fermata" if shape in ("", "normal") else f"{shape} fermata"
+
+        # Accidental: D14 - only a cautionary or editorial one is findable
+        # (a plain printed accidental is already spoken inside the step
+        # name, and MuseScore writes one for every accidental on the page).
+        # It is a <note> child, sibling of <pitch>, not a notations child.
+        acc_el = elem.find("accidental")
+        if acc_el is not None and acc_el.text:
+            is_caut = acc_el.attrib.get("cautionary") == "yes"
+            is_edit = acc_el.attrib.get("editorial") == "yes"
+            if is_caut or is_edit:
+                prefix = "cautionary" if is_caut else "editorial"
+                marks.accidental = f"{prefix} {acc_el.text.strip().replace('-', ' ')}"
+
+        # Tier-2 playing techniques: every notations/technical child beyond
+        # the fret/string/fingering/pluck already read above, spoken via the
+        # same hyphens-as-spaces fallback articulation_name uses.
+        technique_tags = [
+            child.tag for child in elem.findall("notations/technical/*")
+            if child.tag not in ("fret", "string", "fingering", "pluck")
+        ]
+        marks.technique = ", ".join(
+            articulation_name(t) for t in technique_tags
+        ) or None
+
+        gliss_parts = []
+        for gliss_tag in ("glissando", "slide"):
+            for e in elem.findall(f"notations/{gliss_tag}"):
+                gtype = e.attrib.get("type")
+                gliss_parts.append(f"{gliss_tag} {gtype}" if gtype else gliss_tag)
+        marks.glissando = ", ".join(gliss_parts) or None
+
+        # D6 catch-all: any <notations> child this parser does not handle
+        # explicitly still becomes a findable attribute rather than being
+        # dropped silently.
+        notations_el = elem.find("notations")
+        if notations_el is not None:
+            extra = [
+                child.tag.replace("-", " ")
+                for child in notations_el
+                if child.tag not in _RECOGNISED_NOTATION_TAGS
+            ]
+            marks.other_notation = ", ".join(dict.fromkeys(extra)) or None
 
         # Only the first verse - real files with more than one <lyric> per
         # note are untested by any fixture seen so far.

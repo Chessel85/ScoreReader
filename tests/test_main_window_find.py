@@ -25,11 +25,23 @@ def test_find_dialog_lists_attributes_and_markings_by_category_and_label(
 ):
     load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
 
-    dialog = FindDialog(window, targets=window._music_data.available_find_targets())
+    targets_with_counts = window._music_data.available_find_targets_with_counts()
+    dialog = FindDialog(
+        window,
+        targets=[t for t, _ in targets_with_counts],
+        counts={t: c for t, c in targets_with_counts},
+    )
     labels = [dialog.target_list.item(i).text() for i in range(dialog.target_list.count())]
 
-    assert "Attribute: articulation" in labels
-    assert "Attribute: dynamic" in labels
+    # articulation is value-expanded (D2): an "(any)" row plus one row per
+    # distinct value, each carrying its occurrence count (D13).
+    assert "Attribute: articulation (any), 2 occurrences" in labels
+    assert "Attribute: articulation: staccato, 1 occurrence" in labels
+    assert "Attribute: articulation: trill, 1 occurrence" in labels
+    assert "Attribute: dynamic (any), 1 occurrence" in labels
+    # fingering is NOT value-expanded - one plain row, no "(any)" suffix.
+    assert any(label.startswith("Attribute: fingering,") for label in labels)
+    assert not any("Attribute: fingering:" in label for label in labels)
     assert not any("Attribute: step" in label for label in labels), "core keys must not be offered"
 
 
@@ -42,7 +54,7 @@ def test_find_dialog_ok_arms_target_and_jumps_to_first_occurrence_at_or_after_cu
     dialog = FindDialog(window, targets=window._music_data.available_find_targets())
     _select_find_target(dialog, "articulation")
     monkeypatch.setattr(dialog, "exec", lambda: FindDialog.DialogCode.Accepted)
-    monkeypatch.setattr("main_window.FindDialog", lambda parent, targets=None: dialog)
+    monkeypatch.setattr("main_window.FindDialog", lambda parent, targets=None, counts=None: dialog)
 
     window._show_find_dialog()
 
@@ -59,7 +71,7 @@ def test_find_dialog_cancelled_does_not_move_or_arm_a_target(
     dialog = FindDialog(window, targets=window._music_data.available_find_targets())
     _select_find_target(dialog, "articulation")
     monkeypatch.setattr(dialog, "exec", lambda: FindDialog.DialogCode.Rejected)
-    monkeypatch.setattr("main_window.FindDialog", lambda parent, targets=None: dialog)
+    monkeypatch.setattr("main_window.FindDialog", lambda parent, targets=None, counts=None: dialog)
 
     window._show_find_dialog()
 
@@ -74,7 +86,7 @@ def test_ctrl_f_shortcut_opens_the_find_dialog(window, qtbot, null_synth, minima
     opened = []
     monkeypatch.setattr(
         "main_window.FindDialog",
-        lambda parent, targets=None: type(
+        lambda parent, targets=None, counts=None: type(
             "FakeDialog", (), {"exec": lambda self: opened.append(True) or QDialog.DialogCode.Rejected}
         )(),
     )
@@ -292,6 +304,34 @@ def test_alt_left_shortcut_is_wired_to_find_previous(window, qtbot, minimal_scor
     qtbot.keyClick(window, Qt.Key.Key_Left, Qt.KeyboardModifier.AltModifier)
 
     assert calls == [True]
+
+
+def test_find_dialog_filter_box_narrows_the_list_by_label_text_only(
+    window, qtbot, dynamics_articulation_fingering_score
+):
+    """D11: typing in the Filter box hides non-matching rows; it matches the
+    label text, never the trailing occurrence-count digits."""
+    load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
+    twc = window._music_data.available_find_targets_with_counts()
+    dialog = FindDialog(window, targets=[t for t, _ in twc], counts={t: c for t, c in twc})
+    qtbot.addWidget(dialog)
+
+    def visible_texts():
+        return [
+            dialog.target_list.item(i).text()
+            for i in range(dialog.target_list.count())
+            if not dialog.target_list.item(i).isHidden()
+        ]
+
+    dialog.filter_edit.setText("staccato")
+    assert visible_texts() == ["Attribute: articulation: staccato, 1 occurrence"]
+
+    # A digit that appears only in the occurrence count must not match.
+    dialog.filter_edit.setText("1 occurrence")
+    assert visible_texts() == []
+
+    dialog.filter_edit.setText("")
+    assert len(visible_texts()) == dialog.target_list.count()
 
 
 def test_find_dialog_shows_with_focus_on_the_list(window, qtbot, dynamics_articulation_fingering_score):
