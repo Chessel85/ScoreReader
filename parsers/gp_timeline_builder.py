@@ -257,6 +257,11 @@ class GpTimelineBuilder:
                     duration_name_us=duration_name_us,
                     strum=strum,
                     chord_pitches=chord_pitches,
+                    # P2 (find_feature_plan.md): the GP chord-diagram name,
+                    # findable under "chord symbol" like MusicXML/UG. None
+                    # until a real chord name has been seen (the "Strum"
+                    # fallback is not a chord symbol).
+                    chord_symbol=current_chord_name,
                 )
                 buckets.setdefault(bucket_key, []).append(chord_note)
 

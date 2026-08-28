@@ -71,6 +71,18 @@ def test_chords_voice_visits_every_named_chord_in_order(gp_ripple):
     assert set(names) == {"C", "F", "G", "D minor", "G7"}
 
 
+def test_p2_chord_symbol_key_mirrors_the_name_but_is_none_for_strum(gp_ripple):
+    """P2 (find_feature_plan.md): the findable `chord symbol` key carries
+    the sticky chord name, and stays None where the name is only the
+    "Strum" fallback (not a real chord symbol)."""
+    data = GpReader(gp_ripple).load()
+    for n in _chord_notes(data, "P1"):
+        assert n.chord_symbol == n.step_name
+    for n in _chord_notes(data, "P0"):
+        if n.step_name == "Strum":
+            assert n.chord_symbol is None
+
+
 def test_track_0_unnamed_chord_shaped_beats_fall_back_to_strum(gp_ripple):
     """Track 0 has chord-shaped (2+ note) beats but almost no chord-name
     labels - the sticky name has nothing to carry forward from until the

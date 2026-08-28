@@ -102,6 +102,10 @@ class NoteRenderer:
             ("glissando", note.glissando),
             ("technique", note.technique),
             ("other notation", note.other_notation),
+            # P2 (find_feature_plan.md): chord symbol/diagram on a synthetic
+            # Chords part/voice note - a findable key distinct from `step`.
+            ("chord symbol", note.chord_symbol),
+            ("chord diagram", note.chord_diagram),
         ):
             if value is not None:
                 pairs[key] = str(value)

@@ -180,7 +180,8 @@ def attribute_label(attribute_key: str, uk_terms: bool) -> str:
     # but it reads as "grace note" everywhere it's shown. Every other new
     # P1 key ("tie", "slur", "tuplet", "fermata", "arpeggio", "accidental",
     # "glissando", "technique", "other notation") already reads correctly
-    # as-is and passes straight through.
+    # as-is and passes straight through - as do P2's "chord symbol" and
+    # "chord diagram".
     if attribute_key == "grace":
         return "grace note"
     return attribute_key

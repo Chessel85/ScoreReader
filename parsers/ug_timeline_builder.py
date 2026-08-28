@@ -244,6 +244,10 @@ class UgTimelineBuilder:
                 staff=1,
                 voice=1,
                 chord_pitches=pitches,
+                # P2 (find_feature_plan.md): same label as step_name, but a
+                # findable key - "Find chord symbol" works the same across
+                # MusicXML <harmony>, GP diagrams and UG [ch] markup.
+                chord_symbol=spell_out_minor_chord(event.symbol),
             )
             # Always present, even with no real lyric at this chord (the
             # wordless bars of an intro/instrumental/outro) - an explicit

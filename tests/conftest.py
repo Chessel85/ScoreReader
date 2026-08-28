@@ -263,6 +263,14 @@ def unknown_notation_score() -> str:
 
 
 @pytest.fixture
+def chord_diagram_score() -> str:
+    """P2 (find_feature_plan.md, A12): two bars, each a <harmony> with a
+    <frame> chord diagram - bar 1 an open C shape (string 6 muted via an
+    omitted <frame-note>), bar 2 a barre shape read "from fret 3"."""
+    return _require(FIXTURES_DIR / "chord_diagram.musicxml")
+
+
+@pytest.fixture
 def stave_text_score() -> str:
     """Two parts, one 4/4 bar each. P1 carries every generic-stave-text case
     on its own four notes: a bare tempo word with no metronome sibling

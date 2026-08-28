@@ -1418,8 +1418,8 @@ def test_move_attribute_order_boundary_and_unknown_key_are_no_ops():
     original = list(md.attribute_order)
 
     assert md.move_attribute_order("step", up=True) is False, "step is already first"
-    assert md.move_attribute_order("other notation", up=False) is False, (
-        "'other notation' (the D6 catch-all) is the last attribute (P1)"
+    assert md.move_attribute_order("chord diagram", up=False) is False, (
+        "'chord diagram' is the last attribute (P2)"
     )
     assert md.move_attribute_order("not-a-real-attribute", up=True) is False
     assert md.attribute_order == original
@@ -2367,7 +2367,86 @@ def test_p1_technique_value_target_matches_one_of_a_comma_joined_list(
     assert md.timeline_slices[index].notes[0].step_name == "D"
 
 
-def test_p1_other_notation_is_the_last_display_attribute():
-    """D9: the catch-all stays last so the pinned move_attribute_order
-    boundary test keeps meaning something."""
-    assert MusicData.DISPLAY_ATTRIBUTE_ORDER[-1] == "other notation"
+def test_last_display_attribute_is_pinned():
+    """D9: the last key is pinned so the move_attribute_order boundary test
+    keeps meaning something. P1 pinned "other notation"; P2 appends "chord
+    symbol"/"chord diagram" after it."""
+    assert MusicData.DISPLAY_ATTRIBUTE_ORDER[-1] == "chord diagram"
+    assert MusicData.DISPLAY_ATTRIBUTE_ORDER[-3:] == [
+        "other notation", "chord symbol", "chord diagram",
+    ]
+
+
+# --- P2 (find_feature_plan.md): chord symbols and diagrams are findable ---
+
+def test_p2_chord_symbol_is_offered_with_per_value_targets(timeline, score_three_blind_mice):
+    """A11/D2: `step` is a core key Find never offers, so a separate
+    `chord symbol` key is what makes the label findable. It is in
+    VALUE_EXPANDED_KEYS, so each distinct chord gets its own target
+    alongside the "any" one."""
+    md = timeline(score_three_blind_mice)
+    rows = {
+        (t.label, t.value)
+        for t in md.available_find_targets()
+        if t.key == "chord symbol"
+    }
+    assert ("chord symbol (any)", None) in rows
+    values = {v for (_, v) in rows if v is not None}
+    assert values == {"A minor", "G", "D"}
+
+
+def test_p2_chord_symbol_find_walks_only_its_own_chord(timeline, score_three_blind_mice):
+    md = timeline(score_three_blind_mice)
+    target = FindTarget("attribute", "chord symbol", "chord symbol", "D")
+    first = md.find_occurrence(target, from_index=0, direction=1)
+    wrapped = md.find_occurrence(target, from_index=first, direction=1)
+    assert wrapped == first  # exactly one "D" occurrence in the piece
+    assert any(
+        n.chord_symbol == "D" for n in md.timeline_slices[first].notes
+    )
+
+
+def test_p2_score_without_harmony_offers_no_chord_symbol_target(
+    timeline, dynamics_articulation_fingering_score
+):
+    """Corollary 1: a score with no chord markup must not grow the dialog."""
+    md = timeline(dynamics_articulation_fingering_score)
+    keys = {t.key for t in md.available_find_targets()}
+    assert "chord symbol" not in keys
+    assert "chord diagram" not in keys
+
+
+def test_p2_chord_diagram_is_parsed_and_offered_as_a_single_any_target(
+    timeline, chord_diagram_score
+):
+    """A12/D2: harmony/frame becomes the spoken `chord diagram` attribute;
+    it is NOT value-expanded, so only one "any" target is offered."""
+    md = timeline(chord_diagram_score)
+    from parsers.timeline_builder import CHORDS_PART_ID
+
+    diagrams = [
+        n.chord_diagram
+        for s in md.timeline_slices
+        for n in s.notes
+        if n.part_id == CHORDS_PART_ID
+    ]
+    assert diagrams == [
+        "frets x 3 2 0 1 0",
+        "frets 3 3 5 5 5 3, barre at fret 3, from fret 3",
+    ]
+
+    diagram_targets = [t for t in md.available_find_targets() if t.key == "chord diagram"]
+    assert len(diagram_targets) == 1
+    assert diagram_targets[0].value is None
+
+
+def test_p2_chord_diagram_absent_when_harmony_has_no_frame(timeline, chords_and_lyrics_score):
+    """chords_and_lyrics.musicxml has <harmony> but no <frame> - the key
+    must stay absent rather than rendering an empty diagram."""
+    md = timeline(chords_and_lyrics_score)
+    assert all(
+        n.chord_diagram is None
+        for s in md.timeline_slices
+        for n in s.notes
+    )
+    assert "chord diagram" not in {t.key for t in md.available_find_targets()}

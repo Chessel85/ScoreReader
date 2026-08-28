@@ -227,6 +227,59 @@ def _resolve_harmony(harmony_elem) -> Tuple[List[int], str]:
     return [], root_name
 
 
+def _resolve_chord_diagram(harmony_elem) -> Optional[str]:
+    """A spoken summary of a <harmony>'s <frame> chord diagram (P2,
+    find_feature_plan.md A12), or None when there is no <frame>. Reads the
+    <frame-note> fret per string from the highest string number down to 1
+    (string 6 -> 1 on a guitar): "frets 3 2 0 0 0 1", with "x" for a muted
+    string (fret -1, or a string with no <frame-note> at all). Appends
+    "barre at fret N" when any <frame-note> carries a <barre>, and
+    "from fret N" when <first-fret> is greater than 1."""
+    frame_elem = harmony_elem.find("frame")
+    if frame_elem is None:
+        return None
+
+    strings_elem = frame_elem.find("frame-strings")
+    try:
+        num_strings = int(strings_elem.text.strip()) if (strings_elem is not None and strings_elem.text) else 6
+    except ValueError:
+        num_strings = 6
+
+    fret_by_string: Dict[int, str] = {}
+    barre_fret: Optional[int] = None
+    for fn in frame_elem.findall("frame-note"):
+        s_el = fn.find("string")
+        f_el = fn.find("fret")
+        if s_el is None or not s_el.text or f_el is None or not f_el.text:
+            continue
+        try:
+            s_num = int(s_el.text.strip())
+            f_num = int(f_el.text.strip())
+        except ValueError:
+            continue
+        fret_by_string[s_num] = "x" if f_num < 0 else str(f_num)
+        if fn.find("barre") is not None:
+            barre_fret = f_num
+
+    frets = [fret_by_string.get(s, "x") for s in range(num_strings, 0, -1)]
+    parts = [f"frets {' '.join(frets)}"]
+    if barre_fret is not None and barre_fret > 0:
+        parts.append(f"barre at fret {barre_fret}")
+
+    first_fret_elem = frame_elem.find("first-fret")
+    if first_fret_elem is not None:
+        ff_text = first_fret_elem.find("fret")
+        raw = ff_text.text if (ff_text is not None and ff_text.text) else first_fret_elem.text
+        try:
+            first_fret = int(raw.strip()) if raw else 1
+        except (ValueError, AttributeError):
+            first_fret = 1
+        if first_fret > 1:
+            parts.append(f"from fret {first_fret}")
+
+    return ", ".join(parts)
+
+
 def _duration_divs(elem) -> int:
     dur_el = elem.find("duration")
     return int(dur_el.text.strip()) if (dur_el is not None and dur_el.text) else 0
@@ -832,6 +885,9 @@ class TimelineBuilder:
             staff=1,
             voice=1,
             chord_pitches=chord_pitches,
+            # P2: same text as step_name, but findable (step is a core key).
+            chord_symbol=chord_label or None,
+            chord_diagram=_resolve_chord_diagram(elem),
         )
         sink.add(key, chord_note, walker, overwrite_state=False)
         part_state.harmony_notes_by_key[key] = chord_note
@@ -995,6 +1051,10 @@ class TimelineBuilder:
                     chord_pitches=part_state.current_chord_pitches,
                     strum=marks.strum,
                     duration_name_us=duration_name_us,
+                    # P2: the sticky chord label, so a strum stroke's Chords
+                    # entry is findable under "chord symbol" like the
+                    # <harmony>'s own entry.
+                    chord_symbol=part_state.current_chord_label or None,
                 ),
             )
 

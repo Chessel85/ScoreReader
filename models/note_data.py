@@ -101,6 +101,18 @@ class NoteData:
     #         above, which drives the "A grace B" step rendering
     # other_notation - D6 catch-all: any unrecognised <notations> child
     #                  tag, hyphens as spaces
+    #
+    # P2 (find_feature_plan.md) - chord symbols/diagrams made findable.
+    # chord_symbol - the chord label ("G7", "F/C") on a synthetic Chords
+    #                part/voice note. Duplicates what `step` already holds,
+    #                but `step` is a CORE_ATTRIBUTE_KEYS key Find never
+    #                offers - a separate key is what makes it findable.
+    #                Set by TimelineBuilder (<harmony>), UgTimelineBuilder
+    #                ([ch] markup) and GpTimelineBuilder (chord diagram
+    #                name) on their own synthetic chord entries.
+    # chord_diagram - a spoken chord-shape summary from MusicXML
+    #                 harmony/frame ("frets 3 2 0 0 0 1", "x" for a muted
+    #                 string, "barre at fret N"/"from fret N" suffixes).
     tie: Optional[str] = None
     slur: Optional[str] = None
     tuplet: Optional[str] = None
@@ -111,3 +123,5 @@ class NoteData:
     glissando: Optional[str] = None
     grace: Optional[str] = None
     other_notation: Optional[str] = None
+    chord_symbol: Optional[str] = None
+    chord_diagram: Optional[str] = None

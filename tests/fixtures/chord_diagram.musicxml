@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- P2 (find_feature_plan.md, A12): a <harmony> carrying a <frame> chord
+     diagram becomes the `chord diagram` attribute on the synthetic Chords
+     part note (see parsers/timeline_builder.py's _resolve_chord_diagram).
+     - bar 1: an open C major shape - string 6 has no <frame-note> at all
+       (muted -> "x"), the rest run 3 2 0 1 0. No barre, no <first-fret>.
+     - bar 2: a barre shape read "from fret 3", with a <barre> on the
+       lowest string. -->
+<score-partwise version="4.0">
+  <part-list>
+    <score-part id="P1">
+      <part-name>Guitar</part-name>
+      <midi-instrument id="P1-I1">
+        <midi-channel>1</midi-channel>
+        <midi-program>25</midi-program>
+      </midi-instrument>
+    </score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <key><fifths>0</fifths></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <clef number="1"><sign>G</sign><line>2</line></clef>
+      </attributes>
+      <harmony>
+        <root><root-step>C</root-step></root>
+        <kind>major</kind>
+        <frame>
+          <frame-strings>6</frame-strings>
+          <frame-frets>4</frame-frets>
+          <frame-note><string>5</string><fret>3</fret></frame-note>
+          <frame-note><string>4</string><fret>2</fret></frame-note>
+          <frame-note><string>3</string><fret>0</fret></frame-note>
+          <frame-note><string>2</string><fret>1</fret></frame-note>
+          <frame-note><string>1</string><fret>0</fret></frame-note>
+        </frame>
+      </harmony>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>4</duration>
+        <voice>1</voice>
+        <type>whole</type>
+        <staff>1</staff>
+      </note>
+    </measure>
+    <measure number="2">
+      <harmony>
+        <root><root-step>B</root-step><root-alter>-1</root-alter></root>
+        <kind>major</kind>
+        <frame>
+          <frame-strings>6</frame-strings>
+          <frame-frets>4</frame-frets>
+          <first-fret><fret>3</fret></first-fret>
+          <frame-note><string>6</string><fret>3</fret><barre type="start"/></frame-note>
+          <frame-note><string>5</string><fret>3</fret></frame-note>
+          <frame-note><string>4</string><fret>5</fret></frame-note>
+          <frame-note><string>3</string><fret>5</fret></frame-note>
+          <frame-note><string>2</string><fret>5</fret></frame-note>
+          <frame-note><string>1</string><fret>3</fret><barre type="stop"/></frame-note>
+        </frame>
+      </harmony>
+      <note>
+        <pitch><step>D</step><octave>4</octave></pitch>
+        <duration>4</duration>
+        <voice>1</voice>
+        <type>whole</type>
+        <staff>1</staff>
+      </note>
+    </measure>
+  </part>
+</score-partwise>

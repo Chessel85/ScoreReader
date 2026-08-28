@@ -563,6 +563,10 @@ class MusicData:
         # relies on that).
         "tie", "slur", "tuplet", "grace", "arpeggio", "fermata",
         "accidental", "glissando", "technique", "other notation",
+        # P2 (find_feature_plan.md, D9): chord symbol/diagram, grouped last.
+        # "chord diagram" is now the final key - the pinned
+        # move_attribute_order boundary test tracks whatever is last.
+        "chord symbol", "chord diagram",
     ]
     # A voice with no entry in voice_display_attributes uses this - today's
     # plain-note-name behaviour, not an empty display.

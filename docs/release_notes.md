@@ -1,5 +1,9 @@
 # Recall Score Release Notes
 
+## 2026.1.34
+
+* Implemented comprehensive find feature
+
 ## 2026.1.33
 
 * More code refinements

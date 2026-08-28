@@ -1,12 +1,12 @@
 # Comprehensive Find — implementation plan
 
-Status: **P0 + P1 implemented (2026-08-28)**; P2–P6 still plan only. Written
+Status: **P0 + P1 + P2 implemented (2026-08-28)**; P3–P6 still plan only. Written
 2026-08-28 after auditing every MusicXML file in `files/` and `examples/`
 against the MusicXML 4.0 element reference
 (https://www.w3.org/2021/06/musicxml40/musicxml-reference/elements/).
 
-P0 and P1 delivered as specified below — see the "P0 — DONE" / "P1 — DONE"
-notes in §5 for the concrete edit lists and any deviations.
+P0, P1 and P2 delivered as specified below — see the "P0 — DONE" / "P1 — DONE"
+/ "P2 — DONE" notes in §5 for the concrete edit lists and any deviations.
 
 Audience: an implementing agent (Sonnet) working phase by phase. Each phase is
 independently shippable, has its own tests, and leaves the app working.
@@ -535,6 +535,49 @@ the dialog offers Grace note, Tie and Slur, and Find on Grace note visits exactl
 the two grace-note positions.
 
 ### P2 — Chord symbols and chord diagrams (A11–A12)
+
+> **P2 — DONE (2026-08-28).** Implemented as written. Edits:
+> - `models/note_data.py`: two `Optional[str] = None` fields — `chord_symbol`
+>   (the label, findable where `step` — a core key — is not) and
+>   `chord_diagram` (spoken `harmony/frame` summary).
+> - `parsers/timeline_builder.py`: new `_resolve_chord_diagram(harmony_elem)`
+>   → `"frets x 3 2 0 1 0"` (string `frame-strings`→1, `"x"` for a muted /
+>   absent `frame-note`), `", barre at fret N"` when any `frame-note` has a
+>   `<barre>`, `", from fret N"` when `first-fret` > 1. `_handle_harmony`
+>   sets `chord_symbol=chord_label or None` + `chord_diagram=...` on the
+>   Chords `NoteData`; the arpeggiate-stroke Chords `NoteData` gets
+>   `chord_symbol=part_state.current_chord_label or None`.
+> - `parsers/ug_timeline_builder.py`: `chord_symbol=spell_out_minor_chord(event.symbol)`
+>   on the UG chord entry (mirrors `step_name`).
+> - `parsers/gp_timeline_builder.py`: `chord_symbol=current_chord_name` on the
+>   GP chord entry — `None` while the name is only the `"Strum"` fallback.
+> - `models/note_renderer.py`: two entries appended to the optional tail.
+> - `models/music_data.py`: `DISPLAY_ATTRIBUTE_ORDER` gains
+>   `"chord symbol", "chord diagram"` after `"other notation"` (D9) —
+>   `"chord diagram"` is now the pinned last key.
+> - `models/vocabulary.py`: comment only; both keys pass through
+>   `attribute_label` unchanged.
+> - `chord symbol` is in `VALUE_EXPANDED_KEYS` already (P0) → per-chord
+>   targets for free; `chord diagram` is not → single "any" target (D2).
+>
+> Deviations / decisions:
+> - P2 step 4 (add `"chord symbol"` to the Chords voice's default
+>   `voice_display_attributes`) was **not** done — `step` already carries the
+>   label into Region 3, and adding it would read the chord name twice in one
+>   row. Left as the step itself gates on ("only if live testing shows...").
+> - Tests: 4 pinned tests updated (`DISPLAY_ATTRIBUTE_ORDER` last-key,
+>   `move_attribute_order` boundary, GP/UG chord-entry asserts); new fixture
+>   `tests/fixtures/chord_diagram.musicxml` + `chord_diagram_score` conftest
+>   fixture; 5 new `test_p2_*` tests in `test_music_data.py`, 1 in
+>   `test_gp_timeline_builder.py`. Full suite: 1068 passed.
+> - §7 gate run (git-worktree baseline at HEAD `71957db`). Parser
+>   fingerprint: after normalising out the two new `=None` repr fields the
+>   only difference is the new `chord_diagram.musicxml` fixture — **no
+>   existing file's slices/beats/durations/spans/`total_measures` changed**.
+>   Model fingerprint: **only** new `chord symbol` Find targets/occurrence
+>   walks and a trailing `('note N chord symbol', …)` Region 4 row on
+>   Chords-part notes — no navigation walk, playback event, Region 3 text,
+>   Region 5, bar bounds or performance-report change.
 
 1. `parsers/timeline_builder.py` `_handle_harmony`: set `chord_symbol` on the
    synthetic Chords `NoteData` (the same label already in `step_name`; a separate

@@ -44,6 +44,9 @@ def test_chord_lyric_column_slicing_on_a_two_chord_line():
     lyrics = [n for s in slices for n in s.notes if n.part_id == LYRICS_PART_ID]
 
     assert [n.step_name for n in chords] == ["C", "G"]
+    # P2 (find_feature_plan.md): the findable `chord symbol` key mirrors
+    # step_name on every UG chord entry.
+    assert [n.chord_symbol for n in chords] == ["C", "G"]
     # "C" at column 0, "G" at column 6 in "Hello world" (0-indexed) ->
     # fragments "Hello " and "world".
     assert [n.step_name for n in lyrics] == ["Hello", "world"]
