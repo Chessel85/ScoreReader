@@ -2098,6 +2098,53 @@ LOW
 
 
 ###
+PHASE CF - COMPREHENSIVE FIND (2026-08-28)                (7 phases)
+###
+  "Anything in the score that is not a plain note, a rest or a lyric
+  should be findable." Written from find_feature_plan.md after auditing
+  every MusicXML file in files/ + examples/ against the MusicXML 4.0
+  element reference. See that plan for the full design (D1-D16) and the
+  per-phase edit log; each phase is behaviour-additive and gated by the
+  tests/manual/ fingerprint harnesses (§7 of the plan).
+
+[x] CF-P0  Value-level Find infrastructure - FindTarget.value,
+           VALUE_EXPANDED_KEYS allow-list (D2), per-value dialog rows,
+           occurrence counts (D13), (key, value) cache, "Filter:" box.
+           > DONE 2026-08-28. 1044 tests pass.
+[x] CF-P1  Note-attached notations - tie, slur, tuplet, fermata, arpeggio
+           (chord notes only, D7), cautionary/editorial accidental (D14),
+           tier-2 technical marks -> technique, glissando/slide, grace
+           summary, and the D6 <notations> catch-all (other_notation).
+           > DONE 2026-08-28. 1062 tests pass; fingerprint gate clean
+             (only new find targets + Region 4 rows).
+[x] CF-P2  Chord symbols + chord diagrams - chord_symbol (findable where
+           the core `step` key is not) across MusicXML <harmony>, UG [ch]
+           and GP chord names; chord_diagram from harmony/frame.
+           > DONE 2026-08-28. 1068 tests pass.
+[x] CF-P3  Direction spans + points (D5 per-part, D15 no Region 5 for
+           pedal/octave-shift) - DirectionSpan/DirectionMark for pedal,
+           octave-shift, rehearsal, dashes, bracket + the D6
+           <direction-type> catch-all (other_direction).
+           > DONE 2026-08-28. 1082 tests pass.
+[x] CF-P4  Barlines, clefs, measure styles - BarlineMark (double/other,
+           never the final light-heavy, D16), ClefChangeMark,
+           MeasureStyleMark.
+           > DONE 2026-08-28. 1108 tests pass.
+[x] CF-P5  Cross-format consistency - GP's `tied`/`slide` note flags move
+           onto the MusicXML `tie`/`glissando` keys so Find behaves the
+           same on a .gp and a .mxl file; `muted` stays in `articulation`.
+           > DONE 2026-08-28. 1109 tests pass; fingerprint gate clean
+             (diff confined to the one .gp file: articulation -> tie /
+             glissando, plus its downstream Find targets and Region 4 text).
+[x] CF-P6  Documentation - user_guide.md §5.7 (value-level Find, occurrence
+           counts, the attribute-vs-marking count asymmetry, catch-alls),
+           user_guide.html regenerated, CLAUDE.md "Comprehensive Find"
+           architecture note + rewritten ornaments Known-gaps entry, this
+           tasks.txt block.
+           > DONE 2026-08-28.
+
+
+###
 COVERAGE CHECK - every requirement appears at least once
   Ref  1 D2        Ref  8 A8,B4     Ref 15 F1,F2     Ref 22 H3,H4
   Ref  2 C5        Ref  9 A8,E10    Ref 16 A5,F3     Ref 23 K1

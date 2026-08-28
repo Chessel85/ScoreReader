@@ -208,14 +208,16 @@ class GpTimelineBuilder:
                 if gp_note is None or gp_note.midi_pitch is None:
                     continue
                 step_name = self._spell_note(gp_note)
-                articulation_bits = []
-                if gp_note.slide:
-                    articulation_bits.append("slide")
-                if gp_note.muted:
-                    articulation_bits.append("muted")
-                if gp_note.tie_origin:
-                    articulation_bits.append("tied")
-                articulation = ", ".join(articulation_bits) or None
+                # P5 (find_feature_plan.md): GP's `tied` / `slide` flags move
+                # onto the same NoteData keys the MusicXML parser fills, so
+                # "Find tie" / "Find glissando" behave identically on a .gp and
+                # a .mxl file. `muted` stays in `articulation` - it has no
+                # MusicXML counterpart key. GP only records a tie's origin
+                # note (gp_source.py's Tie/@origin), so "stop" is unreachable
+                # here; that's the accepted gap.
+                tie = "start" if gp_note.tie_origin else None
+                glissando = "slide" if gp_note.slide else None
+                articulation = "muted" if gp_note.muted else None
 
                 note_obj = NoteData(
                     step_name=step_name,
@@ -233,6 +235,8 @@ class GpTimelineBuilder:
                     string=gp_note.string,
                     dynamic=dynamic,
                     articulation=articulation,
+                    tie=tie,
+                    glissando=glissando,
                     duration_name_us=duration_name_us,
                 )
                 buckets.setdefault(bucket_key, []).append(note_obj)

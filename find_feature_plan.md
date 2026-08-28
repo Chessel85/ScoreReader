@@ -1,12 +1,12 @@
 # Comprehensive Find — implementation plan
 
-Status: **P0 + P1 + P2 + P3 + P4 implemented (2026-08-28)**; P5–P6 still plan
-only. Written 2026-08-28 after auditing every MusicXML file in `files/` and
-`examples/` against the MusicXML 4.0 element reference
+Status: **P0–P6 implemented (2026-08-28)** — feature complete. Written
+2026-08-28 after auditing every MusicXML file in `files/` and `examples/`
+against the MusicXML 4.0 element reference
 (https://www.w3.org/2021/06/musicxml40/musicxml-reference/elements/).
 
-P0–P4 delivered as specified below — see the "P0 — DONE" … "P4 — DONE" notes
-in §5 for the concrete edit lists and any deviations.
+All phases delivered as specified below — see the "P0 — DONE" … "P6 — DONE"
+notes in §5 for the concrete edit lists and any deviations.
 
 Audience: an implementing agent (Sonnet) working phase by phase. Each phase is
 independently shippable, has its own tests, and leaves the app working.
@@ -789,13 +789,106 @@ offers "Clef change" and Find walks the P3/P4 clef changes in bar order;
 
 ### P5 — Cross-format consistency
 
-Guitar Pro already folds `slide`, `muted` and `tied` into the `articulation` string
-(`parsers/gp_timeline_builder.py`). Move `tied` → the new `tie` key and `slide` →
-the new `glissando` key so the same Find target works on a `.gp` file and a `.mxl`
-file. Update `tests/parsers/test_gp_timeline_builder.py`. Keep `muted` where it is
-(there is no MusicXML counterpart key).
+> **P5 — DONE (2026-08-28).** Implemented as written.
+> - `parsers/gp_timeline_builder.py` `_build_track`: stopped appending
+>   `"slide"` / `"tied"` to `articulation_bits`; `articulation` is now
+>   `"muted" if gp_note.muted else None`. Two new locals — `tie = "start"
+>   if gp_note.tie_origin else None`, `glissando = "slide" if
+>   gp_note.slide else None` — passed to the real-note `NoteData(...)`.
+>   GP only records a tie's origin (`gp_source.py` reads `Tie/@origin`
+>   only), so `"stop"` is unreachable from a `.gp` file — accepted gap,
+>   commented at the call site.
+> - The synthetic Chords `NoteData` is untouched.
+> - `tests/parsers/test_gp_timeline_builder.py`: new
+>   `test_p5_tied_and_slide_move_onto_the_musicxml_find_keys` — asserts the
+>   Ripple fixture yields notes with `tie == "start"` / `glissando ==
+>   "slide"` / `articulation == "muted"`, and that `"tied"`/`"slide"`
+>   never appear in `articulation` any more. No existing GP test pinned an
+>   `articulation` string containing `tied`/`slide`, so nothing else
+>   needed updating. Full suite: 1109 passed.
+> - §7 gate (git-worktree baseline at HEAD `d9e2917`, both harnesses).
+>   **Parser fingerprint:** 323 diff lines, every one on the single `.gp`
+>   file — `articulation='tied'` → `articulation=None, tie='start'` and
+>   `articulation='slide'` → `articulation=None, glissando='slide'`. No
+>   beat position, duration, slice count, `total_measures` or `step`
+>   string changed on any file. **Model fingerprint:** 286 diff lines, all
+>   on the same `.gp` file — new `find attribute/tie` and
+>   `find attribute/glissando` targets + occurrence lists, the
+>   `find attribute/articulation` "any" list shrinking by the moved
+>   occurrences, and the matching Region 4 row text. No navigation walk,
+>   playback event, bar bound, key-override round trip or performance
+>   report changed anywhere.
 
 ### P6 — Documentation and settling
+
+> **P6 — DONE (2026-08-28).** Docs only, no code.
+> - `docs/user_guide.md` §5.7 rewritten: the two findable kinds (note
+>   attributes / performance markings) with the "not a note, rest or
+>   lyric" principle and the two catch-alls; the **Filter** field;
+>   "Finding a Particular Value" (the `VALUE_EXPANDED_KEYS` allow-list, in
+>   user terms); "The Occurrence Count" (a position not a note; attribute
+>   counts follow Region 2 muting, marking counts don't); "What Is Not
+>   Made Audible". `docs/user_guide.html` regenerated with the documented
+>   pandoc command (CRLF normalised on commit).
+> - `CLAUDE.md`: new **Comprehensive Find (P0–P6)** subsection after the
+>   attribute-system paragraph (both mechanisms, the new keys/marking
+>   kinds, value-level Find, occurrence counts, the two D6 catch-alls,
+>   the "not audible" scope note); the one-line `find_index.py`
+>   collaborator bullet points at it. The "Ornaments/notations survey
+>   (2026-08-21)" Known-gaps entry rewritten — most of its "confirmed
+>   entirely unparsed" list is parsed label-only after P1/P3/P4; the
+>   standing "never audibly realized" decision is preserved verbatim in
+>   substance.
+> - `tasks.txt`: new **PHASE CF - COMPREHENSIVE FIND** block, CF-P0…CF-P6
+>   all `[x]`.
+> - `wishlist.txt` untouched (user-maintained).
+
+### Persistence between sessions (P0–P6)
+
+**No `.rsc` schema change, and none needed** — verified against
+`persistence/score_config.py` and `MusicData.apply_config`
+(`models/music_data.py:802-805`).
+
+- **New `NoteData` fields** (`tie`, `slur`, `tuplet`, `fermata`, `arpeggio`,
+  `accidental`, `technique`, `glissando`, `grace`, `other_notation`,
+  `chord_symbol`, `chord_diagram`) are re-derived from the source file on
+  every load, so they are never written to a `.rsc`. Same for every new
+  marking list (`direction_spans`/`direction_marks`/`barline_marks`/
+  `clef_change_marks`/`measure_style_marks`) — all rebuilt by the parser.
+- **The Find catalogue, occurrence counts and the armed Find target are
+  session-only.** `FindIndex` is recomputed per load; `current_find_target`
+  lives on `NavigationController` and is deliberately not persisted (a
+  transient "what Alt+Right does next" choice, like the cursor's own
+  in-flight state).
+- **The ~14 new keys ride the existing `attribute_order` round-trip for
+  free.** `apply_config` filters a saved `attribute_order` against
+  `set(self.DISPLAY_ATTRIBUTE_ORDER)` (which now contains them) and then
+  appends any known key the saved list is missing, in default order. So:
+  - a `.rsc` written **before** this work (order ending at `strum`) loads
+    clean afterwards — the new keys are appended at the end in
+    `DISPLAY_ATTRIBUTE_ORDER` order;
+  - a `.rsc` written **after** it, opened on an **older** build, has the
+    unknown keys (e.g. `chord diagram`) silently dropped by the same
+    filter and everything else still applies — the documented best-effort
+    contract, not a breakage.
+- **`voice_display_attributes`** (which optional keys a voice shows) is
+  keyed by voice tuple and filtered only against `known_voices`; a toggled
+  new key in a saved set round-trips as-is, and a stale key is inert
+  because rendering intersects it with both what the note carries and
+  `attribute_order`.
+- The D9 default order (`DISPLAY_ATTRIBUTE_ORDER`) is the single place the
+  new keys are declared; `CORE_ATTRIBUTE_KEYS` is unchanged, so all new
+  keys are optional and Find-eligible automatically.
+
+#### Original P5/P6 plan (kept for reference)
+
+**P5.** Guitar Pro already folds `slide`, `muted` and `tied` into the
+`articulation` string (`parsers/gp_timeline_builder.py`). Move `tied` → the new
+`tie` key and `slide` → the new `glissando` key so the same Find target works on a
+`.gp` file and a `.mxl` file. Update `tests/parsers/test_gp_timeline_builder.py`.
+Keep `muted` where it is (there is no MusicXML counterpart key).
+
+**P6 — Documentation and settling**
 
 1. `docs/user_guide.md` §5.7: describe value-level Find, the occurrence counts (and
    that an occurrence is a position, not a note), the fact that attribute counts

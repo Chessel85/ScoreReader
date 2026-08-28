@@ -365,16 +365,35 @@ searching for.
 ### 5.7 Finding an Attribute or Performance Marking (Ctrl+F)
 
 Rather than stepping note by note, Find jumps you straight to
-occurrences of a particular thing - a note attribute like string, fret
-or dynamic, or a performance marking like a repeat start, a Segno, or a
-key signature change - wherever it occurs in the score.
+occurrences of a particular thing wherever it occurs in the score. Two
+kinds of thing are findable:
+
+- **Note attributes** - anything that hangs off a note: string, fret,
+  fingering, pluck, dynamic, articulation, ornament, playing technique
+  (hammer-on, harmonic, and the like), tie, slur, tuplet, grace note,
+  fermata, arpeggiated chord, a cautionary or editorial accidental,
+  glissando, chord symbol and chord diagram.
+- **Performance markings** - structural events not tied to a single
+  note: repeat and ending starts and ends, crescendo and diminuendo
+  hairpins, Segno, Coda, To Coda, Fine, Da Capo, Dal Segno, key, time
+  and tempo changes, the sustain pedal, octave shifts, rehearsal marks,
+  dashed and bracket lines, clef changes, double barlines, and
+  multi-measure rests.
+
+Anything in the score that is not a plain note, a rest or a lyric is
+meant to be findable. Two catch-all rows - "Other notation" and
+"Direction" - make sure that even a marking this list doesn't name still
+appears as its own findable row, spoken by the name the file gives it.
 
 1. Press `Ctrl+F`, or choose Navigation > Find..., to open the Find
    dialog. It lists only attributes and markings that actually occur
    somewhere in the currently loaded score.
-2. Choose what to find and select OK. Recall Score jumps immediately to
+2. Optionally type in the **Filter** field to narrow the list as you go
+   - it matches the text of the rows, so typing `trill` leaves just the
+   trill rows.
+3. Choose what to find and select OK. Recall Score jumps immediately to
    the nearest occurrence from your current position.
-3. Press `Alt+Right Arrow` (Find Next) or `Alt+Left Arrow` (Find
+4. Press `Alt+Right Arrow` (Find Next) or `Alt+Left Arrow` (Find
    Previous) to keep moving between further occurrences without
    reopening the dialog - these two shortcuts work from anywhere in the
    window, not only with focus in the Note region.
@@ -383,6 +402,44 @@ If there are no further occurrences in the direction you're moving, Find
 wraps around to the first or last one in the piece and plays the
 boundary sound (section 5.6) so you know a wrap just happened, rather
 than silently repeating your last stop.
+
+#### Finding a Particular Value
+
+For the attributes and markings where the exact value is something a
+player navigates by - articulation, playing technique, dynamic,
+accidental, tie, slur, glissando, tuplet and chord symbol - the dialog
+breaks the single row out into one row per value found in this score.
+So a piece with staccatos, accents and a couple of trills offers
+"articulation (any)" plus "articulation: staccato", "articulation:
+accent" and "articulation: trill" as separate rows, and Find on the
+trill row visits only the trills. The other attributes - string, fret,
+fingering, pluck, stave text - stay as one "any" row however many
+distinct values they hold, so the list doesn't fill up with, say, one
+row per fret number.
+
+#### The Occurrence Count
+
+Every row ends with how many occurrences it has in the score - "12
+occurrences", or "1 occurrence". An occurrence is a **position**, not a
+note: a chord whose three notes are all staccato counts once, and the
+number tells you exactly how many times `Alt+Right Arrow` will move
+before it wraps back to where you started.
+
+For a note attribute, the count follows what you have muted in Region 2
+(section 6) - muting a voice genuinely reduces how many of its
+articulations you can reach, so the number drops to match. For a
+performance marking the count is of the whole score and ignores muting,
+because a repeat or a clef change is structural and doesn't belong to
+any one voice.
+
+#### What Is Not Made Audible
+
+Find lets you locate ties, arpeggios, ornaments, pedal marks, octave
+shifts and the rest, and your screen reader speaks them, but Recall
+Score does not change the playback to perform them - a trill is spoken
+as "trill" and still plays as the plain written note, and an octave
+shift does not transpose what you hear. Finding and studying these
+markings is the feature; sounding them is not.
 
 ## 6. Muting and Soloing Parts, Staves and Voices
 

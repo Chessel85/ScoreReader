@@ -144,6 +144,29 @@ def test_chords_voice_note_sorts_after_the_real_notes_regardless_of_pitch(gp_rip
     assert checked > 0
 
 
+def test_p5_tied_and_slide_move_onto_the_musicxml_find_keys(gp_ripple):
+    """P5 (find_feature_plan.md): GP's `tied` / `slide` note flags populate
+    the same `tie` / `glissando` NoteData keys the MusicXML parser fills, so
+    Find works identically across formats. `muted` stays in `articulation`;
+    neither `tied` nor `slide` appears there any more."""
+    data = GpReader(gp_ripple).load()
+    real = [
+        n
+        for s in data.timeline_slices
+        for n in s.notes
+        if n.voice != GP_CHORD_VOICE_ID
+    ]
+    assert any(n.tie == "start" for n in real)
+    assert any(n.glissando == "slide" for n in real)
+    assert any(n.articulation == "muted" for n in real)
+    for n in real:
+        assert "tied" not in (n.articulation or "")
+        assert "slide" not in (n.articulation or "")
+        assert n.articulation in (None, "muted")
+        assert n.tie in (None, "start")
+        assert n.glissando in (None, "slide")
+
+
 def test_playback_events_sound_the_whole_chord_not_one_note(gp_ripple):
     """models.music_data.get_playback_events_for_indices must expand a
     chord-voice note's chord_pitches into the part's pitch group, not just
