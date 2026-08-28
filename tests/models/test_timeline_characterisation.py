@@ -1158,3 +1158,72 @@ def test_ordinary_score_carries_none_of_the_new_notation_keys(
     for n in _notes(timeline(minimal_score)):
         assert (n.tie, n.slur, n.tuplet, n.fermata, n.arpeggio) == (None,) * 5
         assert (n.accidental, n.technique, n.glissando, n.grace, n.other_notation) == (None,) * 5
+
+
+# --- P3: <direction>/<direction-type> spans and points -------------------
+
+
+def test_p3_pedal_span_and_change_point(timeline, pedal_score):
+    """M1: <pedal type="start">..<pedal type="stop"> becomes one DirectionSpan
+    (kind "pedal"); a mid-bar <pedal type="change"> is a DirectionMark, not a
+    span. part_id/staff recorded (D5)."""
+    md = timeline(pedal_score)
+
+    assert [(s.kind, s.part_id, s.staff, s.label, s.start_measure, s.end_measure)
+            for s in md.direction_spans] == [("pedal", "P1", 1, "", 1, 2)]
+    assert [(m.kind, m.measure, m.beat_position) for m in md.direction_marks] == [
+        ("pedal_change", 1, 3.0)
+    ]
+
+
+def test_p3_octave_shift_span_carries_a_size_label(timeline, octave_shift_score):
+    """M2: <octave-shift type="down" size="8"> -> label "8vb"; it stops
+    mid-bar (beat 3), so the span keeps that finer position."""
+    md = timeline(octave_shift_score)
+
+    assert len(md.direction_spans) == 1
+    span = md.direction_spans[0]
+    assert (span.kind, span.label) == ("octave_shift", "8vb")
+    assert (span.start_measure, span.start_beat_position) == (1, 1.0)
+    assert (span.end_measure, span.end_beat_position) == (1, 3.0)
+
+
+def test_p3_rehearsal_marks_keep_their_printed_label(timeline, rehearsal_mark_score):
+    """M3: a <rehearsal> point mark per bar, label from the element text."""
+    md = timeline(rehearsal_mark_score)
+
+    assert [(m.kind, m.label, m.measure) for m in md.direction_marks] == [
+        ("rehearsal", "A", 1),
+        ("rehearsal", "B", 2),
+    ]
+    assert md.direction_spans == []
+
+
+def test_p3_dashes_and_bracket_lines_become_spans(timeline, direction_lines_score):
+    """M4: <dashes> and <bracket> are plain start/stop spans."""
+    md = timeline(direction_lines_score)
+
+    kinds = [(s.kind, s.start_measure, s.end_measure) for s in md.direction_spans]
+    assert ("dashes", 1, 1) in kinds
+    assert ("bracket", 1, 2) in kinds
+
+
+def test_p3_unknown_direction_type_child_becomes_the_catch_all(
+    timeline, unknown_direction_score
+):
+    """M5/D6: an <other-direction> and an invented <harp-pedals> both become
+    an `other_direction` DirectionMark, label = tag with hyphens as spaces -
+    so an un-enumerated <direction-type> child stays findable."""
+    md = timeline(unknown_direction_score)
+
+    assert [(m.kind, m.label, m.measure) for m in md.direction_marks] == [
+        ("other_direction", "other direction", 1),
+        ("other_direction", "harp pedals", 2),
+    ]
+
+
+def test_p3_ordinary_score_has_no_direction_spans_or_marks(timeline, minimal_score):
+    """Corollary 1: a plain score must not grow either list."""
+    md = timeline(minimal_score)
+    assert md.direction_spans == []
+    assert md.direction_marks == []

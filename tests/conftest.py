@@ -271,6 +271,42 @@ def chord_diagram_score() -> str:
 
 
 @pytest.fixture
+def pedal_score() -> str:
+    """P3 (find_feature_plan.md, M1): two 4/4 bars - a <pedal> span (bar 1
+    -> bar 2) plus a mid-bar <pedal type="change"> point. Find + report
+    only, no Region 5 row (D15)."""
+    return _require(FIXTURES_DIR / "pedal.musicxml")
+
+
+@pytest.fixture
+def octave_shift_score() -> str:
+    """P3 (M2): one 4/4 bar - an <octave-shift type="down" size="8"> span
+    (label "8vb"). Find + report only, no Region 5 row (D15)."""
+    return _require(FIXTURES_DIR / "octave_shift.musicxml")
+
+
+@pytest.fixture
+def rehearsal_mark_score() -> str:
+    """P3 (M3): two 4/4 bars - a <rehearsal> point mark per bar ("A", "B")."""
+    return _require(FIXTURES_DIR / "rehearsal_mark.musicxml")
+
+
+@pytest.fixture
+def direction_lines_score() -> str:
+    """P3 (M4): two 4/4 bars - a <dashes> span and a <bracket> span. These
+    DO get Region 5 rows (D15)."""
+    return _require(FIXTURES_DIR / "direction_lines.musicxml")
+
+
+@pytest.fixture
+def unknown_direction_score() -> str:
+    """P3 (M5/D6): one 4/4 bar - an <other-direction> and an invented
+    <harp-pedals> child both become the `other_direction` catch-all
+    DirectionMark rather than vanishing."""
+    return _require(FIXTURES_DIR / "unknown_direction.musicxml")
+
+
+@pytest.fixture
 def stave_text_score() -> str:
     """Two parts, one 4/4 bar each. P1 carries every generic-stave-text case
     on its own four notes: a bare tempo word with no metronome sibling

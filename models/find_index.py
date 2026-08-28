@@ -162,6 +162,42 @@ class FindIndex:
                 first_of(m.measure)
                 for m in data.navigation_jumps if m.kind == kind
             ]
+        # P3: <direction> spans resolve through slice_index_at_or_after_
+        # quarters (a direction can start/stop mid-measure, like a hairpin);
+        # points resolve through first_visible_event_index_of_measure.
+        if kind == "pedal_start":
+            return [at_quarters(s.start_quarters_from_start)
+                    for s in data.direction_spans if s.kind == "pedal"]
+        if kind == "pedal_end":
+            return [at_quarters(s.end_quarters_from_start)
+                    for s in data.direction_spans if s.kind == "pedal"]
+        if kind == "pedal_change":
+            return [first_of(m.measure)
+                    for m in data.direction_marks if m.kind == "pedal_change"]
+        if kind == "octave_shift_start":
+            return [at_quarters(s.start_quarters_from_start)
+                    for s in data.direction_spans if s.kind == "octave_shift"]
+        if kind == "octave_shift_end":
+            return [at_quarters(s.end_quarters_from_start)
+                    for s in data.direction_spans if s.kind == "octave_shift"]
+        if kind == "rehearsal":
+            return [first_of(m.measure)
+                    for m in data.direction_marks if m.kind == "rehearsal"]
+        if kind == "dashed_line_start":
+            return [at_quarters(s.start_quarters_from_start)
+                    for s in data.direction_spans if s.kind == "dashes"]
+        if kind == "dashed_line_end":
+            return [at_quarters(s.end_quarters_from_start)
+                    for s in data.direction_spans if s.kind == "dashes"]
+        if kind == "bracket_line_start":
+            return [at_quarters(s.start_quarters_from_start)
+                    for s in data.direction_spans if s.kind == "bracket"]
+        if kind == "bracket_line_end":
+            return [at_quarters(s.end_quarters_from_start)
+                    for s in data.direction_spans if s.kind == "bracket"]
+        if kind == "other_direction":
+            return [first_of(m.measure)
+                    for m in data.direction_marks if m.kind == "other_direction"]
         if kind == "key_signature_change":
             return list(self.key_signature_change_indices())
         if kind == "time_signature_change":

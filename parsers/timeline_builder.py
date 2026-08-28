@@ -13,6 +13,8 @@ from models.duration_units import (
     tuplet_word,
 )
 from models.coda_mark import CodaMark
+from models.direction_mark import DirectionMark
+from models.direction_span import DirectionSpan
 from models.ending_span import EndingSpan
 from models.event_slice import EventSlice
 from models.fine_mark import FineMark
@@ -480,6 +482,20 @@ _RECOGNISED_NOTATION_TAGS = frozenset({
 })
 
 
+# P3 (find_feature_plan.md, D6): the <direction-type> child tags this parser
+# handles explicitly. Anything else becomes the `other_direction` catch-all
+# point mark (DirectionMark, value = tag with hyphens as spaces), so a rare
+# or future exporter element stays findable rather than vanishing. Adding a
+# real handler for a tag means adding it here in the same commit, which
+# automatically removes it from the catch-all. `words`/`dynamics`/`wedge`/
+# `metronome`/`segno`/`coda` are consumed elsewhere (_handle_direction's own
+# dynamics+words handling, _scan_first_part's wedge/tempo/jump-mark scan).
+_RECOGNISED_DIRECTION_TYPE_TAGS = frozenset({
+    "words", "dynamics", "wedge", "metronome", "segno", "coda",
+    "pedal", "octave-shift", "rehearsal", "dashes", "bracket",
+})
+
+
 @dataclass
 class _NoteMarks:
     """Everything hanging off a <note> that isn't its pitch. All optional by
@@ -542,6 +558,16 @@ class _PartState:
     # stroke landing on that same slice sets .strum on that SAME NoteData in
     # place instead of adding a second one.
     harmony_notes_by_key: Dict[Tuple[int, float], NoteData] = field(default_factory=dict)
+
+    # P3/D5: <direction> spans (pedal, octave shift, dashed/bracket lines)
+    # still open, keyed by kind. Most-recent-wins on an unclosed second
+    # start, mirroring _step_barline's single forward-repeat slot - nested
+    # same-kind direction spans on one staff aren't a real notation concept.
+    # Each value is (start_measure, start_beat_position,
+    # start_quarters_from_start, staff, label).
+    open_direction_spans: Dict[str, Tuple[int, float, float, int, str]] = field(
+        default_factory=dict
+    )
 
     def __post_init__(self):
         self.refresh_bar_shape()
@@ -679,6 +705,12 @@ class TimelineBuilder:
         self.repeat_spans: List[RepeatSpan] = []
         self.ending_spans: List[EndingSpan] = []
         self.hairpin_spans: List[HairpinSpan] = []
+        # P3: <direction>/<direction-type> spans and points, collected in
+        # the per-part walk (_handle_direction), not _scan_first_part -
+        # pedal/octave-shift/rehearsal/dashes/bracket are per-part/per-staff
+        # facts, not score-wide ones (D5).
+        self.direction_spans: List[DirectionSpan] = []
+        self.direction_marks: List[DirectionMark] = []
         # Segno/Coda/D.C./D.S./Fine navigation marks, same side-channel
         # pattern - see _step_direction_jump_marks.
         self.segno_marks: List[SegnoMark] = []
@@ -797,7 +829,9 @@ class TimelineBuilder:
                     if elem.tag == "attributes":
                         part_state.refresh_bar_shape(measure_state.walker)
                     elif elem.tag == "direction":
-                        self._handle_direction(elem, part_state, measure_state, sink)
+                        self._handle_direction(
+                            elem, part_state, measure_state, sink, measure_start_quarters
+                        )
                     elif elem.tag == "harmony":
                         self._handle_harmony(elem, part_state, measure_state, sink)
 
@@ -807,17 +841,29 @@ class TimelineBuilder:
                 self._flush_pending_grace(measure_state, sink)
                 part_state.carry_forward(measure_state.walker)
 
+            # P3/D5: a pedal/octave-shift/dashes/bracket span left open at
+            # the part's end closes at that part's last measure rather than
+            # being dropped (untested by any real file - same "defensive
+            # default" category as _step_barline's unmatched backward repeat).
+            self._flush_open_direction_spans(
+                part_state, measure_state.m_num, measure_start_quarters
+            )
+
         return self._assemble_slices(
             root, sink, measure_start_quarters, measure_ts_fifths, pickup_filled_quarters
         )
 
     # --- per-element handlers -------------------------------------------
 
-    def _handle_direction(self, elem, part_state, measure_state, sink) -> None:
-        """A <direction> carries two independent things this parser reads: a
-        dynamics mark (deferred - a later note at the same offset picks it
-        up) and generic stave text (bucketed immediately - nothing here is
-        inherited by a following note, see STAVE_TEXT_VOICE_ID)."""
+    def _handle_direction(
+        self, elem, part_state, measure_state, sink, measure_start_quarters
+    ) -> None:
+        """A <direction> carries several independent things this parser
+        reads: a dynamics mark (deferred - a later note at the same offset
+        picks it up), generic stave text (bucketed immediately), and (P3)
+        the pedal / octave-shift / rehearsal / dashed / bracketed
+        <direction-type> spans and points, plus the D6 catch-all for any
+        other <direction-type> child."""
         walker = measure_state.walker
 
         # A MuseScore-style dynamics mark is a <direction> SIBLING of
@@ -853,6 +899,161 @@ class TimelineBuilder:
                 ),
                 walker,
                 overwrite_state=False,
+            )
+
+        self._step_direction_marks(elem, part_state, measure_state, measure_start_quarters)
+
+    # --- P3: <direction-type> spans and points ------------------------
+
+    def _step_direction_marks(
+        self, elem, part_state, measure_state, measure_start_quarters
+    ) -> None:
+        """P3/D5/D6: each <direction-type> child that isn't a dynamics mark
+        or stave text (handled above) or a wedge/tempo/jump mark (handled by
+        _scan_first_part). Spans open/close through part_state.open_direction_
+        spans; unrecognised children become the `other_direction` catch-all
+        point mark."""
+        walker = measure_state.walker
+        m_num = measure_state.m_num
+        offset_q = _displaced_offset_divs(elem, walker) / walker.divisions
+        beat_pos = part_state.beat_position(m_num, offset_q)
+        quarters = measure_start_quarters.get(m_num, 0.0) + offset_q
+        staff = _staff_number(elem, default=1)
+
+        for dt_child in elem.findall("direction-type/*"):
+            tag = dt_child.tag
+            if tag in ("words", "dynamics", "wedge", "metronome", "segno", "coda"):
+                continue  # handled elsewhere
+            if tag == "pedal":
+                self._step_pedal(
+                    dt_child, part_state, m_num, beat_pos, quarters, staff
+                )
+            elif tag == "octave-shift":
+                self._step_octave_shift(
+                    dt_child, part_state, m_num, beat_pos, quarters, staff
+                )
+            elif tag in ("dashes", "bracket"):
+                self._step_direction_line(
+                    dt_child, tag, part_state, m_num, beat_pos, quarters, staff
+                )
+            elif tag == "rehearsal":
+                self.direction_marks.append(
+                    DirectionMark(
+                        kind="rehearsal",
+                        part_id=part_state.part_id,
+                        staff=staff,
+                        label=(dt_child.text or "").strip(),
+                        measure=m_num,
+                        beat_position=beat_pos,
+                        quarters_from_start=quarters,
+                    )
+                )
+            elif tag not in _RECOGNISED_DIRECTION_TYPE_TAGS:
+                self.direction_marks.append(
+                    DirectionMark(
+                        kind="other_direction",
+                        part_id=part_state.part_id,
+                        staff=staff,
+                        label=tag.replace("-", " "),
+                        measure=m_num,
+                        beat_position=beat_pos,
+                        quarters_from_start=quarters,
+                    )
+                )
+
+    def _open_direction_span(
+        self, part_state, kind: str, m_num, beat_pos, quarters, staff, label: str
+    ) -> None:
+        part_state.open_direction_spans[kind] = (m_num, beat_pos, quarters, staff, label)
+
+    def _close_direction_span(
+        self, part_state, kind: str, m_num, beat_pos, quarters
+    ) -> None:
+        open_slot = part_state.open_direction_spans.pop(kind, None)
+        if open_slot is None:
+            return
+        start_m, start_beat, start_quarters, start_staff, label = open_slot
+        self.direction_spans.append(
+            DirectionSpan(
+                kind=kind,
+                part_id=part_state.part_id,
+                staff=start_staff,
+                label=label,
+                start_measure=start_m,
+                start_beat_position=start_beat,
+                start_quarters_from_start=start_quarters,
+                end_measure=m_num,
+                end_beat_position=beat_pos,
+                end_quarters_from_start=quarters,
+            )
+        )
+
+    def _step_pedal(
+        self, pedal_el, part_state, m_num, beat_pos, quarters, staff
+    ) -> None:
+        """<pedal type="start"|"sostenuto"|"stop"|"change">. A `change`
+        (pedal lift-and-retake) is a point, not a span; start/sostenuto open
+        one span kind, stop closes it."""
+        ptype = pedal_el.attrib.get("type", "")
+        if ptype in ("start", "sostenuto", "resume"):
+            self._open_direction_span(part_state, "pedal", m_num, beat_pos, quarters, staff, "")
+        elif ptype == "stop":
+            self._close_direction_span(part_state, "pedal", m_num, beat_pos, quarters)
+        elif ptype == "change":
+            self.direction_marks.append(
+                DirectionMark(
+                    kind="pedal_change",
+                    part_id=part_state.part_id,
+                    staff=staff,
+                    label="",
+                    measure=m_num,
+                    beat_position=beat_pos,
+                    quarters_from_start=quarters,
+                )
+            )
+
+    def _step_octave_shift(
+        self, shift_el, part_state, m_num, beat_pos, quarters, staff
+    ) -> None:
+        """<octave-shift type="up"|"down"|"stop" size="8"|"15">. The label
+        ("8va" above / "8vb" below; "15ma"/"15mb" for two octaves) is set at
+        the opening end and carried to the closed span."""
+        stype = shift_el.attrib.get("type", "")
+        if stype in ("up", "down"):
+            two_octaves = shift_el.attrib.get("size", "8").strip() == "15"
+            if two_octaves:
+                label = "15ma" if stype == "up" else "15mb"
+            else:
+                label = "8va" if stype == "up" else "8vb"
+            self._open_direction_span(
+                part_state, "octave_shift", m_num, beat_pos, quarters, staff, label
+            )
+        elif stype == "stop":
+            self._close_direction_span(part_state, "octave_shift", m_num, beat_pos, quarters)
+
+    def _step_direction_line(
+        self, line_el, kind: str, part_state, m_num, beat_pos, quarters, staff
+    ) -> None:
+        """<dashes>/<bracket> type="start"|"stop" - a plain span, the same
+        open/close shape as pedal."""
+        ltype = line_el.attrib.get("type", "")
+        if ltype == "start":
+            self._open_direction_span(part_state, kind, m_num, beat_pos, quarters, staff, "")
+        elif ltype in ("stop", "end"):
+            self._close_direction_span(part_state, kind, m_num, beat_pos, quarters)
+
+    def _flush_open_direction_spans(
+        self, part_state, last_m_num: int, measure_start_quarters
+    ) -> None:
+        """Close any span still open when a part ends (D5) - end position is
+        the end of that part's last measure."""
+        if not part_state.open_direction_spans:
+            return
+        end_quarters = measure_start_quarters.get(last_m_num, 0.0) + part_state.full_bar_quarters
+        end_beat = part_state.beat_position(last_m_num, part_state.full_bar_quarters)
+        for kind in list(part_state.open_direction_spans):
+            self._close_direction_span(
+                part_state, kind, last_m_num, end_beat, end_quarters
             )
 
     def _handle_harmony(self, elem, part_state, measure_state, sink) -> None:

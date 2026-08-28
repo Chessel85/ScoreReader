@@ -1,12 +1,13 @@
 # Comprehensive Find — implementation plan
 
-Status: **P0 + P1 + P2 implemented (2026-08-28)**; P3–P6 still plan only. Written
+Status: **P0 + P1 + P2 + P3 implemented (2026-08-28)**; P4–P6 still plan only. Written
 2026-08-28 after auditing every MusicXML file in `files/` and `examples/`
 against the MusicXML 4.0 element reference
 (https://www.w3.org/2021/06/musicxml40/musicxml-reference/elements/).
 
-P0, P1 and P2 delivered as specified below — see the "P0 — DONE" / "P1 — DONE"
-/ "P2 — DONE" notes in §5 for the concrete edit lists and any deviations.
+P0, P1, P2 and P3 delivered as specified below — see the "P0 — DONE" / "P1 —
+DONE" / "P2 — DONE" / "P3 — DONE" notes in §5 for the concrete edit lists and
+any deviations.
 
 Audience: an implementing agent (Sonnet) working phase by phase. Each phase is
 independently shippable, has its own tests, and leaves the app working.
@@ -599,6 +600,73 @@ Acceptance: `files/Three Blind Mice.mxl` offers "Chord symbol (any)" plus one
 target per distinct chord; `files/UG/Half the world away.ug` behaves the same.
 
 ### P3 — Direction spans and points (M1–M5)
+
+> **P3 — DONE (2026-08-28).** Implemented per the closed design decisions
+> (D5 per-part collection, D6 catch-all, D12 order, D15 no-Region-5 for
+> pedal/octave-shift). Edits:
+> - `models/direction_span.py` (`DirectionSpan`, quarters-based like
+>   `HairpinSpan`, kinds `pedal`/`octave_shift`/`dashes`/`bracket`, carries
+>   `part_id`/`staff`/`label`) and `models/direction_mark.py`
+>   (`DirectionMark`, point cases `rehearsal`/`pedal_change`/
+>   `other_direction`).
+> - `parsers/timeline_builder.py`: `_RECOGNISED_DIRECTION_TYPE_TAGS`
+>   frozenset; `_PartState.open_direction_spans` slot (most-recent-wins on an
+>   unclosed second start, like `_step_barline`); `build()` threads
+>   `measure_start_quarters` into `_handle_direction` and calls
+>   `_flush_open_direction_spans` after each part's measure loop; new
+>   `_step_direction_marks` + `_step_pedal` / `_step_octave_shift` /
+>   `_step_direction_line` / `_open`/`_close_direction_span` helpers.
+>   octave-shift `size="8"|"15"` + `type="up"|"down"` → label
+>   `8va`/`8vb`/`15ma`/`15mb`.
+> - `models/timeline_build.py`: `direction_spans` / `direction_marks` fields
+>   in the dataclass, `from_builder`, and `apply_to`. MIDI/GP/UG builders
+>   each stub the two lists empty (D4).
+> - `models/find_target.py`: 11 `MARKING_KINDS` entries (`pedal_start`/
+>   `pedal_end`/`pedal_change`, `octave_shift_start`/`_end`, `rehearsal`,
+>   `dashed_line_start`/`_end`, `bracket_line_start`/`_end`,
+>   `other_direction`).
+> - `models/find_index.py`: 11 marking branches — spans via `at_quarters`
+>   (mid-measure, like hairpins), points via `first_of(measure)`. Uncached,
+>   like every existing marking branch.
+> - `models/music_data.py`: `direction_spans` / `direction_marks` fields;
+>   `get_performance_region_rows` gains a dashes/bracket/`other_direction`
+>   block after the hairpin loop (D12 order) with a `_dir_prefix` helper that
+>   part-prefixes a label only when >1 part contributes that kind (D5) —
+>   pedal/octave-shift deliberately skipped (D15);
+>   `get_performance_report_lines` gains six summary blocks (Pedal marks /
+>   Octave shifts / Rehearsal marks / Dashed lines / Bracket lines / Other
+>   directions) between "Performance markers" and "Segno marks".
+>
+> Deviations / decisions while implementing:
+> - **Region 5 for the catch-all.** §5.4 says "dashes/bracket and the
+>   catch-all only" — `other_direction` DirectionMarks get a one-shot Region
+>   5 row (`"Direction: <label>"`); `rehearsal` and `pedal_change` get Find +
+>   report only, no row.
+> - **`find_occurrence` is strictly-after.** A catch-all test that assumed
+>   `find_occurrence(from_index=0)` returns the occurrence *at* index 0 was
+>   corrected — it returns the next one and wraps, matching every other
+>   marking target.
+> - **Marking targets are not value-expanded.** `other_direction` is a
+>   single "Direction" target that walks every unrecognised direction point
+>   regardless of tag (the specific tag shows in Region 5 / the report),
+>   same shape as `segno`. D2's per-value expansion is attribute-only.
+> - Fixtures: `pedal`, `octave_shift`, `rehearsal_mark`, `direction_lines`
+>   (dashes + bracket), `unknown_direction` (`<other-direction>` + an
+>   invented `<harp-pedals>`, in separate bars so each is its own
+>   occurrence) + their conftest fixtures. Tests: 7 parser
+>   characterisation tests in `test_timeline_characterisation.py`, 8
+>   find/Region-5/report/D13/D15 tests in `test_music_data.py`. Full suite:
+>   1082 passed.
+> - §7 gate run (git-worktree baseline at HEAD `eebf33b`, both harnesses).
+>   **Parser fingerprint:** the only diff is the 5 new fixture blocks — no
+>   existing file's slices / beat positions / durations / spans /
+>   `total_measures` changed (additive only, as §7 expects for new
+>   fixtures). **Model fingerprint:** every diff line is either a new
+>   fixture block, a new `find marking/<direction kind>` occurrence list, or
+>   the six new Performance Report summary keys appended to each file's
+>   `report=` line — no navigation walk, Region 3/4/5 text, playback/grace
+>   event, bar bound, key-override round trip, or existing report line
+>   changed.
 
 1. New models mirroring `HairpinSpan` (quarters-based, since a direction can start
    mid-measure): `models/direction_span.py` — `DirectionSpan(kind, part_id, staff,

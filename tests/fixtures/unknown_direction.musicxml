@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- P3 (find_feature_plan.md, M5/D6): one part, two complete 4/4 bars.
+       bar 1 beat 1 - <direction-type><other-direction>foo bar</other-direction>
+       bar 2 beat 1 - <direction-type><harp-pedals/>  (an invented element)
+     Both become the `other_direction` catch-all DirectionMark, label from
+     the child tag with hyphens as spaces ("other direction" / "harp
+     pedals"), so an un-enumerated <direction-type> child stays findable
+     rather than vanishing silently. Separate bars so each is its own Find
+     occurrence (D13: an occurrence is a position). -->
+<score-partwise version="4.0">
+  <part-list>
+    <score-part id="P1">
+      <part-name>Test Part</part-name>
+      <score-instrument id="P1-I1">
+        <instrument-name>Test Instrument</instrument-name>
+      </score-instrument>
+      <midi-instrument id="P1-I1">
+        <midi-channel>1</midi-channel>
+        <midi-program>1</midi-program>
+      </midi-instrument>
+    </score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <key><fifths>0</fifths></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <clef number="1"><sign>G</sign><line>2</line></clef>
+      </attributes>
+      <direction placement="above">
+        <direction-type><other-direction>foo bar</other-direction></direction-type>
+      </direction>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><type>whole</type><staff>1</staff>
+      </note>
+    </measure>
+    <measure number="2">
+      <direction placement="above">
+        <direction-type><harp-pedals/></direction-type>
+      </direction>
+      <note>
+        <pitch><step>E</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><type>whole</type><staff>1</staff>
+      </note>
+    </measure>
+  </part>
+</score-partwise>

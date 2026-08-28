@@ -2450,3 +2450,113 @@ def test_p2_chord_diagram_absent_when_harmony_has_no_frame(timeline, chords_and_
         for n in s.notes
     )
     assert "chord diagram" not in {t.key for t in md.available_find_targets()}
+
+
+# --- P3: direction spans and points ------------------------------------
+
+
+def _marking_keys(md):
+    return {t.key for t in md.available_find_targets() if t.category == "marking"}
+
+
+def test_p3_pedal_targets_offered_and_walk_their_positions(timeline, pedal_score):
+    """M1: pedal start/end/change are all Find targets; Alt+Right wraps
+    through each one's positions."""
+    md = timeline(pedal_score)
+    assert {"pedal_start", "pedal_end", "pedal_change"} <= _marking_keys(md)
+
+    start = _find_target(md, "pedal_start", "marking")
+    first = md.find_occurrence(start, from_index=0, direction=1)
+    assert first is not None
+    assert md.find_occurrence(start, from_index=first, direction=1) == first
+
+
+def test_p3_pedal_and_octave_shift_produce_no_region_5_row(
+    timeline, pedal_score, octave_shift_score
+):
+    """D15: pedal and octave shift are Find + Performance Report only. A
+    Region 5 row would rebuild Region 5 and fire the performance cue on
+    nearly every bar of pedal-heavy music. Do NOT relax this "for
+    consistency" with dashes/bracket."""
+    for score in (pedal_score, octave_shift_score):
+        md = timeline(score)
+        for i in range(len(md.timeline_slices)):
+            assert md.get_performance_region_rows(i) == []
+
+
+def test_p3_octave_shift_size_label_in_the_report(timeline, octave_shift_score):
+    md = timeline(octave_shift_score)
+    lines = md.get_performance_report_lines()
+    assert "Octave shifts: 1" in lines
+    assert "Octave shift 8vb: Measure 1 to Measure 1" in lines
+
+
+def test_p3_rehearsal_marks_findable_and_reported(timeline, rehearsal_mark_score):
+    md = timeline(rehearsal_mark_score)
+    assert "rehearsal" in _marking_keys(md)
+
+    target = _find_target(md, "rehearsal", "marking")
+    first = md.find_occurrence(target, from_index=0, direction=1)
+    second = md.find_occurrence(target, from_index=first, direction=1)
+    wrapped = md.find_occurrence(target, from_index=second, direction=1)
+    assert first is not None and second != first and wrapped == first
+
+    lines = md.get_performance_report_lines()
+    assert "Rehearsal marks: 2" in lines
+    assert "Rehearsal mark A: Measure 1" in lines
+
+
+def test_p3_dashes_and_bracket_get_region_5_rows(timeline, direction_lines_score):
+    """D15: unlike pedal/octave shift, dashed and bracketed lines are rare
+    and DO get Region 5 rows, using the same label prefix as their Find
+    targets."""
+    md = timeline(direction_lines_score)
+    assert {"dashed_line_start", "dashed_line_end",
+            "bracket_line_start", "bracket_line_end"} <= _marking_keys(md)
+
+    labels = [r.label for r in md.get_performance_region_rows(0)]
+    assert "Dashed line start: measure 1" in labels
+    assert any(l.startswith("Bracket line end") for l in labels)
+
+
+def test_p3_catch_all_direction_is_findable_and_shown(timeline, unknown_direction_score):
+    """M5/D6: the invented <harp-pedals> element is individually reachable
+    via the `other_direction` catch-all target and shows in Region 5."""
+    md = timeline(unknown_direction_score)
+    assert "other_direction" in _marking_keys(md)
+
+    target = _find_target(md, "other_direction", "marking")
+    first = md.find_occurrence(target, from_index=0, direction=1)
+    second = md.find_occurrence(target, from_index=first, direction=1)
+    assert first is not None and second != first  # both marks reachable
+
+    seen = set()
+    for idx in (first, second):
+        seen.update(r.label for r in md.get_performance_region_rows(idx))
+    assert {"Direction: other direction", "Direction: harp pedals"} <= seen
+
+
+def test_p3_plain_score_offers_no_direction_targets(
+    timeline, dynamics_articulation_fingering_score
+):
+    """Corollary 1: a score with no <direction-type> spans/points must not
+    grow the Find dialog."""
+    md = timeline(dynamics_articulation_fingering_score)
+    keys = _marking_keys(md)
+    for k in ("pedal_start", "pedal_end", "pedal_change", "octave_shift_start",
+              "octave_shift_end", "rehearsal", "dashed_line_start",
+              "bracket_line_start", "other_direction"):
+        assert k not in keys
+
+
+def test_p3_offered_direction_targets_never_read_zero_occurrences(
+    timeline, pedal_score, octave_shift_score, rehearsal_mark_score,
+    direction_lines_score, unknown_direction_score,
+):
+    """D13: every offered target has at least one occurrence by
+    construction."""
+    for score in (pedal_score, octave_shift_score, rehearsal_mark_score,
+                  direction_lines_score, unknown_direction_score):
+        md = timeline(score)
+        for target, count in md.available_find_targets_with_counts():
+            assert count >= 1

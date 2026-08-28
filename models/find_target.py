@@ -76,4 +76,19 @@ MARKING_KINDS: List[Tuple[str, str]] = [
     ("key_signature_change", "Key signature change"),
     ("time_signature_change", "Time signature change"),
     ("tempo_change", "Tempo change"),
+    # P3: <direction>/<direction-type> spans and points. Pedal and octave
+    # shift are Find + Performance Report only, no Region 5 row (D15 - a
+    # pedal-heavy piece would fire the change cue on nearly every bar).
+    ("pedal_start", "Pedal start"),
+    ("pedal_end", "Pedal end"),
+    ("pedal_change", "Pedal change"),
+    ("octave_shift_start", "Octave shift start"),
+    ("octave_shift_end", "Octave shift end"),
+    ("rehearsal", "Rehearsal mark"),
+    ("dashed_line_start", "Dashed line start"),
+    ("dashed_line_end", "Dashed line end"),
+    ("bracket_line_start", "Bracket line start"),
+    ("bracket_line_end", "Bracket line end"),
+    # D6 catch-all: any <direction-type> child with no explicit handler.
+    ("other_direction", "Direction"),
 ]

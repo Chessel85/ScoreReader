@@ -33,6 +33,11 @@ class TimelineBuild:
     repeat_spans: List[Any] = field(default_factory=list)
     ending_spans: List[Any] = field(default_factory=list)
     hairpin_spans: List[Any] = field(default_factory=list)
+    # P3: <direction>/<direction-type> spans (pedal, octave shift, dashed/
+    # bracketed lines) and points (rehearsal, pedal change, D6 catch-all).
+    # Collected per part, not first-part-only (D5).
+    direction_spans: List[Any] = field(default_factory=list)
+    direction_marks: List[Any] = field(default_factory=list)
     segno_marks: List[Any] = field(default_factory=list)
     coda_marks: List[Any] = field(default_factory=list)
     to_coda_marks: List[Any] = field(default_factory=list)
@@ -56,6 +61,8 @@ class TimelineBuild:
             repeat_spans=builder.repeat_spans,
             ending_spans=builder.ending_spans,
             hairpin_spans=builder.hairpin_spans,
+            direction_spans=builder.direction_spans,
+            direction_marks=builder.direction_marks,
             segno_marks=builder.segno_marks,
             coda_marks=builder.coda_marks,
             to_coda_marks=builder.to_coda_marks,
@@ -72,6 +79,8 @@ class TimelineBuild:
         music_data.repeat_spans = self.repeat_spans
         music_data.ending_spans = self.ending_spans
         music_data.hairpin_spans = self.hairpin_spans
+        music_data.direction_spans = self.direction_spans
+        music_data.direction_marks = self.direction_marks
         music_data.segno_marks = self.segno_marks
         music_data.coda_marks = self.coda_marks
         music_data.to_coda_marks = self.to_coda_marks

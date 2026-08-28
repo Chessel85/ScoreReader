@@ -64,6 +64,9 @@ class GpTimelineBuilder:
         self.repeat_spans: List = []
         self.ending_spans: List = []
         self.hairpin_spans: List = []
+        # P3: MusicXML-only, like the span lists above.
+        self.direction_spans: List = []
+        self.direction_marks: List = []
         self.segno_marks: List = []
         self.coda_marks: List = []
         self.to_coda_marks: List = []

@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from models import vocabulary
 from models.coda_mark import CodaMark
+from models.direction_mark import DirectionMark
+from models.direction_span import DirectionSpan
 from models.ending_span import EndingSpan
 from models.event_slice import EventSlice
 from models.fine_mark import FineMark
@@ -172,6 +174,12 @@ class MusicData:
     repeat_spans: List[RepeatSpan] = field(default_factory=list)
     ending_spans: List[EndingSpan] = field(default_factory=list)
     hairpin_spans: List[HairpinSpan] = field(default_factory=list)
+    # P3: <direction>/<direction-type> spans (pedal, octave shift, dashed/
+    # bracketed lines) and points (rehearsal, pedal change, D6 catch-all),
+    # collected per part (D5). Pedal/octave-shift are Find + Performance
+    # Report only - deliberately NO Region 5 row (D15).
+    direction_spans: List[DirectionSpan] = field(default_factory=list)
+    direction_marks: List[DirectionMark] = field(default_factory=list)
     total_measures: int = 0
 
     # Segno/Coda/D.C./D.S./Fine navigation marks, same side-channel pattern
@@ -914,6 +922,65 @@ class MusicData:
                     )
                 )
 
+        # P3: dashed / bracketed lines and the D6 catch-all get Region 5
+        # rows (D12 order: after hairpins, before the one-shot rows). Pedal
+        # and octave shift deliberately do NOT (D15) - a pedal-heavy piece
+        # would rebuild Region 5 and fire the change cue on nearly every
+        # bar. D5: a kind's label is prefixed with the part name only when
+        # more than one part contributes a span/mark of that kind.
+        def _dir_prefix(kind: str, part_id: str) -> str:
+            pids = {
+                x.part_id
+                for x in (self.direction_spans + self.direction_marks)
+                if x.kind == kind
+            }
+            if len(pids) <= 1:
+                return ""
+            name = next((p.name for p in self.parts_info if p.part_id == part_id), None)
+            return f"{name}: " if name else ""
+
+        _DIR_LINE_LABELS = {"dashes": "Dashed line", "bracket": "Bracket line"}
+        for span in self.direction_spans:
+            if span.kind not in _DIR_LINE_LABELS:
+                continue
+            if not (span.start_quarters_from_start <= slice_.quarters_from_start
+                    <= span.end_quarters_from_start):
+                continue
+            prefix = _dir_prefix(span.kind, span.part_id)
+            line_label = _DIR_LINE_LABELS[span.kind]
+            rows.append(
+                PerformanceRegionRow(
+                    label=(
+                        f"{prefix}{line_label} start: "
+                        f"{self._bar_beat_label(bar_word, span.start_measure, span.start_beat_position)}"
+                    ),
+                    jump_target_measure=span.start_measure,
+                    jump_target_quarters=span.start_quarters_from_start,
+                )
+            )
+            rows.append(
+                PerformanceRegionRow(
+                    label=(
+                        f"{prefix}{line_label} end: "
+                        f"{self._bar_beat_label(bar_word, span.end_measure, span.end_beat_position)}"
+                    ),
+                    jump_target_measure=span.end_measure,
+                    jump_target_quarters=span.end_quarters_from_start,
+                )
+            )
+
+        for mark in self.direction_marks:
+            if mark.kind != "other_direction" or mark.measure != slice_.measure:
+                continue
+            prefix = _dir_prefix("other_direction", mark.part_id)
+            rows.append(
+                PerformanceRegionRow(
+                    label=f"{prefix}Direction: {mark.label}",
+                    jump_target_measure=slice_.measure,
+                    jump_target_quarters=slice_.quarters_from_start,
+                )
+            )
+
         # Segno/Coda/D.C./D.S./Fine: one-shot rows, like the time-sig/tempo
         # rows below - unlike repeat/ending/hairpin spans, each of these is a
         # single point, not a start/end pair, so the gate is a direct
@@ -1131,6 +1198,45 @@ class MusicData:
             lines.append(
                 f"{span.kind.capitalize()}: {bar_word} {span.start_measure} to {bar_word} {span.end_measure}"
             )
+
+        # P3: <direction> spans and points. Pedal/octave-shift appear here
+        # (and in Find) but never in Region 5 (D15).
+        def _span_range(span) -> str:
+            return f"{bar_word} {span.start_measure} to {bar_word} {span.end_measure}"
+
+        _pedal_spans = [s for s in self.direction_spans if s.kind == "pedal"]
+        _pedal_changes = [m for m in self.direction_marks if m.kind == "pedal_change"]
+        lines.append(f"Pedal marks: {len(_pedal_spans) + len(_pedal_changes)}")
+        for span in _pedal_spans:
+            lines.append(f"Pedal: {_span_range(span)}")
+        for mark in _pedal_changes:
+            lines.append(f"Pedal change: {bar_word} {mark.measure}")
+
+        _octave_spans = [s for s in self.direction_spans if s.kind == "octave_shift"]
+        lines.append(f"Octave shifts: {len(_octave_spans)}")
+        for span in _octave_spans:
+            label = f" {span.label}" if span.label else ""
+            lines.append(f"Octave shift{label}: {_span_range(span)}")
+
+        _rehearsals = [m for m in self.direction_marks if m.kind == "rehearsal"]
+        lines.append(f"Rehearsal marks: {len(_rehearsals)}")
+        for mark in _rehearsals:
+            label = f" {mark.label}" if mark.label else ""
+            lines.append(f"Rehearsal mark{label}: {bar_word} {mark.measure}")
+
+        _dashes = [s for s in self.direction_spans if s.kind == "dashes"]
+        _brackets = [s for s in self.direction_spans if s.kind == "bracket"]
+        lines.append(f"Dashed lines: {len(_dashes)}")
+        for span in _dashes:
+            lines.append(f"Dashed line: {_span_range(span)}")
+        lines.append(f"Bracket lines: {len(_brackets)}")
+        for span in _brackets:
+            lines.append(f"Bracket line: {_span_range(span)}")
+
+        _other_dirs = [m for m in self.direction_marks if m.kind == "other_direction"]
+        lines.append(f"Other directions: {len(_other_dirs)}")
+        for mark in _other_dirs:
+            lines.append(f"Direction {mark.label}: {bar_word} {mark.measure}")
 
         def _label_suffix(label: str) -> str:
             return f" {label}" if label and label != "1" else ""

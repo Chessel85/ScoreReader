@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- P3 (find_feature_plan.md, M3): one part, one complete 4/4 bar.
+       beat 1 - <direction-type><rehearsal>A</rehearsal>  -> a `rehearsal`
+                point mark, label "A"
+     Rehearsal marks are a Find + Performance Report target (no Region 5
+     row - not in the D15 dashes/bracket/catch-all set). -->
+<score-partwise version="4.0">
+  <part-list>
+    <score-part id="P1">
+      <part-name>Test Part</part-name>
+      <score-instrument id="P1-I1">
+        <instrument-name>Test Instrument</instrument-name>
+      </score-instrument>
+      <midi-instrument id="P1-I1">
+        <midi-channel>1</midi-channel>
+        <midi-program>1</midi-program>
+      </midi-instrument>
+    </score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <key><fifths>0</fifths></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <clef number="1"><sign>G</sign><line>2</line></clef>
+      </attributes>
+      <direction placement="above">
+        <direction-type><rehearsal>A</rehearsal></direction-type>
+      </direction>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><type>whole</type><staff>1</staff>
+      </note>
+    </measure>
+    <measure number="2">
+      <direction placement="above">
+        <direction-type><rehearsal>B</rehearsal></direction-type>
+      </direction>
+      <note>
+        <pitch><step>D</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><type>whole</type><staff>1</staff>
+      </note>
+    </measure>
+  </part>
+</score-partwise>
