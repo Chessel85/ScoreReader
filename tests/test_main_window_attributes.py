@@ -68,7 +68,7 @@ def test_attribute_order_move_updates_music_data_and_restores_prior_focus(
     monkeypatch.setattr(dialog, "exec", lambda: QDialog.DialogCode.Accepted)
     monkeypatch.setattr(
         "main_window.AttributeOrderDialog",
-        lambda parent, pairs, scope_description: dialog,
+        lambda parent, pairs, scope_description, initial_attribute_key=None: dialog,
     )
 
     window._show_attribute_order_dialog()
@@ -89,7 +89,7 @@ def test_attribute_order_cancel_leaves_the_order_unchanged(
     monkeypatch.setattr(dialog, "exec", lambda: QDialog.DialogCode.Rejected)
     monkeypatch.setattr(
         "main_window.AttributeOrderDialog",
-        lambda parent, pairs, scope_description: dialog,
+        lambda parent, pairs, scope_description, initial_attribute_key=None: dialog,
     )
 
     window._show_attribute_order_dialog()
@@ -111,7 +111,7 @@ def test_attribute_order_persists_per_file_not_across_different_files(
     monkeypatch.setattr(dialog, "exec", lambda: QDialog.DialogCode.Accepted)
     monkeypatch.setattr(
         "main_window.AttributeOrderDialog",
-        lambda parent, pairs, scope_description: dialog,
+        lambda parent, pairs, scope_description, initial_attribute_key=None: dialog,
     )
     window._show_attribute_order_dialog()
     assert window._music_data.attribute_order[neighbor_global_index] == "octave"
@@ -121,6 +121,75 @@ def test_attribute_order_persists_per_file_not_across_different_files(
 
     load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
     assert window._music_data.attribute_order[neighbor_global_index] == "octave"
+
+
+def test_attribute_order_dialog_preselects_the_given_initial_attribute_key(window):
+    dialog = AttributeOrderDialog(
+        window,
+        pairs=[("dynamic", "dynamic"), ("articulation", "articulation")],
+        scope_description="",
+        initial_attribute_key="articulation",
+    )
+
+    assert dialog.attribute_list.currentRow() == 1
+
+
+def test_attribute_order_dialog_falls_back_to_first_row_when_key_not_found(window):
+    """Covers both fallback cases: no key given, and a key that isn't in
+    this dialog's own scope (e.g. Region 4's selection came from a
+    different voice than the one Region 2 is scoped to)."""
+    pairs = [("dynamic", "dynamic"), ("articulation", "articulation")]
+
+    dialog_no_key = AttributeOrderDialog(window, pairs=pairs, scope_description="")
+    assert dialog_no_key.attribute_list.currentRow() == 0
+
+    dialog_missing_key = AttributeOrderDialog(
+        window, pairs=pairs, scope_description="", initial_attribute_key="pluck",
+    )
+    assert dialog_missing_key.attribute_list.currentRow() == 0
+
+
+def test_show_attribute_order_dialog_preselects_region_4s_current_attribute(
+    window, qtbot, dynamics_articulation_fingering_score, monkeypatch
+):
+    """End-to-end: whatever attribute Region 4's current row carries when
+    Options > Reorder Attributes... is invoked is the row the dialog opens
+    on."""
+    load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
+    node = window.region_2.model_manager.node("voice_P1_1_1")
+    monkeypatch.setattr(window.attributes, "scope_node", lambda: node)
+
+    def find_articulation_row():
+        for i in range(window.region_4.count()):
+            if window.region_4.item(i).data(Qt.ItemDataRole.UserRole) == "articulation":
+                return i
+        return None
+
+    articulation_row = find_articulation_row()
+    for _ in range(20):
+        if articulation_row is not None:
+            break
+        window.navigate_timeline_right()
+        articulation_row = find_articulation_row()
+    assert articulation_row is not None, "fixture assumption: some note carries a staccato articulation"
+    window.region_4.setCurrentRow(articulation_row)
+
+    captured = {}
+
+    def fake_dialog(parent, pairs, scope_description, initial_attribute_key=None):
+        captured["initial_attribute_key"] = initial_attribute_key
+        dialog = AttributeOrderDialog(
+            parent, pairs=pairs, scope_description=scope_description,
+            initial_attribute_key=initial_attribute_key,
+        )
+        monkeypatch.setattr(dialog, "exec", lambda: QDialog.DialogCode.Rejected)
+        return dialog
+
+    monkeypatch.setattr("main_window.AttributeOrderDialog", fake_dialog)
+
+    window._show_attribute_order_dialog()
+
+    assert captured["initial_attribute_key"] == "articulation"
 
 
 # --- Reorder Attributes dialog's Add/Remove button (user-requested) -----
@@ -282,7 +351,7 @@ def test_add_remove_requested_is_wired_to_show_order_menu(
     monkeypatch.setattr(dialog, "exec", fake_exec)
     monkeypatch.setattr(
         "main_window.AttributeOrderDialog",
-        lambda parent, pairs, scope_description: dialog,
+        lambda parent, pairs, scope_description, initial_attribute_key=None: dialog,
     )
     monkeypatch.setattr(window.attributes, "scope_node", lambda: node)
 

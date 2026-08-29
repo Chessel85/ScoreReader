@@ -853,6 +853,7 @@ class MainWindow(QMainWindow):
                 self,
                 pairs=self.attributes.order_pairs_for_node(node),
                 scope_description=node_breadcrumb(node),
+                initial_attribute_key=self.attributes.current_region_4_attribute_key(),
             )
             dialog.add_remove_requested.connect(
                 lambda attribute_key: self.attributes.show_order_menu(dialog, node, attribute_key)
@@ -870,13 +871,32 @@ class MainWindow(QMainWindow):
         Applying goes through MusicData.reorder_parts (the note-order
         half) and Region2ListWidget.reorder_parts (the Region 2 row-order
         half, an in-place reorder - NOT load_score_structure, which would
-        reset every on/off toggle back to enabled)."""
+        reset every on/off toggle back to enabled).
+
+        User-requested: the dialog opens pre-selected on whichever part
+        Region 2's current selection belongs to (a staff/voice node's own
+        part_id, not just a part row's), and Region 2's selection is
+        restored to that exact node afterward regardless of Accept/Cancel
+        - reorder_parts repositions the part's QTreeWidgetItem rather than
+        rebuilding it, but leaves the tree's own "current item" undefined
+        in the process, so without this the selection would land wherever
+        Qt happens to leave it rather than following the part. Which
+        widget actually holds keyboard focus is untouched here -
+        _preserving_focus() below already restores that to wherever it
+        was before the dialog opened, same as every other dialog."""
         if not self._music_data:
             return
+        node = self.region_2.current_node()
+        initial_part_id = node.part_id if node is not None else None
+        selected_node_id = node.node_id if node is not None else None
         with self._preserving_focus():
-            dialog = PartOrderDialog(self, parts=self.score_edit.part_rows())
+            dialog = PartOrderDialog(
+                self, parts=self.score_edit.part_rows(), initial_part_id=initial_part_id
+            )
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 self.score_edit.reorder_parts(dialog.part_order())
+            if selected_node_id is not None:
+                self.region_2.select_node(selected_node_id)
 
     # --- presentation (delegators) ------------------------------------
 

@@ -39,7 +39,12 @@ class AttributeOrderDialog(QDialog):
     ordering) rather than staged for OK.
 
     Same focus-on-show reasoning as GotoMeasureDialog: setFocus() before the
-    native window exists never reaches NVDA, so it's deferred to showEvent."""
+    native window exists never reaches NVDA, so it's deferred to showEvent.
+
+    initial_attribute_key (user-requested follow-up) pre-selects a row -
+    normally the attribute Region 4's current/last-selected row carries -
+    so the list opens on that attribute instead of nothing. See
+    _select_initial_row for the fallback-to-first-row cases."""
 
     # attribute_key of the row the button was clicked for - MainWindow
     # builds and shows the actual scope menu (AttributeController.
@@ -47,7 +52,8 @@ class AttributeOrderDialog(QDialog):
     # this dialog has no access to.
     add_remove_requested = Signal(str)
 
-    def __init__(self, parent=None, pairs: Optional[List[Tuple[str, str]]] = None, scope_description: str = ""):
+    def __init__(self, parent=None, pairs: Optional[List[Tuple[str, str]]] = None, scope_description: str = "",
+                 initial_attribute_key: Optional[str] = None):
         super().__init__(parent)
         self.setWindowTitle("Reorder Attributes")
 
@@ -55,6 +61,7 @@ class AttributeOrderDialog(QDialog):
         self.attribute_list = QListWidget(self)
         label.setBuddy(self.attribute_list)
         self._populate(pairs or [])
+        self._select_initial_row(initial_attribute_key)
         self.attribute_list.currentRowChanged.connect(self._update_button_state)
 
         self.up_button = QPushButton("Move &Up", self)
@@ -108,6 +115,22 @@ class AttributeOrderDialog(QDialog):
             item = QListWidgetItem(attribute_label)
             item.setData(Qt.ItemDataRole.UserRole, attribute_key)
             self.attribute_list.addItem(item)
+
+    def _select_initial_row(self, initial_attribute_key: Optional[str]) -> None:
+        """Opens the list with initial_attribute_key's row already current
+        - normally whichever attribute Region 4 last had selected, so the
+        dialog picks up where the user was rather than always landing on
+        row 0. Falls back to the first row when that key wasn't passed, or
+        isn't among the attributes in this dialog's own scope (e.g. Region 2
+        is scoped to a different voice than Region 4's selection came from)."""
+        if self.attribute_list.count() == 0:
+            return
+        if initial_attribute_key is not None:
+            for row in range(self.attribute_list.count()):
+                if self.attribute_list.item(row).data(Qt.ItemDataRole.UserRole) == initial_attribute_key:
+                    self.attribute_list.setCurrentRow(row)
+                    return
+        self.attribute_list.setCurrentRow(0)
 
     def _update_button_state(self, current_row: Optional[int] = None):
         if current_row is None:

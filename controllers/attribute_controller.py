@@ -1,4 +1,5 @@
 # controllers/attribute_controller.py
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMenu
 
 from models.vocabulary import attribute_label
@@ -185,6 +186,19 @@ class AttributeController:
         if not self.music_data:
             return None
         return self.presenter.region_2.current_node()
+
+    def current_region_4_attribute_key(self):
+        """The attribute_key of Region 4's current row (its own current
+        item, which QListWidget keeps regardless of which region has
+        keyboard focus - so this reads as "last selected" too), or None if
+        Region 4 has no rows. Lets the reorder dialog open with that same
+        attribute already selected instead of nothing; AttributeOrderDialog
+        falls back to its first row itself when the key doesn't turn up in
+        this dialog's own scope."""
+        item = self.presenter.region_4.currentItem()
+        if item is None:
+            return None
+        return item.data(Qt.ItemDataRole.UserRole)
 
     def apply_order(self, node, new_order: list) -> None:
         """Commits the Reorder Attributes dialog's staged order (read via

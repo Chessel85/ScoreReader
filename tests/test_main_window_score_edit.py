@@ -418,18 +418,27 @@ def test_instrument_dialog_does_nothing_with_no_score_loaded(window, qtbot):
 # --- Options > Reorder Parts... -----------------------------------------
 
 def _fake_part_order_dialog(monkeypatch, window, *, accept: bool, on_exec=None):
-    """Same convention as _fake_instrument_dialog above."""
+    """Same convention as _fake_instrument_dialog above. Captures whatever
+    initial_part_id main_window.py passes so a test can assert on it."""
     parts = [(p.part_id, p.name) for p in window._music_data.parts_info]
-    dialog = PartOrderDialog(window, parts=parts)
+    captured = {}
 
-    def fake_exec():
-        if on_exec is not None:
-            on_exec(dialog)
-        return QDialog.DialogCode.Accepted if accept else QDialog.DialogCode.Rejected
+    def fake_constructor(parent, parts, initial_part_id=None):
+        captured["initial_part_id"] = initial_part_id
+        dialog = PartOrderDialog(parent, parts=parts, initial_part_id=initial_part_id)
 
-    monkeypatch.setattr(dialog, "exec", fake_exec)
-    monkeypatch.setattr("main_window.PartOrderDialog", lambda parent, parts: dialog)
-    return dialog
+        def fake_exec():
+            if on_exec is not None:
+                on_exec(dialog)
+            return QDialog.DialogCode.Accepted if accept else QDialog.DialogCode.Rejected
+
+        monkeypatch.setattr(dialog, "exec", fake_exec)
+        fake_constructor.dialog = dialog
+        return dialog
+
+    monkeypatch.setattr("main_window.PartOrderDialog", fake_constructor)
+    fake_constructor.captured = captured
+    return fake_constructor
 
 
 def test_reordering_parts_updates_region_2_and_region_3_order_without_resetting_toggles(
@@ -487,3 +496,57 @@ def test_part_order_dialog_does_nothing_on_cancel(window, qtbot, monkeypatch):
 
 def test_part_order_dialog_does_nothing_with_no_score_loaded(window, qtbot):
     window._show_part_order_dialog()  # must not crash
+
+
+def test_show_part_order_dialog_preselects_the_part_of_region_2s_current_selection(
+    window, qtbot, dynamics_articulation_fingering_score, monkeypatch
+):
+    """User-requested: with Piano > Treble Clef > Voice 1 (voice_P1_1_1)
+    selected in Region 2, the dialog should open on the Piano row, not
+    row 0 - the same "resolve to the parent part" idea as
+    AttributeOrderDialog's initial_attribute_key, but keyed by part_id
+    since this dialog's rows are parts, not attributes."""
+    load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
+    window.region_2.select_node("voice_P1_1_1")
+
+    fake_constructor = _fake_part_order_dialog(monkeypatch, window, accept=False)
+    window._show_part_order_dialog()
+
+    assert fake_constructor.captured["initial_part_id"] == "P1"
+    dialog = fake_constructor.dialog
+    assert dialog.part_list.currentItem().data(Qt.ItemDataRole.UserRole) == "P1"
+
+
+def test_part_order_dialog_restores_region_2_selection_after_reorder(
+    window, qtbot, dynamics_articulation_fingering_score, monkeypatch
+):
+    """The scenario from the user's own report: Piano > Treble Clef >
+    Voice 1 is selected, the dialog moves Piano down (below Guitar), and
+    once it closes Region 2's selection should still be that same voice
+    node - not reset to Piano's own row, and not left wherever Qt happens
+    to leave "current item" after reorder_parts repositions the tree
+    items."""
+    load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
+    window.region_2.select_node("voice_P1_1_1")
+
+    def move_piano_down(dialog):
+        dialog.part_list.setCurrentRow(0)  # "Piano"
+        dialog._move(1)
+
+    _fake_part_order_dialog(monkeypatch, window, accept=True, on_exec=move_piano_down)
+    window._show_part_order_dialog()
+
+    assert [p.part_id for p in window._music_data.parts_info] == ["P2", "P1"]
+    assert window.region_2.current_node().node_id == "voice_P1_1_1"
+
+
+def test_part_order_dialog_restores_region_2_selection_on_cancel_too(
+    window, qtbot, dynamics_articulation_fingering_score, monkeypatch
+):
+    load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
+    window.region_2.select_node("voice_P1_1_1")
+
+    _fake_part_order_dialog(monkeypatch, window, accept=False)
+    window._show_part_order_dialog()
+
+    assert window.region_2.current_node().node_id == "voice_P1_1_1"

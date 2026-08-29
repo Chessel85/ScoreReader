@@ -21,19 +21,27 @@ class PartOrderDialog(QDialog):
     user's own stated reason for wanting this: NVDA reading a UG import's
     chord name when they wanted the lyric, or vice versa).
 
-    A working-copy, OK/Cancel dialog (like widgets/instrument_dialog.py),
-    not a live-apply one like widgets/attribute_order_dialog.py - moves
-    are staged in this list and only committed on OK; Cancel discards them
-    untouched. Move &Up/Move &Down give Alt+U/Alt+D via Qt's own mnemonic
-    handling, same button-text convention AttributeOrderDialog already
-    uses.
+    A working-copy, OK/Cancel dialog, same shape as
+    widgets/attribute_order_dialog.py - moves are staged in this list and
+    only committed on OK; Cancel discards them untouched. Move &Up/Move
+    &Down give Alt+U/Alt+D via Qt's own mnemonic handling, same
+    button-text convention AttributeOrderDialog uses. See
+    docs/dialog_widget_patterns.md for the pattern both dialogs follow.
 
     Pure view like every other dialog here: main_window.py's
     _show_part_order_dialog reads self.part_order() after exec() and
     applies it through MusicData.reorder_parts/Region2ListWidget.reorder_
-    parts - this class never touches MusicData."""
+    parts - this class never touches MusicData.
 
-    def __init__(self, parent=None, parts: Optional[List[Tuple[str, str]]] = None):
+    initial_part_id (user-requested, same idea as AttributeOrderDialog's
+    initial_attribute_key) pre-selects the row for whichever part Region 2's
+    current selection belongs to, so a staff/voice selected there (e.g.
+    Piano > Treble Clef > Voice 2) opens this dialog on the Piano row
+    rather than always row 0 - main_window.py passes the selected node's
+    own part_id regardless of whether that node is a part/staff/voice row."""
+
+    def __init__(self, parent=None, parts: Optional[List[Tuple[str, str]]] = None,
+                 initial_part_id: Optional[str] = None):
         super().__init__(parent)
         self.setWindowTitle("Part Order")
 
@@ -42,8 +50,7 @@ class PartOrderDialog(QDialog):
             item = QListWidgetItem(name)
             item.setData(Qt.ItemDataRole.UserRole, part_id)
             self.part_list.addItem(item)
-        if self.part_list.count() > 0:
-            self.part_list.setCurrentRow(0)
+        self._select_initial_row(initial_part_id)
 
         self.up_button = QPushButton("Move &Up", self)
         self.up_button.setAutoDefault(False)
@@ -84,6 +91,22 @@ class PartOrderDialog(QDialog):
         layout.addLayout(button_row)
         layout.addWidget(buttons)
 
+    def _select_initial_row(self, initial_part_id: Optional[str]) -> None:
+        """Opens the list with initial_part_id's row already current - the
+        part the user's Region 2 selection belonged to (its own part_id
+        for a part row, or its parent part's for a staff/voice row), so
+        the dialog opens on that part instead of always row 0. Falls back
+        to the first row when no id was passed or it isn't in this list
+        (same fallback AttributeOrderDialog._select_initial_row uses)."""
+        if self.part_list.count() == 0:
+            return
+        if initial_part_id is not None:
+            for row in range(self.part_list.count()):
+                if self.part_list.item(row).data(Qt.ItemDataRole.UserRole) == initial_part_id:
+                    self.part_list.setCurrentRow(row)
+                    return
+        self.part_list.setCurrentRow(0)
+
     def _update_button_state(self, current_row: Optional[int] = None):
         if current_row is None:
             current_row = self.part_list.currentRow()
@@ -100,7 +123,6 @@ class PartOrderDialog(QDialog):
         item = self.part_list.takeItem(row)
         self.part_list.insertItem(new_row, item)
         self.part_list.setCurrentRow(new_row)
-        self.part_list.setFocus()
 
     def part_order(self) -> List[str]:
         """The part_id order after any moves, only meaningful once exec()
