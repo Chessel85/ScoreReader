@@ -353,6 +353,22 @@ class NoteRenderer:
         order.insert(target_index, attribute_key)
         return True
 
+    def set_attribute_order_within(self, new_order: List[str], within: List[str]) -> None:
+        """Commits the Reorder Attributes dialog's staged local reordering
+        of `within` (a subset of attribute_order the dialog scoped itself
+        to) back into the single global attribute_order in one shot, on OK.
+
+        `within`'s keys occupy some subset of positions in attribute_order,
+        interleaved with keys outside the dialog's scope. Those slots are
+        filled, in ascending order, with `new_order` - the same "hidden
+        entries in between keep their place" contract move_attribute_order
+        maintains one step at a time, done here as a single bulk replace
+        since the dialog no longer applies moves live."""
+        order = self.data.attribute_order
+        positions = sorted(order.index(key) for key in within if key in order)
+        for pos, key in zip(positions, new_order):
+            order[pos] = key
+
     def attribute_keys_for_voices(self, voice_tuples: Set[Tuple[str, int, int]]) -> List[str]:
         """Every attribute key that has a value on at least one note
         belonging to one of `voice_tuples`, anywhere in the score (not just

@@ -1,3 +1,11 @@
+want to be able to play just the metronome so can practice against a click 
+need to improve the tab order for the tuner and possibly look at making it autodetect the string.
+The up and down buttons in reorder attributes have lost their alt U and alt D spoken shortcuts although they still work.
+The performance summary report should not list something if there are zero occurances.
+May have omitted a simple left and right speech control words.
+Possible ducking of midi when speech recognition is on.
+Can I consolidate preview into just play with looping on?
+Need to understand so many of the entries in the performance report and those that occur as searchable things in the find dialogue e.g. cascassi etude 2.
 * Think the glitch i hear at start up is a real problem. is very noticeable when on speakers. and sometimes the quality of the midi rendering is crackly. or is this only when running from command prompt?
 * Need to review file formats; midi 0 and ultimate guitar need assumptions about bars revisiting.
 * do we need to do the task on making file open robust against file formats that are not understood

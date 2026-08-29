@@ -46,8 +46,10 @@ class PartOrderDialog(QDialog):
             self.part_list.setCurrentRow(0)
 
         self.up_button = QPushButton("Move &Up", self)
+        self.up_button.setAutoDefault(False)
         self.up_button.clicked.connect(lambda: self._move(-1))
         self.down_button = QPushButton("Move &Down", self)
+        self.down_button.setAutoDefault(False)
         self.down_button.clicked.connect(lambda: self._move(1))
         self._update_button_state()
         # Connected only after the buttons exist - setCurrentRow above
@@ -59,9 +61,21 @@ class PartOrderDialog(QDialog):
         button_row.addWidget(self.up_button)
         button_row.addWidget(self.down_button)
 
+        # autoDefault=False above - see AttributeOrderDialog's identical,
+        # longer comment. Live-tested with NVDA: autoDefault dynamically
+        # hands "default button" status to whichever autoDefault button
+        # currently has keyboard focus, and a screen reader's accessible
+        # shortcut text for a button is generated from that same flag - so
+        # leaving it on masks Up/Down's own &U/&D mnemonic as "Enter" the
+        # moment either is tabbed to, regardless of Ok's own setDefault(True)
+        # below. Confirmed user trade-off: Space still moves the item;
+        # Enter on a focused Up/Down now triggers Ok instead (same as any
+        # other non-default button in a standard dialog), rather than
+        # performing the move itself.
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self
         )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setDefault(True)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 

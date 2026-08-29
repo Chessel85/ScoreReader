@@ -186,18 +186,19 @@ class AttributeController:
             return None
         return self.presenter.region_2.current_node()
 
-    def on_order_move(self, dialog, node, attribute_key: str, up: bool) -> None:
-        """MusicData owns the reorder; this applies it and pushes the result
-        back to Region 3/4 and to the still-open dialog."""
+    def apply_order(self, node, new_order: list) -> None:
+        """Commits the Reorder Attributes dialog's staged order (read via
+        dialog.ordered_keys() after exec() returns Accepted) into the real
+        attribute_order and pushes the result to Region 3/4. `within` is
+        recomputed the same way order_pairs_for_node did when the dialog
+        was opened, so the commit lands on the same subset of slots."""
         if not self.music_data:
             return
         voice_tuples = voice_tuples_for_node(node)
         within = self.music_data.attribute_keys_for_voices(voice_tuples)
-        if not self.music_data.move_attribute_order(attribute_key, up, within=within):
-            return
+        self.music_data.set_attribute_order_within(new_order, within)
         self.presenter.refresh_region_3_labels()
         self.presenter.on_region_3_selection_changed()
-        dialog.refresh_list(self.order_pairs_for_node(node), preferred_key=attribute_key)
 
     # --- reorder dialog's Add/Remove button ----------------------------
     # User-requested: Reorder Attributes already lists every attribute
@@ -245,8 +246,8 @@ class AttributeController:
         """Called by MainWindow on the Reorder Attributes dialog's Add/
         Remove button. The dialog stays open throughout - toggling on/off
         changes neither which attributes are listed (presence-based) nor
-        their order, so unlike on_order_move there's nothing to refresh in
-        the dialog itself, only Region 3."""
+        their order, so unlike an OK-committed Up/Down move there's nothing
+        to refresh in the dialog itself, only Region 3."""
         actions = self.order_menu_actions(node, attribute_key)
         if not actions:
             return

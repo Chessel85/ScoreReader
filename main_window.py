@@ -844,26 +844,21 @@ class MainWindow(QMainWindow):
 
     def _show_attribute_order_dialog(self):
         """Ref 15 AC4: scoped to whichever part/staff/voice Region 2 has
-        selected. The dialog's whole context comes from there, so that is
-        where focus returns afterwards."""
+        selected."""
         node = self.attributes.scope_node()
         if node is None:
             return
-        dialog = AttributeOrderDialog(
-            self,
-            pairs=self.attributes.order_pairs_for_node(node),
-            scope_description=node_breadcrumb(node),
-        )
-        dialog.move_requested.connect(
-            lambda attribute_key, up: self.attributes.on_order_move(
-                dialog, node, attribute_key, up
+        with self._preserving_focus():
+            dialog = AttributeOrderDialog(
+                self,
+                pairs=self.attributes.order_pairs_for_node(node),
+                scope_description=node_breadcrumb(node),
             )
-        )
-        dialog.add_remove_requested.connect(
-            lambda attribute_key: self.attributes.show_order_menu(dialog, node, attribute_key)
-        )
-        dialog.exec()
-        self.region_2.setFocus()
+            dialog.add_remove_requested.connect(
+                lambda attribute_key: self.attributes.show_order_menu(dialog, node, attribute_key)
+            )
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.attributes.apply_order(node, dialog.ordered_keys())
 
     def _show_part_order_dialog(self):
         """Reported: NVDA reads whichever part's row Region 3 lands on

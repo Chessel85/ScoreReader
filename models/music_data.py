@@ -713,6 +713,11 @@ class MusicData:
         per attribute_order - see NoteRenderer.attribute_keys_for_voices."""
         return self.renderer.attribute_keys_for_voices(voice_tuples)
 
+    def set_attribute_order_within(self, new_order: List[str], within: List[str]) -> None:
+        """Commits the Reorder Attributes dialog's staged order on OK - see
+        NoteRenderer.set_attribute_order_within."""
+        self.renderer.set_attribute_order_within(new_order, within)
+
     def reorder_parts(self, part_id_order: List[str]) -> None:
         """Options > Reorder Parts... - the order parts_info lists parts
         in, live and user-controlled (the same "mutable order the render

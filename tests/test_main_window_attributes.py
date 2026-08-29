@@ -23,23 +23,49 @@ def test_attribute_order_pairs_scope_to_the_selected_region_2_node(
     assert "pluck" not in keys, "pluck only appears on the guitar part, not this piano voice"
 
 
-def test_attribute_order_move_updates_music_data_and_returns_focus_to_region_2(
+def _stage_octave_move_up(window, qtbot):
+    """Builds the real Reorder Attributes dialog for voice_P1_1_1, stages a
+    Move Up on "octave" (a plain adjacent-item reorder in the dialog's own
+    local list - the same thing clicking the button does), and patches
+    exec() to return Accepted so window._show_attribute_order_dialog()'s
+    post-exec commit (AttributeController.apply_order, via
+    dialog.ordered_keys()) runs without a real modal loop - same injection
+    convention as GotoMeasureDialog/TempoOffsetDialog. Returns the global
+    attribute_order index "octave" should land on: its within-neighbour's
+    original slot, since the dialog only ever swaps two adjacent within-
+    scope items and set_attribute_order_within writes the new order back
+    into exactly those items' original global slots."""
+    node = window.region_2.model_manager.node("voice_P1_1_1")
+    pairs = window._attribute_order_pairs_for_node(node)
+    dialog = AttributeOrderDialog(window, pairs=pairs, scope_description="")
+
+    octave_row = next(
+        i for i in range(dialog.attribute_list.count())
+        if dialog.attribute_list.item(i).data(Qt.ItemDataRole.UserRole) == "octave"
+    )
+    assert octave_row > 0, "fixture assumption: something in scope sorts before octave"
+    neighbor_key = dialog.attribute_list.item(octave_row - 1).data(Qt.ItemDataRole.UserRole)
+    neighbor_global_index = list(window._music_data.attribute_order).index(neighbor_key)
+
+    dialog.attribute_list.setCurrentRow(octave_row)
+    dialog._move(-1)
+
+    return dialog, neighbor_global_index
+
+
+def test_attribute_order_move_updates_music_data_and_restores_prior_focus(
     window, qtbot, dynamics_articulation_fingering_score, monkeypatch
 ):
-    """Simulates clicking Move Up on "octave" while the dialog is open -
-    move_requested is connected before exec() is called, same as the real
-    button click would fire it, so faking exec() to emit the signal and
-    then return is enough to drive the whole wiring without a real modal
-    loop (same injection convention as GotoMeasureDialog/TempoOffsetDialog)."""
+    """Move Up is staged locally in the dialog, then committed only once
+    exec() returns Accepted (OK) - see _stage_octave_move_up. Focus returns
+    to wherever it was when the dialog was invoked (region_2 here, since
+    that's how the dialog is normally opened, via _preserving_focus) -
+    not hardcoded to any particular region."""
     load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
+    dialog, neighbor_global_index = _stage_octave_move_up(window, qtbot)
+    window.region_2.setFocus()
 
-    dialog = AttributeOrderDialog(window, pairs=[], scope_description="")
-
-    def fake_exec():
-        dialog.move_requested.emit("octave", True)
-        return QDialog.DialogCode.Accepted
-
-    monkeypatch.setattr(dialog, "exec", fake_exec)
+    monkeypatch.setattr(dialog, "exec", lambda: QDialog.DialogCode.Accepted)
     monkeypatch.setattr(
         "main_window.AttributeOrderDialog",
         lambda parent, pairs, scope_description: dialog,
@@ -47,8 +73,28 @@ def test_attribute_order_move_updates_music_data_and_returns_focus_to_region_2(
 
     window._show_attribute_order_dialog()
 
-    assert window._music_data.attribute_order[0] == "octave"
+    assert window._music_data.attribute_order[neighbor_global_index] == "octave"
     assert window.focusWidget() is window.region_2
+
+
+def test_attribute_order_cancel_leaves_the_order_unchanged(
+    window, qtbot, dynamics_articulation_fingering_score, monkeypatch
+):
+    """Cancel (Rejected) must discard the staged move entirely - the whole
+    point of switching this dialog from live-apply to OK/Cancel."""
+    load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
+    original_order = list(window._music_data.attribute_order)
+    dialog, _ = _stage_octave_move_up(window, qtbot)
+
+    monkeypatch.setattr(dialog, "exec", lambda: QDialog.DialogCode.Rejected)
+    monkeypatch.setattr(
+        "main_window.AttributeOrderDialog",
+        lambda parent, pairs, scope_description: dialog,
+    )
+
+    window._show_attribute_order_dialog()
+
+    assert window._music_data.attribute_order == original_order
 
 
 def test_attribute_order_persists_per_file_not_across_different_files(
@@ -60,26 +106,21 @@ def test_attribute_order_persists_per_file_not_across_different_files(
     must be there again when that same file is reloaded (load_score_from_file
     saves the outgoing file's config before swapping in the new one)."""
     load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
+    dialog, neighbor_global_index = _stage_octave_move_up(window, qtbot)
 
-    dialog = AttributeOrderDialog(window, pairs=[], scope_description="")
-
-    def fake_exec():
-        dialog.move_requested.emit("octave", True)
-        return QDialog.DialogCode.Accepted
-
-    monkeypatch.setattr(dialog, "exec", fake_exec)
+    monkeypatch.setattr(dialog, "exec", lambda: QDialog.DialogCode.Accepted)
     monkeypatch.setattr(
         "main_window.AttributeOrderDialog",
         lambda parent, pairs, scope_description: dialog,
     )
     window._show_attribute_order_dialog()
-    assert window._music_data.attribute_order[0] == "octave"
+    assert window._music_data.attribute_order[neighbor_global_index] == "octave"
 
     load_and_wait(window, qtbot, minimal_score)
-    assert window._music_data.attribute_order[0] != "octave"
+    assert window._music_data.attribute_order[neighbor_global_index] != "octave"
 
     load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
-    assert window._music_data.attribute_order[0] == "octave"
+    assert window._music_data.attribute_order[neighbor_global_index] == "octave"
 
 
 # --- Reorder Attributes dialog's Add/Remove button (user-requested) -----
@@ -216,11 +257,14 @@ def test_add_remove_requested_is_wired_to_show_order_menu(
     window, qtbot, dynamics_articulation_fingering_score, monkeypatch
 ):
     """Simulates clicking the Add/Remove button while the dialog is open,
-    the same injection convention test_attribute_order_move_... above uses
-    for move_requested - fakes exec() to emit the signal and return, since
-    the real button click would open a blocking QMenu that show_order_menu
-    itself is responsible for (untestable via exec() patching, per
-    AttributeController.show_menu's own docstring)."""
+    the same exec()-patching injection convention used elsewhere in this
+    file - fakes exec() to emit the signal and return, since the real
+    button click would open a blocking QMenu that show_order_menu itself is
+    responsible for (untestable via exec() patching, per
+    AttributeController.show_menu's own docstring). Unlike Up/Down,
+    add_remove_requested is still live - it isn't part of what OK/Cancel
+    stages, so no dialog.ordered_keys()/apply_order commit is involved
+    here."""
     load_and_wait(window, qtbot, dynamics_articulation_fingering_score)
     node = window.region_2.model_manager.node("voice_P1_1_1")
 
