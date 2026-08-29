@@ -51,6 +51,13 @@ class _PlayRun:
     offset_ms: int
     # Bar line to bar line: what one loop iteration lasts.
     iteration_ms: int
+    # Looping only: the active_event_index to restore when the run stops.
+    # A looping run tracks the playing position in Region 3 as it goes, the
+    # same as a non-looping run - but the Sequencer's own update_cursor is
+    # left False, so its stop/finish reversion never touches the cursor;
+    # this controller moves it per step (_on_sequencer_step) and puts it
+    # back here on stop().
+    restore_index: Optional[int] = None
     # (offset_ms within the iteration, action) in time order, walked by one
     # chained single-shot timer - the same "reschedule a step at a time so
     # cancelling is one stop()" shape as audio/sequencer.py.
@@ -453,6 +460,13 @@ class PlaybackController(QObject):
 
         Cancelling the play session first is what makes Space stop a
         count-in that has not sounded a note yet."""
+        # A looping run tracks the playing position in Region 3 as it runs
+        # (_on_sequencer_step) but leaves the Sequencer's own update_cursor
+        # False, so stopping it must put the cursor back to where the loop
+        # was started from - captured before cancel_play_run() drops the run.
+        looping_restore_index = None
+        if self._play_run is not None and self._play_run.looping:
+            looping_restore_index = self._play_run.restore_index
         self.cancel_play_run()
         self.stop_play_metronome()
         if self.sequencer is None:
@@ -465,6 +479,9 @@ class PlaybackController(QObject):
         # would set active_event_index to None and break every later read.
         if was_tracking_cursor and self.music_data and self.sequencer.current_index is not None:
             self.music_data.active_event_index = self.sequencer.current_index
+            self.cursor_moved.emit(False)
+        elif looping_restore_index is not None and self.music_data:
+            self.music_data.active_event_index = looping_restore_index
             self.cursor_moved.emit(False)
         else:
             self.playback_state_changed.emit()
@@ -625,6 +642,7 @@ class PlaybackController(QObject):
             is_pickup=is_pickup,
             offset_ms=0,
             iteration_ms=0,
+            restore_index=self.music_data.active_event_index,
         )
         self._refresh_play_span(run)
         return run
@@ -838,8 +856,17 @@ class PlaybackController(QObject):
         """Ref 10 AC4: a cursor-tracking run moves active_event_index and
         refreshes the regions as it goes. That is what makes "pause
         refreshes the regions" true for free - they already track the live
-        position throughout, not just at the moment of pausing."""
-        if self.sequencer is None or not self.sequencer.update_cursor or not self.music_data:
+        position throughout, not just at the moment of pausing.
+
+        A looping run also tracks here even though the Sequencer's own
+        update_cursor is False for it (so the Sequencer's stop/finish
+        reversion can't move the cursor): the Note region should follow the
+        loop just as it follows a plain lead-in run. stop() puts the cursor
+        back to the loop's start (run.restore_index) afterwards."""
+        if self.sequencer is None or not self.music_data:
+            return
+        looping_run = self._play_run is not None and self._play_run.looping
+        if not self.sequencer.update_cursor and not looping_run:
             return
         self.music_data.active_event_index = index
         self.cursor_moved.emit(False)
@@ -860,6 +887,17 @@ class PlaybackController(QObject):
             self.cancel_play_run()
         if self.sequencer.update_cursor and self.music_data:
             self.music_data.active_event_index = self.sequencer.current_index
+            self.cursor_moved.emit(False)
+        elif (
+            self._play_run is not None
+            and self._play_run.looping
+            and self.music_data
+        ):
+            # The Note region followed this repeat as it played; snap it
+            # back to the loop's start now so it matches what the next
+            # iteration is about to sound rather than sitting on the last
+            # note through the bar-line gap.
+            self.music_data.active_event_index = self._play_run.start_index
             self.cursor_moved.emit(False)
         self.playback_state_changed.emit()
 

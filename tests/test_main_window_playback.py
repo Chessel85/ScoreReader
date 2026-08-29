@@ -334,22 +334,49 @@ def test_sequencer_steps_advance_the_cursor_and_regions_over_real_time(
 
 # --- The one lead-in/looping play session -------------------------------
 
-def test_looping_space_plays_from_bar_one_without_moving_the_cursor(
+def test_looping_space_plays_from_the_bar_line_and_restores_the_cursor_on_stop(
     window, qtbot, null_synth, many_measures_score
 ):
     load_and_wait(window, qtbot, many_measures_score)
+    assert window._music_data.jump_to_measure(3) is True
+    restore = window._music_data.active_event_index
+    assert restore > 0
     no_lead_in(window, loop_enabled=True, loop_length_bars=2)
     null_synth.played.clear()
 
     window.toggle_play_stop()
 
     assert window.sequencer.is_playing is True
-    assert window._music_data.active_event_index == 0
-    assert null_synth.played[0]["midi_notes"] == [60]
+    # The Note region follows the loop to its bar-line start, away from
+    # where the cursor was left.
+    assert window._music_data.active_event_index == window.playback._play_run.start_index
+    assert null_synth.played, "the loop window's first note sounded"
 
     window.toggle_play_stop()  # stop the loop
     assert window.sequencer.is_playing is False
-    assert window._music_data.active_event_index == 0
+    assert window._music_data.active_event_index == restore
+
+
+def test_looping_run_tracks_the_playing_position_in_the_note_region(
+    window, qtbot, null_synth, many_measures_score
+):
+    load_and_wait(window, qtbot, many_measures_score)
+    assert window._music_data.jump_to_measure(3) is True
+    restore = window._music_data.active_event_index
+    no_lead_in(window, loop_enabled=True, loop_length_bars=2)
+
+    window.toggle_play_stop()
+    run = window.playback._play_run
+    assert window._music_data.active_event_index == run.start_index
+
+    # A natural step advance moves the Note region with the sound, exactly
+    # as it does for a non-looping run.
+    window.sequencer._advance()
+    assert window._music_data.active_event_index == window.sequencer.current_index
+    assert window._music_data.active_event_index != run.start_index
+
+    window.toggle_play_stop()  # stop the loop
+    assert window._music_data.active_event_index == restore
 
 
 def test_a_second_space_while_looping_stops_it(window, qtbot, null_synth, many_measures_score):
