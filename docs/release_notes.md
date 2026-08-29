@@ -1,5 +1,9 @@
 # Recall Score Release Notes
 
+## 2026.1.43
+
+* Created Parts menu and moved entries into it from other menus as a tidy up 
+
 ## 2026.1.41
 
 * Ability to play just the metronome

@@ -1,8 +1,5 @@
-Need a parts menu, containing the instruments per part, the mute/solo options, and rearrange parts.
-want to be able to play just the metronome so can practice against a click 
 The performance summary report should not list something if there are zero occurances.
 Possible ducking of midi when speech recognition is on.
-Can I consolidate preview into just play with looping on?
 Need to understand so many of the entries in the performance report and those that occur as searchable things in the find dialogue e.g. cascassi etude 2.
 * Think the glitch i hear at start up is a real problem. is very noticeable when on speakers. and sometimes the quality of the midi rendering is crackly. or is this only when running from command prompt?
 * Need to review file formats; midi 0 and ultimate guitar need assumptions about bars revisiting.

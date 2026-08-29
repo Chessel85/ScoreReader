@@ -93,6 +93,7 @@ class MenuBuilder:
         menu_bar = self.window.menuBar()
         self._file_menu(menu_bar, a)
         self._edit_menu(menu_bar, a)
+        self._parts_menu(menu_bar, a)
         self._navigation_menu(menu_bar, a)
         self._playback_menu(menu_bar, a)
         self._options_menu(menu_bar, a)
@@ -200,14 +201,6 @@ class MenuBuilder:
         )
         edit_menu.addAction(a.select_all)
 
-        # S5: per-part display-name/instrument override, for both MusicXML
-        # and MIDI scores.
-        a.instruments = self._action(
-            "&Instruments...", self.slots._show_instrument_dialog, "Ctrl+Shift+I",
-            status_tip="Rename a part or change what instrument it plays back as",
-        )
-        edit_menu.addAction(a.instruments)
-
         # S6: a single whole-piece key signature override, for both
         # MusicXML and MIDI scores. Its own dialog, not folded into
         # Instruments above - the user found the two too different a pair
@@ -217,6 +210,62 @@ class MenuBuilder:
             status_tip="Override the score's key signature",
         )
         edit_menu.addAction(a.key_signature)
+
+    def _parts_menu(self, menu_bar, a: Actions) -> None:
+        """Everything that acts on the score's parts, gathered into one
+        top-level menu (user-requested): Instruments (moved from Edit),
+        Reorder Parts (moved from Options), and Mute/Solo/Unmute All/
+        Unsolo All (moved from Playback).
+
+        Mute/Solo/Unmute All/Unsolo All act on Region 2's focused row -
+        FocusController greys all four out unless Region 2 has focus, the
+        same "only meaningful with a particular region focused" pattern
+        used for Move to First/Last Note. Every action keeps the shortcut
+        and mnemonic it had in its old menu.
+        """
+        parts_menu = menu_bar.addMenu("Pa&rts")
+
+        # S5: per-part display-name/instrument override, for both MusicXML
+        # and MIDI scores.
+        a.instruments = self._action(
+            "&Instruments...", self.slots._show_instrument_dialog, "Ctrl+Shift+I",
+            status_tip="Rename a part or change what instrument it plays back as",
+        )
+        parts_menu.addAction(a.instruments)
+
+        # Reported: NVDA reads whichever part's row Region 3 lands on
+        # first (always row 0) after every navigation step - this
+        # controls that order directly. Real global shortcut instead of a
+        # misleading Alt-only mnemonic, same as Reorder Attributes.
+        a.part_order = self._action(
+            "Reorder Parts...", self.slots._show_part_order_dialog,
+            QKeySequence("Ctrl+Shift+O"),
+        )
+        parts_menu.addAction(a.part_order)
+
+        parts_menu.addSeparator()
+
+        a.solo = self._action(
+            "&Solo", self.slots.toggle_solo_current_region2_row, QKeySequence(Qt.Key.Key_F9),
+            status_tip="Solo the focused row in the Parts region",
+        )
+        parts_menu.addAction(a.solo)
+
+        a.mute = self._action(
+            "&Mute", self.slots.toggle_mute_current_region2_row, QKeySequence(Qt.Key.Key_F8),
+            status_tip="Mute the focused row in the Parts region",
+        )
+        parts_menu.addAction(a.mute)
+
+        a.unsolo_all = self._action(
+            "Unsolo A&ll", self.slots.unsolo_all_region2, QKeySequence("Alt+F9"),
+        )
+        parts_menu.addAction(a.unsolo_all)
+
+        a.unmute_all = self._action(
+            "Unmute &All", self.slots.unmute_all_region2, QKeySequence("Alt+F8"),
+        )
+        parts_menu.addAction(a.unmute_all)
 
     def _navigation_menu(self, menu_bar, a: Actions) -> None:
         # Navigation duplicates, as menu items, the keyboard-only ways of
@@ -314,16 +363,13 @@ class MenuBuilder:
         navigation_menu.addAction(a.move_to_performance)
 
     def _playback_menu(self, menu_bar, a: Actions) -> None:
-        """The existing transport controls plus mute/solo and Mixer, all in
-        one menu - Play/Stop and Pause use a QAction carrying the shortcut
-        instead of a bare QShortcut in main_window.py (same pattern
-        Ctrl+M/Ctrl+P/Ctrl+G/Ctrl+T already use), so Space/Ctrl+Space show
-        up here too.
+        """The transport controls plus Mixer, all in one menu - Play/Stop
+        and Pause use a QAction carrying the shortcut instead of a bare
+        QShortcut in main_window.py (same pattern Ctrl+M/Ctrl+P/Ctrl+G/
+        Ctrl+T already use), so Space/Ctrl+Space show up here too.
 
-        Mute/Solo/Unmute All/Unsolo All act on Region 2's focused row -
-        FocusController greys all four out unless Region 2 has focus, the
-        same "only meaningful with a particular region focused" pattern
-        already used for Move to First/Last Note.
+        Mute/Solo/Unmute All/Unsolo All used to live here too; they moved
+        to the Parts menu (see _parts_menu).
         """
         playback_menu = menu_bar.addMenu("&Playback")
 
@@ -408,30 +454,6 @@ class MenuBuilder:
             status_tip="Play a metronome count-in before playback starts",
         )
         playback_menu.addAction(a.lead_in_toggle)
-
-        playback_menu.addSeparator()
-
-        a.mute = self._action(
-            "&Mute", self.slots.toggle_mute_current_region2_row, QKeySequence(Qt.Key.Key_F8),
-            status_tip="Mute the focused row in the Parts region",
-        )
-        playback_menu.addAction(a.mute)
-
-        a.solo = self._action(
-            "&Solo", self.slots.toggle_solo_current_region2_row, QKeySequence(Qt.Key.Key_F9),
-            status_tip="Solo the focused row in the Parts region",
-        )
-        playback_menu.addAction(a.solo)
-
-        a.unmute_all = self._action(
-            "Unmute &All", self.slots.unmute_all_region2, QKeySequence("Alt+F8"),
-        )
-        playback_menu.addAction(a.unmute_all)
-
-        a.unsolo_all = self._action(
-            "Unsolo A&ll", self.slots.unsolo_all_region2, QKeySequence("Alt+F9"),
-        )
-        playback_menu.addAction(a.unsolo_all)
 
         playback_menu.addSeparator()
 
@@ -562,19 +584,6 @@ class MenuBuilder:
             QKeySequence("Ctrl+Shift+A"),
         )
         options_menu.addAction(a.attribute_order)
-
-        # Reported: NVDA reads whichever part's row Region 3 lands on
-        # first (always row 0) after every navigation step - this
-        # controls that order directly. Same real-global-shortcut-instead-
-        # of-a-misleading-mnemonic treatment as Reorder Attributes above;
-        # Ctrl+Shift+P was already Toggle Position Announcer's single-Ctrl
-        # binding, a different modifier combination, so Ctrl+Shift+O is
-        # used here instead to avoid any risk of confusing the two.
-        a.part_order = self._action(
-            "Reorder Parts...", self.slots._show_part_order_dialog,
-            QKeySequence("Ctrl+Shift+O"),
-        )
-        options_menu.addAction(a.part_order)
 
     def _tools_menu(self, menu_bar, a: Actions) -> None:
         # New top-level menu (the user's own framing) - a microphone-based
