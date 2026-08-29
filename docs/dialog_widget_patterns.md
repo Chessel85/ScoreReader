@@ -100,6 +100,60 @@ see its own docstring and CLAUDE.md's Architecture section for why):
   `widgets/goto_measure_dialog.py` - `setFocus()` before the native window
   exists never reaches NVDA).
 
+## Initial focus must also re-announce the current row (NVDA+Up gotcha)
+
+Reported live (2026-08-29): opening a dialog like Reorder Attributes and
+immediately asking NVDA to read the current line (NVDA+Up) read whatever had
+focus *before* the dialog opened, not the dialog's own list - only moving
+Up/Down (or Tab) once inside the dialog made NVDA start reading it
+correctly.
+
+Root cause: every list-based dialog here sets its list's initial current row
+in `__init__`/`_populate`, before the dialog's native window exists. At that
+point `QAbstractItemView::hasFocus()` is still `False`, and Qt's own
+accessibility plumbing (`qabstractitemview.cpp`'s `currentChanged` handler)
+only posts a `QAccessible::Focus` event for the **item** when the view
+already has focus at the moment `currentChanged` fires. A bare
+`list_widget.setFocus()` in `showEvent` (the idiom described above) only
+posts a widget-level Focus event - nothing ever tells NVDA which row is
+current. A manual Up/Down press fixes it because that keypress is the
+first `currentChanged` to fire while the view genuinely has focus.
+
+**Fix**: use `focus_list_and_reannounce_current_row` from
+`widgets/list_focus_helper.py` in `showEvent` instead of a bare
+`list_widget.setFocus()`, still deferred via `QTimer.singleShot(0, ...)`:
+
+```python
+from widgets.list_focus_helper import focus_list_and_reannounce_current_row
+
+def showEvent(self, event):
+    super().showEvent(event)
+    QTimer.singleShot(0, lambda: focus_list_and_reannounce_current_row(self.attribute_list))
+```
+
+It calls `setFocus()` then toggles the current row to `-1` and back, which
+forces a real `currentRowChanged` transition now that the view has focus -
+reproducing what a manual Up/Down keypress already does, without changing
+which row ends up selected. **The three steps must be spaced across real
+timer delays (`_STEP_DELAY_MS`, 120 ms each), not fired in one synchronous
+burst** - a first attempt that did all three in a single
+`QTimer.singleShot(0, ...)` callback did NOT fix the bug live (NVDA still
+spoke the previous window's stale text, both on the dialog's automatic
+open-announcement and on a follow-up NVDA+Up); spacing them out did.
+Confirmed live with NVDA (2026-08-29): NVDA+Up now reads the dialog's
+actual current row on the first try. **Accepted trade-off**: the dialog's
+opening announcement is now spoken twice (once for the real focus-in, once
+more when the delayed toggle replays it) - confirmed with the user as
+worth it for NVDA+Up actually working correctly.
+
+Applied to every dialog whose list has an initial current row set before
+it's shown: `AttributeOrderDialog`, `PartOrderDialog`, `FindDialog`,
+`MixerDialog`, `InstrumentDialog`, `PerformanceReportDialog`. A dialog
+whose initial focus target is a `QComboBox`/`QLineEdit`/`QCheckBox` instead
+of a list doesn't need this - there's no separate "current item" child
+object distinct from the widget itself for those controls, so a bare
+`setFocus()` already reports the right value.
+
 ## Restoring focus after the dialog closes
 
 Every `_show_*_dialog` method in `main_window.py` wraps its dialog
@@ -123,7 +177,9 @@ other dialog).
 3. `setAutoDefault(False)` on every button except the real default.
 4. `buttons.button(QDialogButtonBox.StandardButton.Ok).setDefault(True)`
    explicitly.
-5. `showEvent` defers initial focus via `QTimer.singleShot(0, ...)`;
-   nothing else in the dialog calls `setFocus()`.
+5. `showEvent` defers initial focus via `QTimer.singleShot(0, ...)`, using
+   `focus_list_and_reannounce_current_row` (see above) rather than a bare
+   `setFocus()` when the initial focus target is a list with a pre-set
+   current row; nothing else in the dialog calls `setFocus()`.
 6. Caller wraps construction+`exec()` in `self._preserving_focus()` and
    only commits on `QDialog.DialogCode.Accepted`.

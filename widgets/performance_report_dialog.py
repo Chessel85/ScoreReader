@@ -4,6 +4,8 @@ from typing import List
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QListWidget, QVBoxLayout
 
+from widgets.list_focus_helper import focus_list_and_reannounce_current_row
+
 
 class PerformanceReportDialog(QDialog):
     """Ref 29: Edit > Performance Report... - a read-only, whole-score
@@ -41,4 +43,4 @@ class PerformanceReportDialog(QDialog):
         """Same deferred-focus idiom as GotoMeasureDialog/AttributeOrderDialog
         - setFocus() before the native window exists never reaches NVDA."""
         super().showEvent(event)
-        QTimer.singleShot(0, self.report_list.setFocus)
+        QTimer.singleShot(0, lambda: focus_list_and_reannounce_current_row(self.report_list))

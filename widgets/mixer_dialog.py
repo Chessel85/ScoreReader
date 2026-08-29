@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from widgets.list_focus_helper import focus_list_and_reannounce_current_row
 from widgets.range_spin_box import RangeSpinBox
 
 
@@ -161,4 +162,4 @@ class MixerDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        QTimer.singleShot(0, self.row_list.setFocus)
+        QTimer.singleShot(0, lambda: focus_list_and_reannounce_current_row(self.row_list))

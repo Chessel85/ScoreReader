@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from models.find_target import FindTarget, occurrence_label
+from widgets.list_focus_helper import focus_list_and_reannounce_current_row
 
 # Reads out which kind of thing a row is, since attribute keys and marking
 # labels sit in the same flat list (NVDA-friendly - one focus stop per row,
@@ -105,7 +106,7 @@ class FindDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        QTimer.singleShot(0, self.target_list.setFocus)
+        QTimer.singleShot(0, lambda: focus_list_and_reannounce_current_row(self.target_list))
 
     def _apply_filter(self, text: str) -> None:
         needle = text.strip().lower()

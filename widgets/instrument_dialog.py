@@ -23,6 +23,7 @@ from models.gm_percussion_map import (
     gm_percussion_key_for_name,
     gm_percussion_name,
 )
+from widgets.list_focus_helper import focus_list_and_reannounce_current_row
 
 # A percussion item's row list entry: (item_key, current display name,
 # current effective sounding key) - exactly MusicData.get_percussion_items_
@@ -298,4 +299,4 @@ class InstrumentDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        QTimer.singleShot(0, self.row_list.setFocus)
+        QTimer.singleShot(0, lambda: focus_list_and_reannounce_current_row(self.row_list))

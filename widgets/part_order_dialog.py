@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from widgets.list_focus_helper import focus_list_and_reannounce_current_row
+
 
 class PartOrderDialog(QDialog):
     """Options > Reorder Parts... - controls the order parts_info lists
@@ -134,4 +136,4 @@ class PartOrderDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        QTimer.singleShot(0, self.part_list.setFocus)
+        QTimer.singleShot(0, lambda: focus_list_and_reannounce_current_row(self.part_list))

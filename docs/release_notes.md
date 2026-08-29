@@ -1,5 +1,9 @@
 # Recall Score Release Notes
 
+## 2026.1.36
+
+** Tidied up user experience for reorder attributes and reorder parts dialogues so buttons have correct shortcuts announced and focus is generally more sticky.
+
 ## 2026.1.35
 
 * Stopped the metronome click sounding when moving up and down a chord 

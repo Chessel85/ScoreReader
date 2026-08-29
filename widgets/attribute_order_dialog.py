@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from widgets.list_focus_helper import focus_list_and_reannounce_current_row
+
 
 class AttributeOrderDialog(QDialog):
     """Options > Reorder Attributes... (F2, Ref 15 AC4) - reorders the single
@@ -40,6 +42,10 @@ class AttributeOrderDialog(QDialog):
 
     Same focus-on-show reasoning as GotoMeasureDialog: setFocus() before the
     native window exists never reaches NVDA, so it's deferred to showEvent.
+    Uses focus_list_and_reannounce_current_row (widgets/list_focus_helper.py)
+    rather than a bare setFocus() - see that helper's docstring for why a
+    bare setFocus() alone leaves NVDA reading whatever had focus before the
+    dialog opened until the user manually moves Up/Down once.
 
     initial_attribute_key (user-requested follow-up) pre-selects a row -
     normally the attribute Region 4's current/last-selected row carries -
@@ -167,4 +173,4 @@ class AttributeOrderDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        QTimer.singleShot(0, self.attribute_list.setFocus)
+        QTimer.singleShot(0, lambda: focus_list_and_reannounce_current_row(self.attribute_list))
