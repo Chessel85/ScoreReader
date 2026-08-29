@@ -19,11 +19,11 @@ class TimelineListWidget(RegionFocusCycleMixin, QListWidget):
 
     Typing a bar number then Enter (Ref 6) is NOT handled here anymore - it
     is global: main_window.py's window-wide digit shortcuts feed
-    NavigationController, Enter is the Preview QAction routing through
-    audition_phrase, and Escape cancels. Any cursor move cancels a
-    half-typed number - NavigationController does that for
-    Left/Right/Home/End/Find, and MainWindow.on_region_3_vertical_move for
-    an in-slice Up/Down here.
+    NavigationController, Enter commits the typed bar number (via
+    audition_phrase), Ctrl+Enter commits it as the loop length, and Escape
+    cancels. Any cursor move cancels a half-typed number -
+    NavigationController does that for Left/Right/Home/End/Find, and
+    MainWindow.on_region_3_vertical_move for an in-slice Up/Down here.
     """
 
     def _main_window(self) -> "MainWindow":
@@ -43,10 +43,10 @@ class TimelineListWidget(RegionFocusCycleMixin, QListWidget):
             # row up a page) - bare PageUp/PageDown would collide with that
             # the same way bare Up/Down would collide with chord-selection
             # handling below, so this is deliberately not bound plain.
-            main_win.increase_preview_bars()
+            main_win.increase_loop_length()
             return
         elif key == Qt.Key.Key_PageDown and alt:
-            main_win.decrease_preview_bars()
+            main_win.decrease_loop_length()
             return
         elif ctrl and Qt.Key.Key_1 <= key <= Qt.Key.Key_9:
             # Quick attribute lookup: speaks Region 4's Nth row without

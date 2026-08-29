@@ -10,16 +10,17 @@ from widgets.goto_measure_dialog import GotoMeasureDialog
 from tests.support.main_window_helpers import _focus, _show, load_and_wait
 
 
-def test_ctrl_t_shortcut_opens_the_tempo_offset_dialog(window, qtbot, null_synth, minimal_score, monkeypatch):
-    """Same scope as Ctrl+G (C8): fires from anywhere normal for a
-    shortcut, not just a particular region."""
+def test_ctrl_t_shortcut_opens_the_play_settings_dialog(window, qtbot, null_synth, minimal_score, monkeypatch):
+    """Ctrl+T now opens Play Settings (it inherited the old Tempo Offset
+    dialog's shortcut). Same scope as Ctrl+G: fires from anywhere normal
+    for a shortcut, not just a particular region."""
     load_and_wait(window, qtbot, minimal_score)
     _show(window, qtbot)
     _focus(window.region_1)
     opened = []
     monkeypatch.setattr(
-        "main_window.TempoOffsetDialog",
-        lambda parent, current_offset=0.0, beat_unit_name="quarter": type(
+        "main_window.PlaySettingsDialog",
+        lambda *a, **k: type(
             "FakeDialog", (), {"exec": lambda self: opened.append(True) or QDialog.DialogCode.Rejected}
         )(),
     )

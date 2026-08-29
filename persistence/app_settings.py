@@ -8,7 +8,7 @@ from typing import List, Optional
 from PySide6.QtCore import QStandardPaths
 
 from models.live_midi_input_settings import LiveMidiInputSettings
-from models.preview_settings import PreviewSettings
+from models.play_settings import PlaySettings
 from models.tuner_settings import TunerSettings
 from models.voice_control_settings import VoiceControlSettings
 
@@ -20,19 +20,21 @@ MAX_RECENT_FILES = 8
 class AppSettings:
     """App-wide preferences that are the same regardless of which score is
     loaded - the UK/US terminology dialect (F4/D-6), the Recent Files list
-    and the Preview settings (lead-in/length/loop). Deliberately separate
-    from ScoreConfig (persistence/score_config.py), which is per-file.
+    and the Play settings (lead-in/looping). Deliberately separate from
+    ScoreConfig (persistence/score_config.py), which is per-file.
     uk_terms=None means no preference has been saved yet, so the caller
     should fall back to its own default (OS-locale detection).
 
-    preview is global rather than per-score on the user's own decision: a
-    count-in length is a practice habit that should follow them from piece
-    to piece. Defaults live on PreviewSettings itself, so a settings file
-    written before this field existed simply gets them.
+    play is global rather than per-score on the user's own decision: a
+    lead-in length / looping habit is a practice habit that should follow
+    them from piece to piece. (The absolute playback tempo IS per-score -
+    ScoreConfig.playback_tempo_bpm.) Defaults live on PlaySettings itself,
+    so a settings file written before this field existed simply gets them;
+    load() also reads the pre-rename "preview" key.
 
     live_midi_input (device/instrument/volume/pan for playing a connected
     MIDI keyboard live, controllers/live_midi_input_controller.py) is global
-    for the same reasoning as preview - confirmed with the user: it's the
+    for the same reasoning as play - confirmed with the user: it's the
     user's hardware setup, not a property of any one score.
 
     voice_control (device/confidence threshold for hands-free SAPI voice
@@ -47,7 +49,7 @@ class AppSettings:
 
     uk_terms: Optional[bool] = None
     recent_files: List[str] = field(default_factory=list)
-    preview: PreviewSettings = field(default_factory=PreviewSettings)
+    play: PlaySettings = field(default_factory=PlaySettings)
     live_midi_input: LiveMidiInputSettings = field(default_factory=LiveMidiInputSettings)
     voice_control: VoiceControlSettings = field(default_factory=VoiceControlSettings)
     tuner: TunerSettings = field(default_factory=TunerSettings)
@@ -68,7 +70,7 @@ def load() -> AppSettings:
         return AppSettings(
             uk_terms=data.get("uk_terms"),
             recent_files=data.get("recent_files", []),
-            preview=PreviewSettings.from_dict(data.get("preview")),
+            play=PlaySettings.from_dict(data.get("play") or data.get("preview")),
             live_midi_input=LiveMidiInputSettings.from_dict(data.get("live_midi_input")),
             voice_control=VoiceControlSettings.from_dict(data.get("voice_control")),
             tuner=TunerSettings.from_dict(data.get("tuner")),
@@ -104,18 +106,18 @@ def add_recent_file(file_path: str) -> None:
     save(settings)
 
 
-def set_preview_settings(settings: PreviewSettings) -> None:
-    """Records the Preview settings, load-mutate-save for exactly the same
+def set_play_settings(settings: PlaySettings) -> None:
+    """Records the Play settings, load-mutate-save for exactly the same
     reason as add_recent_file above: constructing a fresh AppSettings here
     would silently wipe uk_terms and the Recent Files list."""
     current = load()
-    current.preview = settings.copy()
+    current.play = settings.copy()
     save(current)
 
 
 def set_live_midi_input_settings(settings: LiveMidiInputSettings) -> None:
     """Records the live-MIDI-input settings, load-mutate-save for the same
-    reason as add_recent_file/set_preview_settings above."""
+    reason as add_recent_file/set_play_settings above."""
     current = load()
     current.live_midi_input = settings.copy()
     save(current)
@@ -123,7 +125,7 @@ def set_live_midi_input_settings(settings: LiveMidiInputSettings) -> None:
 
 def set_voice_control_settings(settings: VoiceControlSettings) -> None:
     """Records the voice-control settings, load-mutate-save for the same
-    reason as add_recent_file/set_preview_settings/set_live_midi_input_
+    reason as add_recent_file/set_play_settings/set_live_midi_input_
     settings above."""
     current = load()
     current.voice_control = settings.copy()
@@ -132,7 +134,7 @@ def set_voice_control_settings(settings: VoiceControlSettings) -> None:
 
 def set_tuner_settings(settings: TunerSettings) -> None:
     """Records the tuner settings, load-mutate-save for the same reason as
-    add_recent_file/set_preview_settings/set_live_midi_input_settings
+    add_recent_file/set_play_settings/set_live_midi_input_settings
     above."""
     current = load()
     current.tuner = settings.copy()

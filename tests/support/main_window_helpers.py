@@ -7,19 +7,21 @@ the handful of helpers every split module needs live here so there is one copy.
 """
 from PySide6.QtWidgets import QApplication, QDialog
 
-from models.preview_settings import PreviewSettings
+from models.play_settings import PlaySettings
 
 
 def no_lead_in(window, **overrides):
-    """Preview with no count-in and no looping.
+    """Play settings with no count-in and no looping.
 
-    The shipped default is a one-bar lead-in (models/preview_settings.py),
-    which is right for practice but means Enter no longer sounds anything
-    until the count-in finishes. Tests asserting what Preview PLAYS opt out
-    of it; the lead-in has its own tests below.
+    The shipped default is a one-bar lead-in (models/play_settings.py),
+    which is right for practice but means Space no longer sounds anything
+    until the count-in finishes. Tests asserting what playback PLAYS opt
+    out of it; the lead-in has its own tests.
     """
-    settings = PreviewSettings(lead_in_bars=0, lead_in_beats=0, **overrides)
-    window.playback.set_preview_settings(settings)
+    overrides.setdefault("lead_in_enabled", False)
+    overrides.setdefault("loop_enabled", False)
+    settings = PlaySettings(lead_in_bars=0, lead_in_beats=0, **overrides)
+    window.playback.set_play_settings(settings)
     return settings
 
 

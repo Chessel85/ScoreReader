@@ -1,5 +1,5 @@
 # audio/lead_in.py
-"""The count-in before a Preview starts: which beats click, and when.
+"""The lead-in count-in before playback starts: which beats click, and when.
 
 A pure function (no Qt, no timers), deliberately split out from
 controllers/playback_controller.py for the same reason as
@@ -7,9 +7,9 @@ audio/strum_schedule.py - the timing maths is then directly unit-testable
 without a real event loop, and the controller only has to walk the schedule
 it hands back.
 
-Reported from real practice use: Preview sounded the instant Enter was
+Reported from real practice use: playback used to sound the instant it was
 pressed, leaving no time to get hands back onto the guitar. See
-models/preview_settings.py for the settings this reads.
+models/play_settings.py for the settings this reads.
 """
 import math
 from typing import List, Tuple

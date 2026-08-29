@@ -227,34 +227,32 @@ class RegionPresenter(QObject):
         message = f"{display_key}: {value}"
         accessible_announcer.announce(self.region_3, message)
 
-    def announce_preview_length(self, bars: int) -> None:
-        """Alt+PageUp/PageDown (main_window.increase_preview_bars/
-        decrease_preview_bars) change Preview's length without moving focus
-        off the Note region - previously the only trace of the new value
-        was the status bar's own preview-length field, which a screen
-        reader user isn't focused on and so never heard change (the status
-        bar text is what's displayed, not what's spoken - see
-        _announce_measure_change above for why persisted widget text and a
-        one-off spoken announcement are handled separately). User-requested
-        2026-08-26; wording follows the UK/US terminology setting exactly
+    def announce_loop_length(self, bars: int) -> None:
+        """Alt+PageUp/PageDown (main_window.increase_loop_length/
+        decrease_loop_length) and the typed Ctrl+Enter buffer change the
+        loop length without moving focus off the Note region - the only
+        trace of the new value is otherwise the status bar's own loop-length
+        field, which a screen-reader user isn't focused on and so never
+        hears change. Wording follows the UK/US terminology setting exactly
         like every other bar/measure label in the app."""
         label = bar_word(self.session.uk_terms)
         plural = "" if bars == 1 else "s"
-        message = f"Preview {bars} {label}{plural}."
+        message = f"Loop length {bars} {label}{plural}."
         accessible_announcer.announce(self.region_3, message)
 
     def announce_tempo(self) -> None:
         """F/S/D (main_window.tempo_faster/tempo_slower/tempo_reset) nudge
         the playback tempo without moving focus off the Note region, so -
-        like announce_preview_length - the only prior trace of the new
-        value was the status bar's playback-tempo field, which a
-        screen-reader user isn't focused on. Just the bare number, per the
-        user: not "N quarter notes per minute"."""
+        like announce_loop_length - the only prior trace of the new value
+        was the status bar's playback-tempo field, which a screen-reader
+        user isn't focused on. Just the bare number, per the user: not
+        "N quarter notes per minute"."""
         if not self.music_data:
             return
-        accessible_announcer.announce(
-            self.region_3, f"{self.music_data.effective_tempo_display_str()}."
+        number = self.music_data._format_tempo_number(
+            self.music_data.playback_tempo_display_bpm()
         )
+        accessible_announcer.announce(self.region_3, f"{number}.")
 
     def refresh_region_5(self) -> None:
         """Ref 29: recomputes Region 5's rows for the current position.

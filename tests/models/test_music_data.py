@@ -585,8 +585,12 @@ def test_status_bar_placeholder_measure_word_follows_uk_terms():
     assert md.get_status_bar_fields()[0] == "Bar - beat -"
 
 
-def test_tempo_status_field_duration_name_follows_uk_terms():
-    md = MusicData(tempo_bpm=48, tempo_beat_unit_quarter_length=0.5, tempo_beat_unit_name="eighth", uk_terms=True)
+def test_tempo_status_field_duration_name_follows_uk_terms(timeline, six_eight_score):
+    """The status field now names the TIME-SIGNATURE DENOMINATOR beat the
+    absolute playback tempo is counted in (a quaver in 6/8), translated per
+    uk_terms - distinct from Region 1's notated marking unit."""
+    md = timeline(six_eight_score)
+    md.uk_terms = True
 
     assert "quaver notes per minute" in md.get_status_bar_fields()[3]
 
@@ -971,54 +975,81 @@ def test_playback_events_skip_indices_with_no_pitch(timeline, rest_score):
     assert md.get_playback_events_for_indices([0]) == []
 
 
-# --- E1: playback tempo offset (Ref 12) ---------------------------------
+# --- E1: absolute playback tempo (Ref 12) -----------------------------
 
 def test_effective_tempo_defaults_to_the_scores_own_tempo():
     md = MusicData(tempo_bpm=120)
 
     assert md.effective_tempo_bpm() == 120
+    assert md.effective_playback_quarter_bpm() == 120
+    assert md.playback_tempo_bpm is None
 
 
-def test_playback_tempo_offset_shifts_effective_tempo_without_touching_score_tempo():
-    md = MusicData(tempo_bpm=120)
+def test_set_playback_tempo_display_bpm_stores_an_absolute_override(timeline, minimal_score):
+    md = timeline(minimal_score, tempo_bpm=120)  # 4/4, quarter = 120
 
-    md.set_playback_tempo_offset(30)
+    md.set_playback_tempo_display_bpm(150)
 
-    assert md.effective_tempo_bpm() == 150
-    assert md.tempo_bpm == 120, "AC1: offset must never mutate the score's own tempo"
-
-
-def test_playback_tempo_offset_clamps_at_the_upper_hard_boundary():
-    md = MusicData(tempo_bpm=120)
-
-    md.set_playback_tempo_offset(500)  # would be 620bpm, way past MAX_TEMPO_BPM
-
-    assert md.effective_tempo_bpm() == MusicData.MAX_TEMPO_BPM
+    assert md.playback_tempo_display_bpm() == 150
+    assert md.effective_playback_quarter_bpm() == 150
+    assert md.tempo_bpm == 120, "AC1: the override must never mutate the score's own tempo"
 
 
-def test_playback_tempo_offset_clamps_at_the_lower_hard_boundary():
-    md = MusicData(tempo_bpm=40)
+def test_absolute_tempo_clamps_at_the_hard_boundaries(timeline, minimal_score):
+    md = timeline(minimal_score, tempo_bpm=120)
 
-    md.set_playback_tempo_offset(-500)  # would be negative, way past MIN_TEMPO_BPM
+    md.set_playback_tempo_display_bpm(9999)
+    assert md.playback_tempo_display_bpm() == MusicData.MAX_TEMPO_BPM
 
-    assert md.effective_tempo_bpm() == MusicData.MIN_TEMPO_BPM
+    md.set_playback_tempo_display_bpm(-50)
+    assert md.playback_tempo_display_bpm() == MusicData.MIN_TEMPO_BPM
 
 
-def test_reset_playback_tempo_returns_to_the_scores_own_tempo():
-    md = MusicData(tempo_bpm=96)
-    md.set_playback_tempo_offset(-20)
-    assert md.effective_tempo_bpm() == 76
+def test_nudge_playback_tempo_adds_ten_display_beats(timeline, minimal_score):
+    md = timeline(minimal_score, tempo_bpm=96)
+
+    md.nudge_playback_tempo(10)
+    assert md.playback_tempo_display_bpm() == 106
+
+    md.nudge_playback_tempo(-10)
+    assert md.playback_tempo_display_bpm() == 96
+
+
+def test_reset_playback_tempo_returns_to_the_scores_own_tempo(timeline, minimal_score):
+    md = timeline(minimal_score, tempo_bpm=96)
+    md.set_playback_tempo_display_bpm(76)
+    assert md.effective_playback_quarter_bpm() == 76
 
     md.reset_playback_tempo()
 
-    assert md.effective_tempo_bpm() == 96
+    assert md.playback_tempo_bpm is None
+    assert md.effective_playback_quarter_bpm() == 96
 
 
-def test_get_current_duration_ms_reflects_the_playback_tempo_offset(timeline, minimal_score):
+def test_playback_is_flat_ignoring_internal_tempo_changes(timeline, tempo_change_score):
+    """Ref 12: "always flat" - effective_tempo_bpm no longer varies with
+    position, even across a score with internal tempo markings."""
+    md = timeline(tempo_change_score)
+
+    first = md.effective_tempo_bpm(0)
+    last = md.effective_tempo_bpm(len(md.timeline_slices) - 1)
+    assert first == last == md.effective_playback_quarter_bpm()
+
+
+def test_playback_tempo_display_bpm_is_denominator_relative(timeline, six_eight_score):
+    """6/8: the displayed absolute tempo counts eighth-note beats, so a
+    quarter-BPM of 60 shows as 120."""
+    md = timeline(six_eight_score)
+    md.playback_tempo_bpm = 60
+
+    assert md.playback_tempo_display_bpm(0) == 120
+
+
+def test_get_current_duration_ms_reflects_the_absolute_tempo(timeline, minimal_score):
     md = timeline(minimal_score, tempo_bpm=120)
 
     baseline_ms = md.get_current_duration_ms()
-    md.set_playback_tempo_offset(120)  # double the effective tempo -> half the duration
+    md.set_playback_tempo_display_bpm(240)  # double -> half the duration
 
     assert md.get_current_duration_ms() == baseline_ms // 2
 
@@ -1030,28 +1061,6 @@ def test_score_tempo_display_bpm_converts_out_of_the_internal_quarter_bpm():
     md = MusicData(tempo_bpm=48, tempo_beat_unit_quarter_length=0.5, tempo_beat_unit_name="eighth")
 
     assert md.score_tempo_display_bpm() == 96
-
-
-def test_playback_tempo_offset_is_in_display_units_not_quarter_units():
-    """F/S's "+10" (Ref 12 AC3) must mean +10 in the units the user reads -
-    e.g. +10 eighth notes per minute, not +10 quarter-note-equivalent bpm
-    (which would display as +20 eighth notes per minute)."""
-    md = MusicData(tempo_bpm=48, tempo_beat_unit_quarter_length=0.5, tempo_beat_unit_name="eighth")
-
-    md.set_playback_tempo_offset(10)
-
-    assert md.effective_tempo_display_bpm() == 106
-    assert md.effective_tempo_bpm() == 53, "internal quarter-BPM timing must still be correct: 48 + 10*0.5"
-
-
-def test_playback_tempo_offset_clamp_bounds_use_display_units():
-    """The 30-300 hard boundary (Ref 12 AC2) is what the user reads/types
-    (score display units), not the internal quarter-BPM equivalent."""
-    md = MusicData(tempo_bpm=48, tempo_beat_unit_quarter_length=0.5, tempo_beat_unit_name="eighth")
-
-    md.set_playback_tempo_offset(1000)  # would be far past 300 eighth-notes-per-minute
-
-    assert md.effective_tempo_display_bpm() == MusicData.MAX_TEMPO_BPM
 
 
 # --- E4: Sequencer support methods ---------------------------------------
@@ -1962,20 +1971,22 @@ def test_span_ms_measures_real_time_to_an_elapsed_quarters_point(timeline, minim
     assert md.span_ms_to_quarters(0, 0.0) == 0
 
 
-def test_span_ms_honours_a_tempo_change_inside_the_span(timeline, tempo_change_score):
-    """quarter=100 for bar 1 (2400ms), quarter=200 for bar 2 (1200ms) - a
-    single division by one tempo would give neither (Ref 12)."""
+def test_span_ms_is_flat_across_a_score_with_internal_tempo_changes(timeline, tempo_change_score):
+    """Ref 12: playback is always flat - the loop-restart timing no longer
+    follows the score's internal tempo markings, only the absolute tempo
+    (here the opening quarter=100 -> 4 quarters = 2400ms, 8 = 4800ms)."""
     md = timeline(tempo_change_score)
+    quarter_bpm = md.effective_playback_quarter_bpm()
 
-    assert md.span_ms_to_quarters(0, 4.0) == 2400
-    assert md.span_ms_to_quarters(0, 8.0) == 3600
+    assert md.span_ms_to_quarters(0, 4.0) == round(4.0 * 60000 / quarter_bpm)
+    assert md.span_ms_to_quarters(0, 8.0) == round(8.0 * 60000 / quarter_bpm)
 
 
-def test_span_ms_follows_the_playback_tempo_offset(timeline, minimal_score):
-    """F/S/D (Ref 12) has to move the loop point too, or a repeat would
+def test_span_ms_follows_the_absolute_playback_tempo(timeline, minimal_score):
+    """The absolute tempo has to move the loop point too, or a repeat would
     drift against the notes it is repeating."""
     md = timeline(minimal_score)
-    md.set_playback_tempo_offset(120)  # 120 -> 240bpm, so half the time
+    md.set_playback_tempo_display_bpm(240)  # 120 -> 240bpm, so half the time
 
     assert md.span_ms_to_quarters(0, 4.0) == 1000
 

@@ -27,14 +27,14 @@ class MixerDialog(QDialog):
     MusicData/PlaybackController/SynthEngine itself, only emits signals -
     MainWindow._show_mixer_dialog wires those to
     controllers/playback_controller.py's set_mixer_volume/set_mixer_pan
-    (the live-preview push) and audition_phrase (Alt+W / the Preview
-    button), and performs commit_mixer_edit/cancel_mixer_edit itself once
-    exec() returns.
+    (the live-preview push) and toggle_play_stop (Alt+W / the Preview
+    button - it starts/stops the one play transport, honouring the current
+    loop/lead-in settings), and performs commit_mixer_edit/cancel_mixer_
+    edit itself once exec() returns.
 
     Same focus-on-show reasoning as every other dialog: setFocus() before
     the native window exists never reaches NVDA, so it's deferred to
-    showEvent (AttributeOrderDialog/GotoMeasureDialog/TempoOffsetDialog all
-    do this)."""
+    showEvent (AttributeOrderDialog/GotoMeasureDialog all do this)."""
 
     volume_changed = Signal(str, int)  # key, percent
     pan_changed = Signal(str, int)     # key, percent

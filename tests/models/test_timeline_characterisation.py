@@ -284,33 +284,35 @@ def test_every_tempo_marking_is_captured_not_just_the_first(timeline, tempo_chan
     assert [c.beat_unit_name for c in md.tempo_changes] == ["quarter", "quarter"]
 
 
-def test_effective_tempo_bpm_follows_the_marking_in_effect_at_each_index(
+def test_effective_tempo_bpm_is_flat_ignoring_the_internal_marking(
     timeline, tempo_change_score
 ):
-    """The tempo used for playback timing must switch exactly at the
-    measure the new marking belongs to, not apply retroactively or lag."""
+    """Ref 12: playback is always flat now - effective_tempo_bpm no longer
+    varies with position. The score's internal marking still populates
+    tempo_changes (Region 5 / the report read it), but not playback timing."""
     md = timeline(tempo_change_score)
 
     m1_last_index = next(i for i, s in enumerate(md.timeline_slices) if s.measure == 1 and s.notes[0].step_name == "F")
     m2_first_index = next(i for i, s in enumerate(md.timeline_slices) if s.measure == 2 and s.notes[0].step_name == "G")
 
-    assert md.effective_tempo_bpm(m1_last_index) == 100
-    assert md.effective_tempo_bpm(m2_first_index) == 200
+    flat = md.effective_playback_quarter_bpm()
+    assert md.effective_tempo_bpm(m1_last_index) == flat
+    assert md.effective_tempo_bpm(m2_first_index) == flat
+    # The internal marking is still recorded for the score-fact readouts.
+    assert len(md.tempo_changes) >= 2
 
 
-def test_playback_tempo_offset_applies_on_top_of_whichever_tempo_is_current(
+def test_absolute_tempo_override_is_flat_across_the_whole_score(
     timeline, tempo_change_score
 ):
-    """F/S (Ref 12 AC3) add to "whatever the current tempo is" per-position,
-    not always the score's opening tempo."""
+    """An absolute override applies uniformly, not on top of "whatever the
+    current internal marking is"."""
     md = timeline(tempo_change_score)
-    md.active_event_index = 0  # measure 1, tempo 100
-    md.set_playback_tempo_offset(10)
-
-    assert md.effective_tempo_bpm(0) == 110
+    md.set_playback_tempo_display_bpm(150)
 
     m2_first_index = next(i for i, s in enumerate(md.timeline_slices) if s.measure == 2)
-    assert md.effective_tempo_bpm(m2_first_index) == 210
+    assert md.effective_tempo_bpm(0) == 150
+    assert md.effective_tempo_bpm(m2_first_index) == 150
 
 
 def test_repeat_and_ending_spans_are_paired_correctly(timeline, repeats_and_endings_score):
@@ -635,15 +637,14 @@ def test_time_signature_and_tempo_change_rows_both_fire_when_they_land_on_the_sa
     ]
 
 
-def test_tempo_change_row_reports_the_scores_own_number_not_the_playback_offset(
+def test_tempo_change_row_reports_the_scores_own_number_not_the_absolute_override(
     timeline, tempo_change_score
 ):
     """The alert is about the SCORE's own tempo markings, not the user's
-    live F/S/D playback offset (Ref 12) - the row must still read "200",
-    not "220", and the offset alone (unchanged across bars 1 and 2) must
-    not itself register as a "change"."""
+    absolute playback tempo (Ref 12) - the row must still read "200", and
+    the override alone must not itself register as a "change"."""
     md = timeline(tempo_change_score)
-    md.set_playback_tempo_offset(20)
+    md.set_playback_tempo_display_bpm(220)
 
     bar_2_index = md.first_event_index_of_measure(2)
     assert [r.label for r in md.get_performance_region_rows(bar_2_index)] == [

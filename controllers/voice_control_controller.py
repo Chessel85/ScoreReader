@@ -84,7 +84,6 @@ class VoiceControlController(QObject):
         # handled separately in _dispatch (each carries a number, unlike
         # every other command) and are deliberately NOT keys here.
         self._command_table: Dict[str, Callable[[], None]] = {
-            voice_commands.PREVIEW: self.playback.audition_phrase,
             voice_commands.PLAY: self.playback.play_command,
             voice_commands.STOP: self.playback.stop,
             voice_commands.PAUSE: self.playback.pause_command,
@@ -97,6 +96,10 @@ class VoiceControlController(QObject):
             voice_commands.SLOWER: self.playback.tempo_slower,
             voice_commands.FASTER: self.playback.tempo_faster,
             voice_commands.DEFAULT_SPEED: self.playback.tempo_reset,
+            voice_commands.LOOPING_ON: lambda: self.playback.set_loop_enabled(True),
+            voice_commands.LOOPING_OFF: lambda: self.playback.set_loop_enabled(False),
+            voice_commands.LEAD_IN_ON: lambda: self.playback.set_lead_in_enabled(True),
+            voice_commands.LEAD_IN_OFF: lambda: self.playback.set_lead_in_enabled(False),
         }
         self._apply_cue_levels()
 
@@ -264,7 +267,7 @@ class VoiceControlController(QObject):
         elif command_name == voice_commands.LOOP_LENGTH:
             if number_value is None:
                 return
-            self.playback.set_preview_length_bars(number_value)
+            self.playback.set_loop_length_bars(number_value)
         elif command_name == voice_commands.ATTRIBUTE:
             if number_value is None or self.presenter is None:
                 return

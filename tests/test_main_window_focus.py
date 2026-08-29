@@ -207,15 +207,10 @@ def test_first_and_last_note_actions_are_only_enabled_in_the_note_region(
     assert window.last_measure_action.isEnabled()
 
 
-def test_preview_action_is_enabled_in_every_region_and_the_status_bar(
-    window, qtbot, null_synth, minimal_score
-):
-    """Enter/Return (Playback > Preview) is a plain window-wide action now,
-    always enabled - including the Note region. Its slot
-    (MainWindow.audition_phrase) is the single global implementation of
-    Enter's dual behaviour: complete a pending typed bar number, else
-    toggle the phrase preview. There is no longer a Note-region carve-out
-    (FocusController.update_preview_action_enabled is gone)."""
+def test_commit_digits_action_is_enabled_everywhere(window, qtbot, null_synth, minimal_score):
+    """Enter/Return is a hidden window-wide action now, always enabled - it
+    only commits a typed bar number (Preview is gone; Space is the single
+    play control)."""
     load_and_wait(window, qtbot, minimal_score)
     _show(window, qtbot)
 
@@ -224,23 +219,21 @@ def test_preview_action_is_enabled_in_every_region_and_the_status_bar(
         window.region_4, window.region_5,
     ):
         _focus(region)
-        assert window.preview_action.isEnabled()
+        assert window.commit_digits_action.isEnabled()
 
     _focus(window.status_bar.first_field())
-    assert window.preview_action.isEnabled()
+    assert window.commit_digits_action.isEnabled()
 
 
 @pytest.mark.parametrize(
     "focus_target",
     ["region_1", "region_2", "region_3", "region_4", "region_5", "status_bar"],
 )
-def test_enter_starts_and_stops_preview_from_any_region_or_the_status_bar(
+def test_enter_with_no_pending_number_does_not_start_playback(
     window, qtbot, null_synth, minimal_score, focus_target
 ):
-    """Functional counterpart of the enabled test above: with no bar number
-    pending, pressing Enter must actually start Preview, and pressing it
-    again must stop it early - the audition_phrase() toggle, now reachable
-    from every region (the Note region included) and the status bar."""
+    """Enter/Return only commits a typed bar number - with nothing pending
+    it is inert and must never start the transport (that is Space's job)."""
     load_and_wait(window, qtbot, minimal_score)
     _show(window, qtbot)
     target = (
@@ -248,21 +241,17 @@ def test_enter_starts_and_stops_preview_from_any_region_or_the_status_bar(
         else getattr(window, focus_target)
     )
     _focus(target)
-    assert window.playback.is_preview_active is False
 
     qtbot.keyClick(window.focusWidget(), Qt.Key.Key_Return)
-    assert window.playback.is_preview_active is True
 
-    qtbot.keyClick(window.focusWidget(), Qt.Key.Key_Return)
-    assert window.playback.is_preview_active is False
+    assert window.playback.is_play_run_active is False
+    assert window.sequencer.is_playing is False
 
 
-def test_enter_in_the_note_region_completes_a_typed_bar_number_not_a_preview(
+def test_enter_in_the_note_region_completes_a_typed_bar_number(
     window, qtbot, null_synth, many_measures_score
 ):
-    """Regression guard: a typed bar number followed by Enter must jump to
-    that bar, not start a Preview - audition_phrase() checks for pending
-    digits (NavigationController.commit_pending_digits) before previewing."""
+    """A typed bar number followed by Enter jumps to that bar."""
     load_and_wait(window, qtbot, many_measures_score)
     _show(window, qtbot)
     _focus(window.region_3)
@@ -270,7 +259,7 @@ def test_enter_in_the_note_region_completes_a_typed_bar_number_not_a_preview(
     qtbot.keyClicks(window.region_3, "2")
     qtbot.keyClick(window.region_3, Qt.Key.Key_Return)
 
-    assert window.playback.is_preview_active is False
+    assert window.playback.is_play_run_active is False
     assert window._music_data.get_current_slice().measure == 2
 
 

@@ -286,12 +286,12 @@ During Navigation</a></li>
 <li><a href="#playing-the-whole-piece-play-pause-stop"
 id="toc-playing-the-whole-piece-play-pause-stop">7.2 Playing the Whole
 Piece (Play / Pause / Stop)</a></li>
-<li><a href="#auditioning-a-short-phrase-enter"
-id="toc-auditioning-a-short-phrase-enter">7.3 Auditioning a Short Phrase
-(Enter)</a></li>
-<li><a href="#customising-preview-playback-preview-settings"
-id="toc-customising-preview-playback-preview-settings">7.4 Customising
-Preview (Playback &gt; Preview Settings…)</a></li>
+<li><a href="#looping-and-the-lead-in-count-in"
+id="toc-looping-and-the-lead-in-count-in">7.3 Looping and the Lead-in
+Count-in</a></li>
+<li><a href="#play-settings-playback-play-settings"
+id="toc-play-settings-playback-play-settings">7.4 Play Settings
+(Playback &gt; Play Settings…)</a></li>
 <li><a href="#auditioning-the-current-chord-shiftspace"
 id="toc-auditioning-the-current-chord-shiftspace">7.5 Auditioning the
 Current Chord (Shift+Space)</a></li>
@@ -721,8 +721,8 @@ each of those uses its own native navigation instead.</p>
 the score’s notated notes in written order, from start to end - it never
 follows a repeat barline, ending, Segno, Coda or Da Capo/Dal Segno
 instruction. Those markings are only actually followed during real
-playback and Preview (section 7); section 8 covers seeing and jumping to
-them directly.</p>
+playback (section 7); section 8 covers seeing and jumping to them
+directly.</p>
 <h3 id="stepping-note-by-note-left-right-arrow">5.1 Stepping Note by
 Note (Left / Right Arrow)</h3>
 <p>Moves to the next or previous active event - a position in the score
@@ -763,14 +763,14 @@ Number</h3>
 <p>Type a bar number using the digit keys - no dialog needed - then
 press <code>Enter</code> to jump straight to its first active event,
 which plays immediately. This works from anywhere in the window: any of
-the five regions or the status bar, exactly like Play, Preview and the
-tempo keys. The number you’re building shows in the status bar’s
-position field as you type. Press <code>Escape</code> at any point
-before <code>Enter</code> to clear what you’ve typed without moving, and
-any ordinary move (an arrow key, a menu jump, Find) also clears a
-half-typed number so a later <code>Enter</code> can’t act on a stale
-one. Typing a bar number that doesn’t exist in the piece plays the
-boundary sound (section 5.6) and leaves your position unchanged.</p>
+the five regions or the status bar, exactly like Play and the tempo
+keys. The number you’re building shows in the status bar’s position
+field as you type. Press <code>Escape</code> at any point before
+<code>Enter</code> to clear what you’ve typed without moving, and any
+ordinary move (an arrow key, a menu jump, Find) also clears a half-typed
+number so a later <code>Enter</code> can’t act on a stale one. Typing a
+bar number that doesn’t exist in the piece plays the boundary sound
+(section 5.6) and leaves your position unchanged.</p>
 <p>You can also reach the same feature through Navigation &gt; Go to
 Measure… (<code>Ctrl+G</code>), a dialog pre-filled with your current
 bar number if you’d rather use a menu.</p>
@@ -937,71 +937,83 @@ heard.</p>
 <p>Unlike stepping through the Note region with the arrow keys, real
 playback follows repeat barlines, 1st/2nd-time endings, and Segno/Coda/
 Da Capo/Dal Segno/Fine instructions exactly as notated - so what you
-hear during Play or Preview can genuinely revisit or skip bars, even
-though those same bars are simply listed in order when you browse them
-with <code>Left</code>/<code>Right Arrow</code>.</p>
-<h3 id="auditioning-a-short-phrase-enter">7.3 Auditioning a Short Phrase
-(Enter)</h3>
-<p><code>Enter</code> (or Playback &gt; Preview) plays a short phrase
-(Preview) starting from your current position and stops on its own once
-it reaches the end of the previewed passage. This is meant for hearing
-the immediate musical context around your position without committing to
-full playback. Pressing <code>Enter</code> again while it’s still
-playing stops it early. Either way, your actual cursor position is left
-untouched. Preview also follows repeat/ending/Segno/Coda markings the
-same way full playback does, whenever they fall inside the previewed
-passage.</p>
-<p>Enter works this way from any region and the status bar. It has one
-second job, also everywhere: if you’re partway through typing a bar
-number (section 5.4), Enter completes that jump instead of starting a
-Preview. With nothing typed, Enter always previews.</p>
-<p>While focus is in the Note region, <code>Alt+PageUp</code> and
-<code>Alt+PageDown</code> increase or decrease how many bars Preview
-covers by one bar at a time, a quick alternative to opening the Preview
-Settings dialog below just to change the length. Each press speaks the
-new length aloud (“Preview 3 bars” or “Preview 3 measures”, depending on
-your Terminology (UK/US) setting) since there’s otherwise no way to know
-the current value without starting a Preview and counting.</p>
-<h3 id="customising-preview-playback-preview-settings">7.4 Customising
-Preview (Playback &gt; Preview Settings…)</h3>
-<p>Playback &gt; Preview Settings… (<code>Ctrl+Shift+V</code>) controls
-how Preview (Enter) behaves, so you have a moment to get your hands back
-on your instrument before it starts and hear exactly as much as you
-need:</p>
+hear during Play can genuinely revisit or skip bars, even though those
+same bars are simply listed in order when you browse them with
+<code>Left</code>/<code>Right Arrow</code>. (Looping playback, below, is
+the exception: a loop stays inside its own window.)</p>
+<h3 id="looping-and-the-lead-in-count-in">7.3 Looping and the Lead-in
+Count-in</h3>
+<p><code>Space</code> is the single play control. What it does depends
+on two habit settings you can leave on or off:</p>
 <ul>
-<li>Lead-in bars/beats before the preview starts - a short count-in, so
-playback doesn’t begin the instant you press Enter.</li>
-<li>Play the metronome click during the lead-in - a checkbox, so the
-count-in itself is audible as a beat, not silent.</li>
-<li>Preview length in bars - how many bars Preview covers each
-time.</li>
-<li>Repeat the preview until stopped - loops the same passage
-continuously; press <code>Enter</code> again to stop it, same as a
-non-looping preview.</li>
-<li>Play the lead-in again on every repeat - only meaningful with
-looping switched on, and greyed out otherwise.</li>
+<li><strong>Looping on</strong>: <code>Space</code> loops a fixed window
+of bars starting from the bar your cursor is in, over and over, until
+you press <code>Space</code> again. Your cursor does not move while a
+loop plays. The window length is the “Loop length in bars” setting.</li>
+<li><strong>Looping off</strong>: <code>Space</code> plays from your
+cursor to the end of the piece and stops, with your cursor following
+along - the ordinary transport.</li>
+<li><strong>Lead-in on</strong>: a metronome count-in plays first,
+giving you a moment to get your hands back onto your instrument before
+the notes start.</li>
 </ul>
+<p>Toggle looping with <code>Ctrl+L</code> (Playback &gt; Toggle
+Looping) and the lead-in with <code>Ctrl+I</code> (Playback &gt; Toggle
+Lead-in). Both are announced and shown in the status bar.</p>
+<p>While focus is in the Note region, <code>Alt+PageUp</code> and
+<code>Alt+PageDown</code> increase or decrease the loop length by one
+bar at a time, and <code>Ctrl+Enter</code> sets it directly from a
+number you have just typed (section 5.4) - if looping is off,
+<code>Ctrl+Enter</code> says “Looping is off” instead. Each change
+speaks the new length aloud (“Loop length 3 bars” or “Loop length 3
+measures”, depending on your Terminology (UK/US) setting).</p>
+<p><code>Enter</code> on its own no longer starts playback - it only
+completes a half-typed bar number.</p>
+<h3 id="play-settings-playback-play-settings">7.4 Play Settings
+(Playback &gt; Play Settings…)</h3>
+<p>Playback &gt; Play Settings… (<code>Ctrl+Shift+V</code>, also
+<code>Ctrl+T</code>) is the one dialog for how playback behaves:</p>
+<ul>
+<li><strong>Playback tempo</strong> - an exact tempo in beats per minute
+(see section 7.6). Saved with this score.</li>
+<li><strong>Play a lead-in metronome click</strong> - the master switch
+for the count-in. When on, the “Lead-in bars” and “Extra lead-in beats”
+fields set its length.</li>
+<li><strong>Repeat (loop) until stopped</strong> - turns looping on.
+When on, “Loop length in bars” sets the window.</li>
+<li><strong>Play the lead-in again on every repeat</strong> - only
+meaningful with both looping and the lead-in switched on, and greyed out
+otherwise.</li>
+</ul>
+<p>The lead-in and looping settings are global practice habits that
+follow you between pieces; only the playback tempo is saved per
+score.</p>
 <h3 id="auditioning-the-current-chord-shiftspace">7.5 Auditioning the
 Current Chord (Shift+Space)</h3>
 <p>Plays every note sounding at your current position together, each
 held for its own written duration. Press <code>Shift+Space</code> again
 at any point to re-trigger it.</p>
 <h3 id="changing-playback-tempo">7.6 Changing Playback Tempo</h3>
-<p><code>F</code> speeds playback up by 10bpm, <code>S</code> slows it
-down by 10bpm, and <code>D</code> resets to the score’s own written
-tempo. These are global shortcuts - they work regardless of which region
-has focus, since tempo is a playback-wide setting rather than something
-tied to one region. Changing it is purely a listening aid: it never
-edits the tempo actually written into the score.</p>
-<p>For finer control, Options &gt; Tempo Offset… (or
-<code>Ctrl+T</code>) opens a dialog where you can type an exact offset,
-including decimal values. Recall Score always keeps the effective tempo
-within a hard 30-300bpm range - a value you enter outside that range is
-automatically brought back within it rather than rejected.</p>
-<p>The status bar’s “Playback tempo” field always shows the current
-effective tempo in the score’s own units (for example, “96 eighth notes
-per minute” for a piece marked in eighth notes), and reads “(score
-default)” whenever no offset is currently applied.</p>
+<p><code>F</code> speeds playback up by 10, <code>S</code> slows it down
+by 10, and <code>D</code> resets to the score’s own written tempo. These
+are global shortcuts - they work regardless of which region has focus,
+since tempo is a playback-wide setting. For an exact value, open Play
+Settings… (<code>Ctrl+Shift+V</code> or <code>Ctrl+T</code>) and type
+into the “Playback tempo” field.</p>
+<p>The tempo you set is an <strong>absolute</strong> value between 5 and
+300, where a beat is the time-signature denominator (a quarter in 4/4,
+an eighth in 6/8). Recall Score keeps it inside that range - a value
+outside is brought back in rather than rejected. Your setting is saved
+with the score, so reopening the piece restores it.</p>
+<p>Playback is always <strong>flat</strong>: any rall./accel./section
+tempo changes written into the score are still described in the
+Performance region and Performance Report, but they are not sounded -
+playback holds one steady tempo throughout.</p>
+<p>The status bar’s “Playback tempo” field shows the current tempo in
+time-signature-denominator beats per minute, and reads “(score default)”
+while no tempo has been set. Because Region 1 shows the score’s own
+<em>written</em> marking (which may be in a different note value), the
+two numbers can legitimately differ.</p>
 <h3 id="using-the-metronome">7.7 Using the Metronome</h3>
 <p>Options &gt; Toggle Metronome, or <code>Ctrl+M</code>, turns a click
 on: one per beat, with a distinctly louder, accented click on beat 1 of
@@ -1032,12 +1044,11 @@ normal level, 50% sounds about half as loud, and 0% is silent. Muting an
 instrument entirely is a separate control, in Region 2 (section 6.3),
 not part of this dialog.</p>
 <p>Changes take effect immediately, so different settings can be
-compared before committing to them. Preview (<code>Alt+W</code>) plays a
-short phrase (the current bar and the next) using whatever’s been
-changed so far, without moving the current timeline position - press it
-again to stop early. OK keeps the changes and saves them with the score
-(see section 13.1); Cancel puts everything back exactly as it was before
-the dialog opened.</p>
+compared before committing to them. Preview (<code>Alt+W</code>) starts
+or stops ordinary playback (honouring your current loop and lead-in
+settings) so you can hear whatever’s been changed so far. OK keeps the
+changes and saves them with the score (see section 13.1); Cancel puts
+everything back exactly as it was before the dialog opened.</p>
 <h3 id="renaming-a-part-or-changing-its-instrument">7.10 Renaming a Part
 or Changing Its Instrument</h3>
 <p>Edit &gt; Instruments… (<code>Ctrl+Shift+I</code>) lists every part
@@ -1064,7 +1075,7 @@ a Connected MIDI Keyboard (Live MIDI Input)</h3>
 can play it live through its own sound engine - useful for trying out a
 part by ear, or simply having a familiar instrument sound while you
 work.</p>
-<p>Options &gt; Toggle Live MIDI Input, or <code>Ctrl+L</code>, turns it
+<p>Options &gt; Toggle Live MIDI Input, or <code>Ctrl+D</code>, turns it
 on or off. Options &gt; Live MIDI Input Settings…
 (<code>Ctrl+Shift+L</code>) chooses which device to listen on (with a
 Refresh button, since devices can be plugged in or removed while the
@@ -1076,7 +1087,7 @@ physically holding down on your keyboard.</p>
 <h3 id="hands-free-voice-control">7.12 Hands-Free Voice Control</h3>
 <p>For anyone whose hands are busy holding an instrument, spoken
 commands can control playback and navigation instead of the keyboard.
-Toggle it on or off with <code>Ctrl+Enter</code>, or Options &gt; Toggle
+Toggle it on or off with <code>Alt+Enter</code>, or Options &gt; Toggle
 Voice Control - a distinct tone confirms whether listening actually
 started or stopped.</p>
 <p>Options &gt; Voice Control Settings… (<code>Ctrl+Shift+R</code>)
@@ -1093,7 +1104,6 @@ in dictionary - rejected”.</p>
 recognized and acted on.</p>
 <p>The full list of recognized commands:</p>
 <ul>
-<li>preview - equivalent to pressing Enter</li>
 <li>play - starts or resumes playback</li>
 <li>stop - stops playback</li>
 <li>pause - pauses playback</li>
@@ -1105,14 +1115,18 @@ key</li>
 bar</li>
 <li>home - moves to the first note</li>
 <li>end - moves to the last note</li>
+<li>slower / faster / default speed - adjusts the playback tempo, like
+<code>S</code> / <code>F</code> / <code>D</code></li>
+<li>looping on / looping off (or loop on / loop off) - turns looping on
+or off</li>
+<li>lead in on / lead in off - turns the lead-in count-in on or off</li>
 <li>go to bar <code>&lt;number&gt;</code> / go to measure
 <code>&lt;number&gt;</code> - jumps to a bar (only recognizes bar
 numbers that actually exist in the loaded score)</li>
-<li>loop length <code>&lt;number&gt;</code> - sets how many bars Preview
-plays (the same value as Playback &gt; Preview Settings…’s “Preview
-length in bars” field, or
-<code>Alt+PageUp</code>/<code>Alt+PageDown</code>), recognizing 1
-through 32 bars</li>
+<li>loop length <code>&lt;number&gt;</code> - sets the loop length in
+bars (the same value as Playback &gt; Play Settings…’s “Loop length in
+bars” field, or <code>Alt+PageUp</code>/<code>Alt+PageDown</code>),
+recognizing 1 through 64 bars</li>
 <li>attribute <code>&lt;number&gt;</code> - speaks the Nth row of the
 Note Attributes region for the currently selected note(s) without moving
 focus (the same lookup as <code>Ctrl+1</code> through
@@ -1723,8 +1737,9 @@ anywhere.</td>
 <tr>
 <td style="text-align: left;">Play/Stop</td>
 <td style="text-align: left;">Space</td>
-<td style="text-align: left;">Starts playback from the current position,
-resumes from pause, or stops it (section 7.2).</td>
+<td style="text-align: left;">Starts playback from the current position
+(looping when looping is on), resumes from pause, or stops it (sections
+7.2, 7.3).</td>
 </tr>
 <tr>
 <td style="text-align: left;">Pause</td>
@@ -1733,18 +1748,22 @@ resumes from pause, or stops it (section 7.2).</td>
 Ctrl+Space again (section 7.2).</td>
 </tr>
 <tr>
-<td style="text-align: left;">Preview</td>
-<td style="text-align: left;">Enter</td>
-<td style="text-align: left;">Plays a short phrase around the current
-position, or stops it early if already playing. Works from any region or
-the status bar; if a typed bar number is pending, Enter completes that
-jump instead (sections 5.4, 7.3).</td>
+<td style="text-align: left;">Play Settings…</td>
+<td style="text-align: left;">Ctrl+Shift+V (also Ctrl+T)</td>
+<td style="text-align: left;">Sets the playback tempo, the lead-in
+count-in, and looping (sections 7.4, 7.6).</td>
 </tr>
 <tr>
-<td style="text-align: left;">Preview Settings…</td>
-<td style="text-align: left;">Ctrl+Shift+V</td>
-<td style="text-align: left;">Sets Preview’s lead-in, length and looping
-(section 7.4).</td>
+<td style="text-align: left;">Toggle Looping</td>
+<td style="text-align: left;">Ctrl+L</td>
+<td style="text-align: left;">Turns looping playback on or off (section
+7.3).</td>
+</tr>
+<tr>
+<td style="text-align: left;">Toggle Lead-in</td>
+<td style="text-align: left;">Ctrl+I</td>
+<td style="text-align: left;">Turns the metronome count-in before
+playback on or off (section 7.3).</td>
 </tr>
 <tr>
 <td style="text-align: left;">Mute</td>
@@ -1794,12 +1813,6 @@ instrument, the metronome and the position announcer (section 7.9).</td>
 </thead>
 <tbody>
 <tr>
-<td style="text-align: left;">Tempo Offset…</td>
-<td style="text-align: left;">Ctrl+T</td>
-<td style="text-align: left;">Sets an exact playback tempo offset,
-including decimal values (section 7.6).</td>
-</tr>
-<tr>
 <td style="text-align: left;">Terminology (UK/US)</td>
 <td style="text-align: left;">-</td>
 <td style="text-align: left;">Submenu to choose UK or US wording
@@ -1819,7 +1832,7 @@ on or off (section 7.8).</td>
 </tr>
 <tr>
 <td style="text-align: left;">Toggle Live MIDI Input</td>
-<td style="text-align: left;">Ctrl+L</td>
+<td style="text-align: left;">Ctrl+D</td>
 <td style="text-align: left;">Turns a connected MIDI keyboard’s live
 playback through Recall Score on or off (section 7.11).</td>
 </tr>
@@ -1831,7 +1844,7 @@ volume and pan for live input (section 7.11).</td>
 </tr>
 <tr>
 <td style="text-align: left;">Toggle Voice Control</td>
-<td style="text-align: left;">Ctrl+Enter</td>
+<td style="text-align: left;">Alt+Enter</td>
 <td style="text-align: left;">Turns hands-free voice control on or off
 (section 7.12).</td>
 </tr>
@@ -1984,6 +1997,11 @@ anywhere</td>
 <td style="text-align: left;">0-9, then Enter</td>
 </tr>
 <tr>
+<td style="text-align: left;">Type a number, then set it as the loop
+length <em>(any region or the status bar)</em></td>
+<td style="text-align: left;">0-9, then Ctrl+Enter</td>
+</tr>
+<tr>
 <td style="text-align: left;">Clear a typed bar number without moving
 <em>(any region or the status bar)</em></td>
 <td style="text-align: left;">Escape</td>
@@ -2044,7 +2062,7 @@ List region only)</em></td>
 </tr>
 <tr>
 <td style="text-align: left;">Play / stop playback from the current
-position (also resumes from pause)</td>
+position, looping when looping is on (also resumes from pause)</td>
 <td style="text-align: left;">Space</td>
 </tr>
 <tr>
@@ -2053,16 +2071,27 @@ Ctrl+Space again)</td>
 <td style="text-align: left;">Ctrl+Space</td>
 </tr>
 <tr>
-<td style="text-align: left;">Play a preview phrase around the current
-position, or stop it early if already playing (works from any region or
-the status bar; completes a pending typed bar number instead, if there
-is one)</td>
+<td style="text-align: left;">Complete a pending typed bar number
+<em>(any region or the status bar)</em></td>
 <td style="text-align: left;">Enter</td>
 </tr>
 <tr>
-<td style="text-align: left;">Increase / decrease Preview’s length by
-one bar, spoken aloud <em>(Note region only)</em></td>
+<td style="text-align: left;">Toggle looping on/off</td>
+<td style="text-align: left;">Ctrl+L</td>
+</tr>
+<tr>
+<td style="text-align: left;">Toggle the lead-in count-in on/off</td>
+<td style="text-align: left;">Ctrl+I</td>
+</tr>
+<tr>
+<td style="text-align: left;">Increase / decrease the loop length by one
+bar, spoken aloud <em>(Note region only)</em></td>
 <td style="text-align: left;">Alt+PageUp / Alt+PageDown</td>
+</tr>
+<tr>
+<td style="text-align: left;">Set the loop length from a typed number
+<em>(any region or the status bar)</em></td>
+<td style="text-align: left;">Ctrl+Enter</td>
 </tr>
 <tr>
 <td style="text-align: left;">Play every note at the current position
@@ -2070,8 +2099,8 @@ together</td>
 <td style="text-align: left;">Shift+Space</td>
 </tr>
 <tr>
-<td style="text-align: left;">Increase / decrease playback tempo by
-10bpm <em>(works from any region or the status bar)</em></td>
+<td style="text-align: left;">Increase / decrease playback tempo by 10
+<em>(works from any region or the status bar)</em></td>
 <td style="text-align: left;">F / S</td>
 </tr>
 <tr>
@@ -2080,8 +2109,8 @@ tempo <em>(works from any region or the status bar)</em></td>
 <td style="text-align: left;">D</td>
 </tr>
 <tr>
-<td style="text-align: left;">Open the Tempo Offset dialog</td>
-<td style="text-align: left;">Ctrl+T</td>
+<td style="text-align: left;">Open the Play Settings dialog</td>
+<td style="text-align: left;">Ctrl+Shift+V (also Ctrl+T)</td>
 </tr>
 <tr>
 <td style="text-align: left;">Toggle the metronome on/off</td>
@@ -2093,7 +2122,7 @@ tempo <em>(works from any region or the status bar)</em></td>
 </tr>
 <tr>
 <td style="text-align: left;">Toggle live MIDI input on/off</td>
-<td style="text-align: left;">Ctrl+L</td>
+<td style="text-align: left;">Ctrl+D</td>
 </tr>
 <tr>
 <td style="text-align: left;">Open the Live MIDI Input Settings
@@ -2102,7 +2131,7 @@ dialog</td>
 </tr>
 <tr>
 <td style="text-align: left;">Toggle voice control on/off</td>
-<td style="text-align: left;">Ctrl+Enter</td>
+<td style="text-align: left;">Alt+Enter</td>
 </tr>
 <tr>
 <td style="text-align: left;">Open the Voice Control Settings
@@ -2114,8 +2143,8 @@ dialog</td>
 <td style="text-align: left;">Ctrl+Shift+X</td>
 </tr>
 <tr>
-<td style="text-align: left;">Play a short preview from the Mixer dialog
-<em>(Mixer dialog only)</em></td>
+<td style="text-align: left;">Start / stop playback from the Mixer
+dialog <em>(Mixer dialog only)</em></td>
 <td style="text-align: left;">Alt+W</td>
 </tr>
 <tr>
@@ -2125,10 +2154,6 @@ dialog</td>
 <tr>
 <td style="text-align: left;">Open the Key Signature dialog</td>
 <td style="text-align: left;">Ctrl+Shift+K</td>
-</tr>
-<tr>
-<td style="text-align: left;">Open the Preview Settings dialog</td>
-<td style="text-align: left;">Ctrl+Shift+V</td>
 </tr>
 <tr>
 <td style="text-align: left;">Open the Tuner dialog</td>

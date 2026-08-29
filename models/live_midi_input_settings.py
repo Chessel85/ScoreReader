@@ -3,7 +3,7 @@
 through Recall Score's own synth (F/S/D-adjacent playback feature, requested
 after the 44d447a MIDI-controller-collision fix). Stored GLOBALLY
 (persistence/app_settings.py), not per score, the same reasoning as
-models/preview_settings.py - which device is plugged in and what it sounds
+models/play_settings.py - which device is plugged in and what it sounds
 like is the user's hardware setup, not a property of any one piece.
 Confirmed with the user.
 
@@ -63,7 +63,7 @@ class LiveMidiInputSettings:
         """An independent snapshot - the dialog's begin/preview/commit/
         cancel edit session (controllers/live_midi_input_controller.py)
         needs its own working copy, the same reasoning MixerSettings.copy()
-        and PreviewSettings.copy() already have."""
+        and PlaySettings.copy() already have."""
         return LiveMidiInputSettings(
             enabled=self.enabled,
             device_name=self.device_name,
@@ -85,7 +85,7 @@ class LiveMidiInputSettings:
     def from_dict(cls, data: Optional[dict]) -> "LiveMidiInputSettings":
         """A missing key falls back to that field's default, so a settings
         file written before this feature existed simply gets them - the same
-        best-effort shape PreviewSettings.from_dict/MixerSettings.from_dict
+        best-effort shape PlaySettings.from_dict/MixerSettings.from_dict
         already have."""
         if not data:
             return cls()

@@ -2,7 +2,7 @@
 """settings_path() is redirected into a per-test tmp_path by conftest's
 autouse _isolate_persistence fixture, so these never touch the real
 developer machine's %LOCALAPPDATA%."""
-from models.preview_settings import PreviewSettings
+from models.play_settings import PlaySettings
 from persistence import app_settings
 from persistence.app_settings import AppSettings
 
@@ -60,41 +60,54 @@ def test_load_with_corrupt_file_falls_back_to_defaults():
     assert settings.uk_terms is None
 
 
-# --- Preview settings (global, not per score) ----------------------------
+# --- Play settings (global, not per score) ------------------------------
 
-def test_preview_settings_default_when_nothing_has_been_saved():
-    assert app_settings.load().preview == PreviewSettings()
+def test_play_settings_default_when_nothing_has_been_saved():
+    assert app_settings.load().play == PlaySettings()
 
 
-def test_set_preview_settings_round_trips():
-    app_settings.set_preview_settings(
-        PreviewSettings(lead_in_bars=2, lead_in_click=False, preview_bars=4, loop=True)
+def test_set_play_settings_round_trips():
+    app_settings.set_play_settings(
+        PlaySettings(lead_in_bars=2, lead_in_enabled=False, loop_length_bars=4, loop_enabled=True)
     )
 
-    saved = app_settings.load().preview
+    saved = app_settings.load().play
     assert saved.lead_in_bars == 2
-    assert saved.lead_in_click is False
-    assert saved.preview_bars == 4
-    assert saved.loop is True
+    assert saved.lead_in_enabled is False
+    assert saved.loop_length_bars == 4
+    assert saved.loop_enabled is True
 
 
-def test_set_preview_settings_leaves_the_other_preferences_alone():
+def test_load_reads_a_pre_rename_preview_key():
+    """An existing settings.json written by the Preview era carries over."""
+    path = app_settings.settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        '{"preview": {"preview_bars": 6, "loop": true}}', encoding="utf-8"
+    )
+
+    saved = app_settings.load().play
+    assert saved.loop_length_bars == 6
+    assert saved.loop_enabled is True
+
+
+def test_set_play_settings_leaves_the_other_preferences_alone():
     """Load-mutate-save, for the same reason add_recent_file has to be: a
     fresh AppSettings literal here would wipe the dialect and the recent
     files list."""
     app_settings.save(AppSettings(uk_terms=True, recent_files=["a.xml"]))
 
-    app_settings.set_preview_settings(PreviewSettings(loop=True))
+    app_settings.set_play_settings(PlaySettings(loop_enabled=True))
 
     settings = app_settings.load()
     assert settings.uk_terms is True
     assert settings.recent_files == ["a.xml"]
-    assert settings.preview.loop is True
+    assert settings.play.loop_enabled is True
 
 
-def test_saving_other_preferences_leaves_preview_settings_alone():
-    app_settings.set_preview_settings(PreviewSettings(preview_bars=8))
+def test_saving_other_preferences_leaves_play_settings_alone():
+    app_settings.set_play_settings(PlaySettings(loop_length_bars=8))
 
     app_settings.add_recent_file("b.xml")
 
-    assert app_settings.load().preview.preview_bars == 8
+    assert app_settings.load().play.loop_length_bars == 8

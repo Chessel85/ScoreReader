@@ -11,13 +11,16 @@ from audio.voice_commands import (
     FASTER,
     GO_TO_BAR,
     HOME,
+    LEAD_IN_OFF,
+    LEAD_IN_ON,
     LOOP_LENGTH,
+    LOOPING_OFF,
+    LOOPING_ON,
     MAX_ATTRIBUTE_NUMBER,
     MAX_LOOP_LENGTH_BARS,
     NEXT_BAR,
     PAUSE,
     PLAY,
-    PREVIEW,
     PREVIOUS_BAR,
     SLOWER,
     STOP,
@@ -30,7 +33,7 @@ from audio.voice_commands import (
     number_to_words,
     parse_command,
 )
-from models.preview_settings import MIN_PREVIEW_BARS
+from models.play_settings import MIN_LOOP_LENGTH_BARS
 
 
 @pytest.mark.parametrize("n,words", [
@@ -62,16 +65,23 @@ def test_every_required_command_maps_to_a_distinct_canonical_name():
     """Every command from the original request has a phrase - a missing
     entry here would silently mean that command can never be recognized."""
     required = {
-        "preview": PREVIEW, "play": PLAY, "stop": STOP, "pause": PAUSE,
+        "play": PLAY, "stop": STOP, "pause": PAUSE,
         "forward": "forward", "back": "back",
         "right": "forward", "left": "back",
         "next bar": NEXT_BAR, "next measure": NEXT_BAR,
         "previous bar": PREVIOUS_BAR, "previous measure": PREVIOUS_BAR,
         "home": HOME, "end": END,
         "slower": SLOWER, "faster": FASTER, "default speed": DEFAULT_SPEED,
+        "looping on": LOOPING_ON, "loop on": LOOPING_ON,
+        "looping off": LOOPING_OFF, "loop off": LOOPING_OFF,
+        "lead in on": LEAD_IN_ON, "lead in off": LEAD_IN_OFF,
     }
     for phrase, command in required.items():
         assert COMMAND_PHRASES[phrase] == command
+
+
+def test_preview_command_is_gone():
+    assert "preview" not in COMMAND_PHRASES
 
 
 def test_go_to_bar_phrases_covers_zero_through_total_measures():
@@ -110,9 +120,10 @@ def test_parse_command_go_to_bar_without_lookup_is_unrecognized():
 def test_loop_length_phrases_covers_min_through_max_bars():
     phrases = loop_length_phrases()
     numbers = sorted({n for _, n in phrases})
-    assert numbers == list(range(MIN_PREVIEW_BARS, MAX_LOOP_LENGTH_BARS + 1))
+    assert numbers == list(range(MIN_LOOP_LENGTH_BARS, MAX_LOOP_LENGTH_BARS + 1))
+    assert MAX_LOOP_LENGTH_BARS == 64
     assert ("loop length four", 4) in phrases
-    assert ("loop length one", MIN_PREVIEW_BARS) in phrases
+    assert ("loop length one", MIN_LOOP_LENGTH_BARS) in phrases
 
 
 def test_parse_command_resolves_loop_length_via_lookup():

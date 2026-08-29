@@ -152,15 +152,14 @@ def test_ctrl_number_beyond_the_attribute_count_does_nothing(
     assert announcements == []
 
 
-def test_alt_pageup_pagedown_announce_the_new_preview_length(
+def test_alt_pageup_pagedown_announce_the_new_loop_length(
     window, qtbot, monkeypatch, minimal_score
 ):
-    """User-requested (2026-08-26): Alt+PageUp/PageDown change Preview's
-    length without moving focus off the Note region, so the only previous
-    trace of the new value was the status bar's own text - never heard by
-    someone not focused there. Wording follows the UK/US terminology
-    setting ("bar"/"measure"), same as every other bar-word label; the
-    `window` fixture runs with uk_terms=False (US), so "measure" here."""
+    """Alt+PageUp/PageDown change the loop length without moving focus off
+    the Note region, so the only other trace of the new value is the status
+    bar's own text - never heard by someone not focused there. Wording
+    follows the UK/US terminology setting; the `window` fixture runs with
+    uk_terms=False (US), so "measure" here."""
     announcements = []
     monkeypatch.setattr(
         accessible_announcer.QAccessible,
@@ -170,14 +169,14 @@ def test_alt_pageup_pagedown_announce_the_new_preview_length(
     load_and_wait(window, qtbot, minimal_score)
     announcements.clear()
 
-    window.increase_preview_bars()  # 2 -> 3
+    window.increase_loop_length()  # 2 -> 3
 
-    assert announcements == ["Preview 3 measures."]
+    assert announcements == ["Loop length 3 measures."]
 
-    window.decrease_preview_bars()  # 3 -> 2
-    window.decrease_preview_bars()  # 2 -> 1 (MIN_PREVIEW_BARS)
+    window.decrease_loop_length()  # 3 -> 2
+    window.decrease_loop_length()  # 2 -> 1 (MIN_LOOP_LENGTH_BARS)
 
-    assert announcements[-2:] == ["Preview 2 measures.", "Preview 1 measure."]
+    assert announcements[-2:] == ["Loop length 2 measures.", "Loop length 1 measure."]
 
 
 def test_navigating_onto_a_single_note_slice_sets_a_current_row(window, qtbot, minimal_score):
@@ -380,15 +379,18 @@ def test_status_bar_updates_on_load_and_navigation(window, qtbot, null_synth, ts
     assert [f.text() for f in fields] == [
         "Measure 1 beat 1", "Key: C major / A minor", "Time: 4/4",
         "Playback tempo: 120 quarter notes per minute (score default)", "Playback: Stopped",
-        "Metronome: Off", "Position Announcer: Off", "Preview length: 2 measures",
+        "Metronome: Off", "Position Announcer: Off", "Loop length: 2 measures",
     ]
 
     qtbot.keyClick(window.region_3, Qt.Key.Key_Right, Qt.KeyboardModifier.ControlModifier)
 
     assert [f.text() for f in fields] == [
         "Measure 2 beat 1", "Key: C major / A minor", "Time: 6/8",
-        "Playback tempo: 120 quarter notes per minute (score default)", "Playback: Stopped",
-        "Metronome: Off", "Position Announcer: Off", "Preview length: 2 measures",
+        # Ref 12: the absolute tempo is now shown in the TS denominator beat,
+        # so it reads 240 eighth-note beats per minute in 6/8 (same physical
+        # speed as 120 quarter beats).
+        "Playback tempo: 240 eighth notes per minute (score default)", "Playback: Stopped",
+        "Metronome: Off", "Position Announcer: Off", "Loop length: 2 measures",
     ]
 
 

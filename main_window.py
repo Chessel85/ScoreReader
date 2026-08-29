@@ -30,6 +30,7 @@ from controllers.voice_control_controller import VoiceControlController
 from models.vocabulary import bar_word
 from parsers.ug_source import write_ug_source
 from persistence import app_settings
+from widgets import accessible_announcer
 from widgets.about_dialog import AboutDialog
 from widgets.attribute_order_dialog import AttributeOrderDialog
 from widgets.find_dialog import FindDialog
@@ -41,14 +42,13 @@ from widgets.menu_builder import MenuBuilder, goto_measure_action_text
 from widgets.mixer_dialog import MixerDialog
 from widgets.part_order_dialog import PartOrderDialog
 from widgets.performance_report_dialog import PerformanceReportDialog
-from widgets.preview_settings_dialog import PreviewSettingsDialog
+from widgets.play_settings_dialog import PlaySettingsDialog
 from widgets.region1_list_widget import Region1ListWidget
 from widgets.region2_list_widget import Region2ListWidget
 from widgets.region2_manager import node_breadcrumb
 from widgets.region4_list_widget import Region4ListWidget
 from widgets.region5_list_widget import Region5ListWidget
 from widgets.status_bar_widget import StatusBarWidget
-from widgets.tempo_offset_dialog import TempoOffsetDialog
 from widgets.timeline_list_widget import TimelineListWidget
 from widgets.tuner_dialog import TunerDialog
 from widgets.tuner_settings_dialog import TunerSettingsDialog
@@ -275,9 +275,10 @@ class MainWindow(QMainWindow):
         # digits are safe window-wide here: no region uses digit type-ahead
         # for anything meaningful (the rows are part/staff/voice names and
         # note text), and Ctrl+digit in the Note region is a separate combo.
-        # The digits accumulate on NavigationController; Enter is handled by
-        # the Preview QAction routing through audition_phrase(), Escape
-        # cancels a half-typed number. Numpad digits arrive with
+        # The digits accumulate on NavigationController; Enter (a hidden
+        # window QAction routing through audition_phrase()) commits a bar
+        # number, Ctrl+Enter commits it as the loop length, Escape cancels a
+        # half-typed number. Numpad digits arrive with
         # KeypadModifier and are not bound (they weren't before either).
         self._digit_shortcuts = [
             window_shortcut(
@@ -291,15 +292,23 @@ class MainWindow(QMainWindow):
         self._cancel_digits_shortcut = window_shortcut(
             Qt.Key.Key_Escape, lambda: self.navigation.clear_pending_digits()
         )
+        # Ctrl+Enter/Ctrl+Return: commit a typed number as the LOOP LENGTH
+        # (instead of Enter's jump-to-bar). Global like the digit buffer
+        # itself. Numpad Ctrl+Enter arrives as Key_Enter, main keyboard as
+        # Key_Return - both bound.
+        self._commit_loop_length_shortcuts = [
+            window_shortcut("Ctrl+Enter", lambda: self.commit_loop_length()),
+            window_shortcut("Ctrl+Return", lambda: self.commit_loop_length()),
+        ]
 
     def setup_controllers(self):
         regions = [self.region_1, self.region_2, self.region_3, self.region_4, self.region_5]
 
         self.playback = PlaybackController(self.session, parent=self)
-        # Preview lead-in/length/looping is a global preference (all
-        # scores), so it is loaded once here rather than per file load -
-        # unlike the mixer, which travels with the score's own config.
-        self.playback.set_preview_settings(app_settings.load().preview)
+        # Lead-in/looping is a global preference (all scores), so it is
+        # loaded once here rather than per file load - unlike the absolute
+        # playback tempo, which travels with the score's own .rsc config.
+        self.playback.set_play_settings(app_settings.load().play)
         # Live MIDI input (device/instrument/volume/pan) is likewise global,
         # not per-score - constructed once here, outliving every file load,
         # the same lifetime ScoreSession/SynthEngine already have. .start()
@@ -361,8 +370,14 @@ class MainWindow(QMainWindow):
         self.performance_report_action = actions.performance_report
         self.play_stop_action = actions.play_stop
         self.pause_resume_action = actions.pause_resume
-        self.preview_action = actions.preview
-        self.preview_settings_action = actions.preview_settings
+        self.commit_digits_action = actions.commit_digits
+        self.play_settings_action = actions.play_settings
+        self.loop_toggle_action = actions.loop_toggle
+        self.lead_in_toggle_action = actions.lead_in_toggle
+        # Global (AppSettings.play), not per-score - set once here from the
+        # loaded settings, kept in sync by toggle_loop/toggle_lead_in.
+        self.loop_toggle_action.setChecked(self.playback.play_settings.loop_enabled)
+        self.lead_in_toggle_action.setChecked(self.playback.play_settings.lead_in_enabled)
         self.mute_action = actions.mute
         self.solo_action = actions.solo
         self.unmute_all_action = actions.unmute_all
@@ -382,7 +397,6 @@ class MainWindow(QMainWindow):
         self.move_to_parts_action = actions.move_to_parts
         self.move_to_attributes_action = actions.move_to_attributes
         self.move_to_performance_action = actions.move_to_performance
-        self.tempo_offset_action = actions.tempo_offset
         self.terminology_language_group = actions.terminology_group
         self.uk_language_action = actions.uk_language
         self.us_language_action = actions.us_language
@@ -705,28 +719,50 @@ class MainWindow(QMainWindow):
         self.playback.toggle_pause_resume()
 
     def audition_phrase(self):
-        # Enter's dual behaviour, now global (bound via the Preview QAction):
-        # complete a typed bar number if one is pending, else preview the
-        # current phrase (or stop it early if already playing).
-        if self.navigation.commit_pending_digits():
+        # Enter/Return now only commits a typed bar number (Preview is
+        # gone - Space is the single play control). Kept named
+        # audition_phrase because the menu_builder slot and tests reference
+        # it by that name.
+        self.navigation.commit_pending_digits()
+
+    def commit_loop_length(self):
+        """Ctrl+Enter/Ctrl+Return: a typed number becomes the loop length,
+        not a bar jump. With looping off it would silently do nothing, which
+        reads as "broken" to a screen-reader user - so it speaks "Looping is
+        off" and clears the buffer instead."""
+        digits = self.navigation.pending_digits
+        if not digits:
             return
-        self.playback.audition_phrase()
+        if not self.playback.play_settings.loop_enabled:
+            accessible_announcer.announce(self.region_3, "Looping is off")
+            self.navigation.clear_pending_digits()
+            return
+        n = int(digits)
+        self.playback.set_loop_length_bars(n)
+        app_settings.set_play_settings(self.playback.play_settings)
+        self.navigation.clear_pending_digits()
+        self.presenter.announce_loop_length(self.playback.play_settings.loop_length_bars)
 
-    def increase_preview_bars(self):
+    def toggle_loop(self):
+        self.loop_toggle_action.setChecked(self.playback.toggle_loop())
+
+    def toggle_lead_in(self):
+        self.lead_in_toggle_action.setChecked(self.playback.toggle_lead_in())
+
+    def increase_loop_length(self):
         """Alt+PageUp in the Note region. Persisted globally right away,
-        like Preview Settings' own OK - a bar count set this way is the
-        same practice habit, not a per-score value. Announces the new
-        length aloud (user-requested 2026-08-26) since nothing else does -
-        see RegionPresenter.announce_preview_length."""
-        self.playback.adjust_preview_bars(1)
-        app_settings.set_preview_settings(self.playback.preview_settings)
-        self.presenter.announce_preview_length(self.playback.preview_settings.preview_bars)
+        like Play Settings' own OK - a bar count set this way is a practice
+        habit, not a per-score value. Announces the new length aloud since
+        nothing else does - see RegionPresenter.announce_loop_length."""
+        self.playback.adjust_loop_length_bars(1)
+        app_settings.set_play_settings(self.playback.play_settings)
+        self.presenter.announce_loop_length(self.playback.play_settings.loop_length_bars)
 
-    def decrease_preview_bars(self):
-        """Alt+PageDown counterpart of increase_preview_bars."""
-        self.playback.adjust_preview_bars(-1)
-        app_settings.set_preview_settings(self.playback.preview_settings)
-        self.presenter.announce_preview_length(self.playback.preview_settings.preview_bars)
+    def decrease_loop_length(self):
+        """Alt+PageDown counterpart of increase_loop_length."""
+        self.playback.adjust_loop_length_bars(-1)
+        app_settings.set_play_settings(self.playback.play_settings)
+        self.presenter.announce_loop_length(self.playback.play_settings.loop_length_bars)
 
     def toggle_mute_current_region2_row(self):
         self.region_2.toggle_mute_current()
@@ -1036,39 +1072,31 @@ class MainWindow(QMainWindow):
                 self.find_next()
         self.region_3.setFocus()
 
-    def _show_tempo_offset_dialog(self):
-        """Unlike GotoMeasureDialog there's no obvious "next place" for
-        focus after a tempo change, so it returns to wherever it was."""
+    def _show_play_settings_dialog(self):
+        """Playback > Play Settings... (Ctrl+Shift+V, also Ctrl+T) - the one
+        settings dialog for playback: the absolute tempo (per-score, saved
+        in the .rsc), and the lead-in / looping habits (global, saved in
+        app_settings like the UK/US dialect). Unlike GotoMeasureDialog
+        there's no obvious "next place" for focus afterwards, so it returns
+        to wherever it was."""
         with self._preserving_focus():
-            current_offset = self._music_data.playback_tempo_offset if self._music_data else 0.0
-            beat_unit_name = (
-                self._music_data.tempo_beat_unit_name_at() if self._music_data else "quarter"
+            current_tempo = (
+                self._music_data.playback_tempo_display_bpm() if self._music_data else 120.0
             )
-            dialog = TempoOffsetDialog(
-                self, current_offset=current_offset, beat_unit_name=beat_unit_name
-            )
-            if dialog.exec() == QDialog.DialogCode.Accepted and self._music_data:
-                offset = dialog.tempo_offset()
-                if offset is not None:
-                    self.playback.set_tempo_offset(offset)
-
-    def _show_preview_settings_dialog(self):
-        """Playback > Preview Settings... (Ctrl+Shift+V) - the count-in
-        before Preview starts, how many bars it runs, and whether it loops.
-
-        Saved GLOBALLY (app_settings, like the UK/US dialect) rather than
-        per score, the user's own decision: a lead-in length is a practice
-        habit, not a property of one piece. Pushed to the controller as
-        well as saved, so it applies to the very next Enter without a
-        reload."""
-        with self._preserving_focus():
-            dialog = PreviewSettingsDialog(
-                self, settings=self.playback.preview_settings, uk_terms=self._uk_terms
+            dialog = PlaySettingsDialog(
+                self,
+                play_settings=self.playback.play_settings,
+                current_tempo_display_bpm=current_tempo,
+                uk_terms=self._uk_terms,
             )
             if dialog.exec() == QDialog.DialogCode.Accepted:
-                settings = dialog.preview_settings()
-                self.playback.set_preview_settings(settings)
-                app_settings.set_preview_settings(settings)
+                settings = dialog.play_settings()
+                self.playback.set_play_settings(settings)
+                app_settings.set_play_settings(settings)
+                self.loop_toggle_action.setChecked(settings.loop_enabled)
+                self.lead_in_toggle_action.setChecked(settings.lead_in_enabled)
+                if self._music_data:
+                    self.playback.set_playback_tempo(dialog.tempo_display_bpm())
 
     def _show_performance_report_dialog(self):
         """Ref 29: read-only, no live signal wiring - build from current
@@ -1092,7 +1120,7 @@ class MainWindow(QMainWindow):
             dialog = MixerDialog(self, rows=self.playback.begin_mixer_edit())
             dialog.volume_changed.connect(self.playback.set_mixer_volume)
             dialog.pan_changed.connect(self.playback.set_mixer_pan)
-            dialog.preview_requested.connect(self.playback.audition_phrase)
+            dialog.preview_requested.connect(self.playback.toggle_play_stop)
             self.playback.end_mixer_edit(dialog.exec() == QDialog.DialogCode.Accepted)
 
     def _scan_devices_async(self, dialog, enumerate_fn, selected=_KEEP_SELECTION):
@@ -1316,7 +1344,7 @@ class MainWindow(QMainWindow):
         # Directly, not via playback.stop(), for the same reason the
         # Sequencer is stopped directly below: no signals into regions that
         # are being torn down.
-        self.playback.cancel_preview()
+        self.playback.cancel_play_run()
         if self.playback.sequencer is not None:
             self.playback.sequencer.stop()
         # Before synth.close(): needs self._fs still alive to send the real

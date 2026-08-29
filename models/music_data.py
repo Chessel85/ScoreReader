@@ -53,11 +53,14 @@ class MusicData:
     tempo_beat_unit_quarter_length: float = 1.0
     tempo_beat_unit_name: str = "quarter"
 
-    # Ref 12 AC1: a temporary offset from the score's tempo, never a
-    # mutation of tempo_bpm - Region 1 keeps showing the score's own tempo.
-    # Stored in DISPLAY units (see above) so F/S's "+10" means +10 of what
-    # the user reads.
-    playback_tempo_offset: float = 0.0
+    # Ref 12: an ABSOLUTE playback tempo, stored as quarter-note BPM
+    # (denominator-independent, robust to score edits). None = "use the
+    # score default" (self.tempo_bpm). Never a mutation of tempo_bpm -
+    # Region 1 keeps showing the score's own notated marking. Playback is
+    # always FLAT: the score's internal rall./accel./section tempo changes
+    # are described (Region 5, Performance Report) but not sounded.
+    # Persisted per-score (.rsc), unlike the old session-only offset.
+    playback_tempo_bpm: Optional[float] = None
 
     # Ref 12 multi-tempo scope: every tempo marking after the first, sorted
     # by position, from TimelineBuilder. tempo_bpm above stays the OPENING
@@ -779,6 +782,7 @@ class MusicData:
             part_program_overrides=dict(self.part_program_overrides),
             key_signature_override_fifths=self.key_signature_override_fifths,
             key_signature_override_mode=self.key_signature_override_mode,
+            playback_tempo_bpm=self.playback_tempo_bpm,
             part_order=[p.part_id for p in self.parts_info],
             percussion_item_overrides=dict(self.percussion_item_overrides),
             percussion_item_name_overrides=dict(self.percussion_item_name_overrides),
@@ -822,6 +826,19 @@ class MusicData:
         self.apply_key_signature_override(
             config.key_signature_override_fifths, config.key_signature_override_mode
         )
+
+        # Ref 12: absolute per-score playback tempo. Best-effort - accept
+        # None or a finite positive number, clamp defensively into a sane
+        # quarter-BPM band, otherwise leave the score default (None).
+        tempo_bpm = config.playback_tempo_bpm
+        try:
+            tempo_bpm = float(tempo_bpm) if tempo_bpm is not None else None
+        except (TypeError, ValueError):
+            tempo_bpm = None
+        if tempo_bpm is not None and tempo_bpm == tempo_bpm and 0.0 < tempo_bpm < float("inf"):
+            self.playback_tempo_bpm = max(1.0, min(1000.0, tempo_bpm))
+        else:
+            self.playback_tempo_bpm = None
 
         if config.part_order:
             self.reorder_parts(config.part_order)
@@ -1488,8 +1505,9 @@ class MusicData:
         return lines
 
     # Ref 12 AC2: hard bounds, in the score's DISPLAY units - what the user
-    # reads and types, not the internal quarter-note equivalent.
-    MIN_TEMPO_BPM = 30
+    # reads and types (the time-signature-denominator beat), not the
+    # internal quarter-note equivalent.
+    MIN_TEMPO_BPM = 5
     MAX_TEMPO_BPM = 300
 
     def _tempo_change_at(self, index: Optional[int] = None) -> Tuple[int, float, str]:
@@ -1522,54 +1540,60 @@ class MusicData:
         bpm, beat_unit_ql, _ = self._tempo_change_at(index)
         return bpm / beat_unit_ql
 
-    def effective_tempo_display_bpm(self, index: Optional[int] = None) -> float:
-        """score_tempo_display_bpm() plus the current offset - what F/S/D,
-        the status bar and the Tempo Offset dialog show and read (Ref 12),
-        in the same units Region 1 already displays the score's tempo in
-        (A9). playback_tempo_offset is stored in these display units
-        directly (not quarter-note terms) precisely so this is a plain sum."""
-        return self.score_tempo_display_bpm(index) + self.playback_tempo_offset
+    def _ts_denominator_at(self, index: Optional[int] = None) -> int:
+        """The time-signature denominator in effect at `index` (or the
+        cursor), 4 when the timeline is empty / out of range - the beat unit
+        the absolute playback tempo is expressed in."""
+        idx = self.active_event_index if index is None else index
+        if 0 <= idx < len(self.timeline_slices):
+            return self.timeline_slices[idx].time_sig[1] or 4
+        return 4
 
-    def effective_tempo_display_str(self, index: Optional[int] = None) -> str:
-        """effective_tempo_display_bpm() rounded for display - the bare
-        number F/S/D announce (RegionPresenter.announce_tempo) and the same
-        rounding the status bar's playback-tempo field already uses."""
-        return self._format_tempo_number(self.effective_tempo_display_bpm(index))
+    def effective_playback_quarter_bpm(self) -> float:
+        """The absolute playback tempo in quarter-note BPM, flat across the
+        whole piece (Ref 12: "always flat"). The user's override if set,
+        else the score's opening tempo. No `index` - it does not vary with
+        position."""
+        return self.playback_tempo_bpm or self.tempo_bpm
+
+    def playback_tempo_display_bpm(self, index: Optional[int] = None) -> float:
+        """The absolute playback tempo converted to the time-signature
+        denominator beat at `index` (or the cursor) - what the status bar
+        shows and the Play Settings dialog / F / S / D read. Shifts as the
+        cursor crosses a TS change even though the physical speed is
+        constant; Region 1 still shows the score's own notated marking, so
+        the two can legitimately differ."""
+        return self.effective_playback_quarter_bpm() * self._ts_denominator_at(index) / 4.0
+
+    def set_playback_tempo_display_bpm(self, value: float, index: Optional[int] = None) -> None:
+        """Set the absolute playback tempo from a denominator-relative
+        number (Ref 12 AC2: clamped to [MIN_TEMPO_BPM, MAX_TEMPO_BPM], not
+        rejected). Stored back as quarter-note BPM."""
+        value = max(self.MIN_TEMPO_BPM, min(self.MAX_TEMPO_BPM, float(value)))
+        self.playback_tempo_bpm = value * 4.0 / self._ts_denominator_at(index)
+
+    def nudge_playback_tempo(self, delta_display: float) -> None:
+        """F / S: +/-10 of the displayed (denominator-relative) number."""
+        self.set_playback_tempo_display_bpm(self.playback_tempo_display_bpm() + delta_display)
 
     def effective_tempo_bpm(self, index: Optional[int] = None) -> float:
         """Quarter-note BPM for real playback timing (Sequencer,
-        get_duration_ms_for_index) - converts the display-unit offset back
-        to quarter-note terms via whichever beat unit is in effect at
-        `index`."""
-        bpm, beat_unit_ql, _ = self._tempo_change_at(index)
-        display = bpm / beat_unit_ql + self.playback_tempo_offset
-        return display * beat_unit_ql
+        get_duration_ms_for_index). Flat: `index` is accepted for call-site
+        compatibility but ignored - playback no longer follows the score's
+        internal tempo changes (Ref 12: "always flat")."""
+        return self.effective_playback_quarter_bpm()
 
     def tempo_beat_unit_name_at(self, index: Optional[int] = None) -> str:
         """The beat unit label (e.g. "eighth"/"quaver") in effect at `index`
         (or the cursor) - lets the status bar show the right unit even where
         a mid-score tempo marking changes beat unit, not just the number.
-        F4/D-6: translated per self.uk_terms - both current callers
-        (_tempo_status_field below, and main_window.py's Tempo Offset dialog
-        construction) are display-only, so this is the single change point
-        that covers both."""
+        F4/D-6: translated per self.uk_terms."""
         _, _, name = self._tempo_change_at(index)
         return vocabulary.duration_name(name, self.uk_terms)
 
-    def set_playback_tempo_offset(self, offset: float) -> None:
-        """Clamp so effective_tempo_display_bpm() stays within
-        [MIN_TEMPO_BPM, MAX_TEMPO_BPM] (Ref 12 AC2) - bounds on what the
-        user reads and types, not on tempo_bpm's quarter-note equivalent -
-        without touching tempo_bpm itself (AC1). Clamped against the tempo
-        at the cursor, which can change mid-score."""
-        base = self.score_tempo_display_bpm()
-        min_offset = self.MIN_TEMPO_BPM - base
-        max_offset = self.MAX_TEMPO_BPM - base
-        self.playback_tempo_offset = max(min_offset, min(max_offset, offset))
-
     def reset_playback_tempo(self) -> None:
-        """Ref 12 AC4: reset control returns to the score's own tempo."""
-        self.playback_tempo_offset = 0.0
+        """D (Ref 12 AC4): reset control returns to the score's own tempo."""
+        self.playback_tempo_bpm = None
 
     # Channels no real part may use. Each value is duplicated from the
     # audio/ module that owns it rather than imported - models/ must not
@@ -1795,12 +1819,25 @@ class MusicData:
             self._tempo_status_field(),
         ]
 
+    def tempo_display_beat_unit_name_at(self, index: Optional[int] = None) -> str:
+        """The note value of the time-signature denominator at `index` (or
+        the cursor), translated per uk_terms - the beat the ABSOLUTE
+        playback tempo number is counted in (a quarter in 4/4, an eighth in
+        6/8). Distinct from tempo_beat_unit_name_at, which names the score's
+        own notated tempo marking's unit (used by Region 5 / the report)."""
+        from models.duration_units import quarter_length_to_display_name
+
+        name = quarter_length_to_display_name(4.0 / self._ts_denominator_at(index)) or "quarter"
+        return vocabulary.duration_name(name, self.uk_terms)
+
     def _tempo_status_field(self) -> str:
-        """Reads effective_tempo_display_bpm(), i.e. the score's own units
-        (96 for eighth=96), never effective_tempo_bpm()'s internal
-        quarter-note equivalent (48) - see the tempo_bpm field comment."""
-        effective_str = self._format_tempo_number(self.effective_tempo_display_bpm())
-        unit = f"{self.tempo_beat_unit_name_at()} notes per minute"
-        if self.playback_tempo_offset == 0.0:
+        """The ABSOLUTE playback tempo, in time-signature-denominator beats
+        per minute (Ref 12). "(score default)" while no override is set.
+        Region 1's Tempo line still shows the score's notated marking, so
+        the two numbers can legitimately differ for a score whose marking
+        unit is not its TS denominator."""
+        effective_str = self._format_tempo_number(self.playback_tempo_display_bpm())
+        unit = f"{self.tempo_display_beat_unit_name_at()} notes per minute"
+        if self.playback_tempo_bpm is None:
             return f"Playback tempo: {effective_str} {unit} (score default)"
         return f"Playback tempo: {effective_str} {unit}"

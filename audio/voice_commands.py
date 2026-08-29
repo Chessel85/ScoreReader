@@ -16,7 +16,7 @@ the work.
 """
 from typing import Dict, List, Optional, Tuple
 
-from models.preview_settings import MIN_PREVIEW_BARS
+from models.play_settings import MIN_LOOP_LENGTH_BARS
 
 # Canonical command names dispatched by controllers/voice_control_controller.py.
 # GO_TO_BAR, LOOP_LENGTH and ATTRIBUTE are all parameterized (each carries a
@@ -24,7 +24,6 @@ from models.preview_settings import MIN_PREVIEW_BARS
 # respectively) and are therefore NOT keys in COMMAND_PHRASES below - see
 # go_to_bar_phrases()/loop_length_phrases()/attribute_phrases()/
 # parse_command().
-PREVIEW = "preview"
 PLAY = "play"
 STOP = "stop"
 PAUSE = "pause"
@@ -39,6 +38,10 @@ SLOWER = "slower"
 FASTER = "faster"
 DEFAULT_SPEED = "default_speed"
 LOOP_LENGTH = "loop_length"
+LOOPING_ON = "looping_on"
+LOOPING_OFF = "looping_off"
+LEAD_IN_ON = "lead_in_on"
+LEAD_IN_OFF = "lead_in_off"
 ATTRIBUTE = "attribute"
 
 # Every fixed (non-parameterized) spoken phrase, lowercase, mapped to its
@@ -48,7 +51,6 @@ ATTRIBUTE = "attribute"
 # this app). "left"/"right" are synonyms for "back"/"forward" - same
 # direction as the Left/Right arrow keys they mirror.
 COMMAND_PHRASES: Dict[str, str] = {
-    "preview": PREVIEW,
     "play": PLAY,
     "stop": STOP,
     "pause": PAUSE,
@@ -65,6 +67,12 @@ COMMAND_PHRASES: Dict[str, str] = {
     "slower": SLOWER,
     "faster": FASTER,
     "default speed": DEFAULT_SPEED,
+    "looping on": LOOPING_ON,
+    "loop on": LOOPING_ON,
+    "looping off": LOOPING_OFF,
+    "loop off": LOOPING_OFF,
+    "lead in on": LEAD_IN_ON,
+    "lead in off": LEAD_IN_OFF,
 }
 
 # "go to bar"/"go to measure" precede a spoken number - see
@@ -78,12 +86,11 @@ GO_TO_BAR_PREFIXES: List[str] = ["go to bar", "go to measure"]
 # is fixed rather than rebuilt per score.
 LOOP_LENGTH_PREFIX = "loop length"
 
-# Bounds the spoken numeric vocabulary for "loop length N". PreviewSettings'
-# own MAX_PREVIEW_BARS (999) is a defensive clamp against a hand-edited
-# settings file, not a realistic spoken loop length - offering Vosk 999
-# numbers to match against would only hurt recognition accuracy for no real
-# benefit, so a much smaller, practice-realistic cap is used here instead.
-MAX_LOOP_LENGTH_BARS = 32
+# Bounds the spoken numeric vocabulary for "loop length N". Matches
+# PlaySettings.MAX_LOOP_LENGTH_BARS (64) - the unified cap across the
+# dialog, Alt+PageUp/PageDown, the typed Ctrl+Enter buffer and this voice
+# command.
+MAX_LOOP_LENGTH_BARS = 64
 
 # "attribute" precedes a spoken number - see attribute_phrases() below. The
 # hands-free counterpart of Ctrl+1..Ctrl+9 in the Note region
@@ -156,17 +163,18 @@ def go_to_bar_phrases(total_measures: int) -> List[Tuple[str, int]]:
 
 def loop_length_phrases() -> List[Tuple[str, int]]:
     """(phrase, bar_count) for every "loop length N" grammar entry, N
-    ranging over MIN_PREVIEW_BARS..MAX_LOOP_LENGTH_BARS - the voice-control
-    counterpart of Playback > Preview Settings...'s "Preview length in
-    bars" field / Alt+PageUp/PageDown (models/preview_settings.py,
-    controllers/playback_controller.py's adjust_preview_bars), letting a
-    player set that same value hands-free mid-practice.
+    ranging over MIN_LOOP_LENGTH_BARS..MAX_LOOP_LENGTH_BARS - the
+    voice-control counterpart of Playback > Play Settings...'s "Loop length
+    in bars" field / Alt+PageUp/PageDown / the typed Ctrl+Enter buffer
+    (models/play_settings.py, controllers/playback_controller.py's
+    set_loop_length_bars), letting a player set that same value hands-free
+    mid-practice.
 
     Fixed, unlike go_to_bar_phrases() - a loop length has no real per-score
     bound, so this list never needs rebuilding when a new score loads."""
     return [
         (f"{LOOP_LENGTH_PREFIX} {number_to_words(n)}", n)
-        for n in range(MIN_PREVIEW_BARS, MAX_LOOP_LENGTH_BARS + 1)
+        for n in range(MIN_LOOP_LENGTH_BARS, MAX_LOOP_LENGTH_BARS + 1)
     ]
 
 

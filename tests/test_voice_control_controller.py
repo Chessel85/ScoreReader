@@ -66,9 +66,6 @@ class _FakePlayback:
     def __init__(self):
         self.calls = []
 
-    def audition_phrase(self):
-        self.calls.append("audition_phrase")
-
     def play_command(self):
         self.calls.append("play_command")
 
@@ -87,8 +84,14 @@ class _FakePlayback:
     def tempo_reset(self):
         self.calls.append("tempo_reset")
 
-    def set_preview_length_bars(self, bars):
-        self.calls.append(("set_preview_length_bars", bars))
+    def set_loop_length_bars(self, bars):
+        self.calls.append(("set_loop_length_bars", bars))
+
+    def set_loop_enabled(self, enabled):
+        self.calls.append(("set_loop_enabled", enabled))
+
+    def set_lead_in_enabled(self, enabled):
+        self.calls.append(("set_lead_in_enabled", enabled))
 
 
 @pytest.fixture
@@ -196,13 +199,16 @@ def test_toggle_enabled_plays_no_started_tone_when_starting_fails(
 
 
 @pytest.mark.parametrize("command_name,expected_call", [
-    (voice_commands.PREVIEW, "audition_phrase"),
     (voice_commands.PLAY, "play_command"),
     (voice_commands.STOP, "stop"),
     (voice_commands.PAUSE, "pause_command"),
     (voice_commands.SLOWER, "tempo_slower"),
     (voice_commands.FASTER, "tempo_faster"),
     (voice_commands.DEFAULT_SPEED, "tempo_reset"),
+    (voice_commands.LOOPING_ON, ("set_loop_enabled", True)),
+    (voice_commands.LOOPING_OFF, ("set_loop_enabled", False)),
+    (voice_commands.LEAD_IN_ON, ("set_lead_in_enabled", True)),
+    (voice_commands.LEAD_IN_OFF, ("set_lead_in_enabled", False)),
 ])
 def test_playback_commands_dispatch_to_the_right_method(
     synth, navigation, playback, voice_manager, qtbot, command_name, expected_call
@@ -285,7 +291,7 @@ def test_loop_length_dispatches_with_the_bar_count(
     voice_manager.simulate_recognition(voice_commands.LOOP_LENGTH, confidence=90.0, number_value=4)
     QApplication.processEvents()
 
-    assert playback.calls == [("set_preview_length_bars", 4)]
+    assert playback.calls == [("set_loop_length_bars", 4)]
 
 
 def test_loop_length_with_no_bar_count_is_ignored(

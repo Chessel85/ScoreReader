@@ -44,14 +44,15 @@ class Actions:
     move_to_performance: Optional[QAction] = None
     play_stop: Optional[QAction] = None
     pause_resume: Optional[QAction] = None
-    preview: Optional[QAction] = None
-    preview_settings: Optional[QAction] = None
+    commit_digits: Optional[QAction] = None
+    play_settings: Optional[QAction] = None
+    loop_toggle: Optional[QAction] = None
+    lead_in_toggle: Optional[QAction] = None
     mute: Optional[QAction] = None
     solo: Optional[QAction] = None
     unmute_all: Optional[QAction] = None
     unsolo_all: Optional[QAction] = None
     mixer: Optional[QAction] = None
-    tempo_offset: Optional[QAction] = None
     part_order: Optional[QAction] = None
     uk_language: Optional[QAction] = None
     us_language: Optional[QAction] = None
@@ -342,41 +343,53 @@ class MenuBuilder:
         )
         playback_menu.addAction(a.pause_resume)
 
-        # Enter/Return is a real global shortcut (user-requested
-        # 2026-08-26: "Enter should do the preview from anywhere - any
-        # region or the status bar"), always enabled - including the Note
-        # region. Its slot (MainWindow.audition_phrase) is the single, global
-        # implementation of Enter's dual behaviour: complete a typed bar
-        # number if one is pending (NavigationController.commit_pending_
-        # digits), else toggle the phrase preview. Typed bar numbers are
-        # themselves global now (window-wide digit shortcuts in
-        # main_window.py), so there is nothing left for the Note region to
-        # handle specially. Two shortcuts, not one - same numpad-Enter-vs-
-        # main-Return distinction already documented for Voice Control's
-        # Ctrl+Enter, with Key_Enter listed first so the menu displays
-        # "Enter" rather than "Return".
-        a.preview = self._action(
-            "Pre&view", self.slots.audition_phrase,
-            status_tip=(
-                "Previews the current phrase, or stops it early if already "
-                "playing; in the Note region, also completes a typed bar "
-                "number if one is pending. Alt+PageUp/PageDown changes the "
-                "preview length by one bar"
-            ),
+        # Enter/Return only ever commits a typed bar number now (Preview is
+        # gone - Space is the single play control). Kept as a hidden
+        # window action, NOT a visible menu item, purely so the global
+        # Enter/Return shortcut still fires; its slot
+        # (MainWindow.audition_phrase) is now just
+        # NavigationController.commit_pending_digits(). Two shortcuts, not
+        # one - the numpad-Enter-vs-main-Return distinction documented for
+        # Voice Control.
+        a.commit_digits = self._action(
+            "Commit Typed Bar Number", self.slots.audition_phrase,
+            status_tip="Completes a typed bar number, if one is pending",
         )
-        a.preview.setShortcuts([
+        a.commit_digits.setShortcuts([
             QKeySequence(Qt.Key.Key_Enter), QKeySequence(Qt.Key.Key_Return),
         ])
-        playback_menu.addAction(a.preview)
+        self.window.addAction(a.commit_digits)
 
-        # Mnemonic on T: O, u, v, M, S, A and l are already taken in this
-        # menu. Ctrl+Shift+V alongside the other dialogs' Ctrl+Shift+I/K/X.
-        a.preview_settings = self._action(
-            "Preview Se&ttings...", self.slots._show_preview_settings_dialog,
-            "Ctrl+Shift+V",
-            status_tip="Set the preview lead-in, length and looping",
+        # Mnemonic on T: O, u, M, S, A and l are already taken in this menu.
+        # Ctrl+Shift+V alongside the other dialogs' Ctrl+Shift+I/K/X, plus
+        # Ctrl+T (which the old Tempo Offset... dialog used to carry - this
+        # dialog now owns the absolute playback tempo too).
+        a.play_settings = self._action(
+            "Play Se&ttings...", self.slots._show_play_settings_dialog,
+            status_tip="Set the playback tempo, lead-in and looping",
         )
-        playback_menu.addAction(a.preview_settings)
+        a.play_settings.setShortcuts([
+            QKeySequence("Ctrl+Shift+V"), QKeySequence("Ctrl+T"),
+        ])
+        playback_menu.addAction(a.play_settings)
+
+        # Quick toggles for the two play-session habits, checkable so a
+        # screen reader announces their state on focus (pattern like Toggle
+        # Metronome). Ctrl+L / Ctrl+I - Ctrl+L was Toggle Live MIDI Input,
+        # which moves to Ctrl+D below.
+        a.loop_toggle = self._action(
+            "Toggle Loopin&g", self.slots.toggle_loop,
+            QKeySequence("Ctrl+L"), checkable=True,
+            status_tip="Loop the loop-length window from the cursor when playing",
+        )
+        playback_menu.addAction(a.loop_toggle)
+
+        a.lead_in_toggle = self._action(
+            "Toggle Lead-&in", self.slots.toggle_lead_in,
+            QKeySequence("Ctrl+I"), checkable=True,
+            status_tip="Play a metronome count-in before playback starts",
+        )
+        playback_menu.addAction(a.lead_in_toggle)
 
         playback_menu.addSeparator()
 
@@ -415,16 +428,6 @@ class MenuBuilder:
 
     def _options_menu(self, menu_bar, a: Actions) -> None:
         options_menu = menu_bar.addMenu("&Options")
-
-        # Ctrl+T, same scope as Ctrl+G: fires anywhere in the window, not
-        # only when a particular region has focus. Mnemonic on Of&fset, not
-        # &Tempo Offset - freed up "T" for the Terminology submenu below,
-        # which reads better with its own first letter as its mnemonic.
-        a.tempo_offset = self._action(
-            "Tempo Of&fset...", self.slots._show_tempo_offset_dialog,
-            QKeySequence("Ctrl+T"),
-        )
-        options_menu.addAction(a.tempo_offset)
 
         # Two mutually exclusive checkable items rather than one toggle:
         # the user wants "at least one ticked" always visible, which a
@@ -470,16 +473,15 @@ class MenuBuilder:
         options_menu.addAction(a.position_announcer)
 
         # Play a connected MIDI keyboard/controller live through the app's
-        # own synth. Same checkable-toggle-plus-settings-dialog pairing as
-        # Preview/Preview Settings: Ctrl+L to turn it on/off (matching the
-        # single-Ctrl+letter family metronome/announcer already use),
-        # Ctrl+Shift+L for the settings dialog (matching the Ctrl+Shift+
-        # letter family Instruments/Key Signature/Mixer already use).
-        # Mnemonic on &Input, not &MIDI - &MIDI would collide with Toggle
-        # &Metronome above in this same menu.
+        # own synth. Ctrl+D to turn it on/off (moved off Ctrl+L, which is
+        # now Toggle Looping in the Playback menu; bare D is tempo-reset, a
+        # different modifier), Ctrl+Shift+L for the settings dialog
+        # (matching the Ctrl+Shift+letter family Instruments/Key Signature/
+        # Mixer already use). Mnemonic on &Input, not &MIDI - &MIDI would
+        # collide with Toggle &Metronome above in this same menu.
         a.live_midi_input = self._action(
             "Toggle Live MIDI &Input", self.slots.toggle_live_midi_input,
-            QKeySequence("Ctrl+L"), checkable=True,
+            QKeySequence("Ctrl+D"), checkable=True,
             status_tip="Play a connected MIDI keyboard live through Recall Score",
         )
         options_menu.addAction(a.live_midi_input)
@@ -495,32 +497,22 @@ class MenuBuilder:
         # "forward", "next bar", ...) call the same NavigationController/
         # PlaybackController methods a keyboard shortcut would, for a
         # musician whose hands are already busy holding their instrument.
-        # Ctrl+Enter (user-requested 2026-08-26, replacing the original
-        # Ctrl+Shift+Enter/Return): the other three background-feature
-        # toggles in this menu (Metronome, Position Announcer, Live MIDI
-        # Input) are all a single Ctrl+<key>, with Ctrl+Shift+<letter>
-        # reserved for opening a dialog - the old Ctrl+Shift+Enter broke
-        # that pattern by using the dialog-shortcut modifier combination for
-        # a toggle instead. Ctrl+Enter fits the single-Ctrl toggle family
-        # while still being distinct from every dialog's Ctrl+Shift+<letter>
-        # and every other single-Ctrl+<letter> binding.
+        # Alt+Enter/Alt+Return (moved off Ctrl+Enter/Ctrl+Return, which now
+        # commits a typed number as the loop length - see main_window.py's
+        # setup_shortcuts).
         a.voice_control = self._action(
             "Toggle Voice &Control", self.slots.toggle_voice_control,
             checkable=True,
             status_tip="Control playback and navigation hands-free by voice",
         )
-        # Two shortcuts, not one: QKeySequence("Ctrl+Enter") parses to the
+        # Two shortcuts, not one: QKeySequence("Alt+Enter") parses to the
         # NUMPAD Enter key (Qt::Key_Enter), not the main keyboard Return key
         # - the same numpad-vs-main-keyboard distinction previously reported
-        # for Ctrl+Shift+Enter (NVDA reads a plain "Ctrl+Return" shortcut as
-        # "Return", not "Enter", which doesn't match what's printed on a
-        # real keyboard). setShortcuts() with Enter listed FIRST makes that
-        # the primary/displayed shortcut (confirmed: .shortcut() then
-        # reports "Ctrl+Enter") while the main Return key - listed second -
-        # still triggers the action too, so both the real keyboard key and
-        # the numpad Enter key work.
+        # for the Ctrl variant. Enter listed FIRST so it is the
+        # primary/displayed shortcut while the main Return key still
+        # triggers the action too.
         a.voice_control.setShortcuts([
-            QKeySequence("Ctrl+Enter"), QKeySequence("Ctrl+Return"),
+            QKeySequence("Alt+Enter"), QKeySequence("Alt+Return"),
         ])
         options_menu.addAction(a.voice_control)
 

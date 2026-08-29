@@ -46,7 +46,7 @@ class ScoreConfig:
     loading best-effort: an entry matching nothing in the current score is
     dropped, not fatal."""
 
-    schema_version: int = 2
+    schema_version: int = 3
     parts_muted: Set[str] = field(default_factory=set)
     staves_muted: Set[StaffKey] = field(default_factory=set)
     voices_muted: Set[VoiceKey] = field(default_factory=set)
@@ -78,6 +78,11 @@ class ScoreConfig:
     # rather than filtering against known part_ids.
     key_signature_override_fifths: Optional[int] = None
     key_signature_override_mode: Optional[str] = None
+    # Ref 12: the absolute playback tempo the user set for this piece, in
+    # quarter-note BPM (denominator-independent). None means "use the
+    # score's own opening tempo". Per-score, unlike the global lead-in /
+    # looping habits in persistence/app_settings.py.
+    playback_tempo_bpm: Optional[float] = None
     # Options > Reorder Parts... - the part_id order the user chose, which
     # in turn controls Region 3's note-row order (most importantly, which
     # part's row a screen reader lands on first after every navigation

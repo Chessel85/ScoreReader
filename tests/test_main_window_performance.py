@@ -113,6 +113,8 @@ def test_performance_cue_fires_when_playback_starts_from_a_beginning_repeat_targ
     elsewhere must still ding - the user's other explicit trigger, alongside
     arrowing back onto it."""
     load_and_wait(window, qtbot, unmatched_backward_repeat_score)
+    from tests.support.main_window_helpers import no_lead_in
+    no_lead_in(window)  # a plain Space play, no count-in in front of the first note
     null_synth.performance_cues.clear()
 
     window.toggle_play_stop()  # Space: plays from the cursor, still measure 1 note 1

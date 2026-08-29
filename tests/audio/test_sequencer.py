@@ -202,40 +202,38 @@ def test_update_cursor_flag_is_recorded_for_the_caller_to_read(timeline, null_sy
     assert md.active_event_index == 0  # untouched
 
 
-def test_tempo_offset_changed_mid_playback_affects_the_next_scheduled_delay(
+def test_absolute_tempo_changed_mid_playback_affects_the_next_scheduled_delay(
     timeline, null_synth, minimal_score
 ):
     md = timeline(minimal_score, tempo_bpm=120)
     seq, timer = _build(md, null_synth)
 
     seq.play_from(0)  # schedules index0->1 at 120bpm: 500ms
-    md.set_playback_tempo_offset(120)  # effective tempo now 240bpm
+    md.set_playback_tempo_display_bpm(240)  # absolute tempo now 240bpm
     timer.fire()  # index1->2 delay computed fresh, at the new tempo
 
     assert timer.scheduled_ms == [500, 250]
 
 
-def test_mid_score_tempo_change_affects_delays_from_the_point_it_takes_effect(
+def test_playback_is_flat_across_an_internal_tempo_change(
     timeline, null_synth, tempo_change_score
 ):
-    """Ref 12 "multi-tempo scope": tempo_change_score goes quarter=100 in
-    measure 1 to quarter=200 in measure 2. The delay leaving measure 1's
-    last note must still use the old (100) tempo - the new marking takes
-    effect starting at measure 2's first note, not before it - and every
-    delay inside measure 2 must use the new (200) tempo."""
+    """Ref 12: playback is always flat now - the score's internal tempo
+    markings are described (Region 5 / the report) but never sounded, so
+    every scheduled delay uses the one absolute tempo regardless of
+    position."""
     md = timeline(tempo_change_score)
     seq, timer = _build(md, null_synth)
+    quarter_bpm = md.effective_playback_quarter_bpm()
+    one_quarter_ms = round(60000 / quarter_bpm)
 
-    seq.play_from(0)  # C, measure 1 - schedules the C->D delay
-    assert timer.scheduled_ms == [600]  # 1 quarter at 100bpm
-    timer.fire()  # now D - schedules D->E
-    timer.fire()  # now E - schedules E->F
-    timer.fire()  # now F - schedules F->G, still measure 1's tempo (100)
+    seq.play_from(0)
+    for _ in range(5):
+        timer.fire()
 
-    assert timer.scheduled_ms[-1] == 600, "the boundary delay uses the tempo active before it, not after"
-
-    timer.fire()  # now G, measure 2 - schedules G->A at the new tempo (200)
-    assert timer.scheduled_ms[-1] == 300  # 1 quarter at 200bpm
+    assert all(ms == one_quarter_ms for ms in timer.scheduled_ms), (
+        "flat: every delay is one quarter at the absolute tempo"
+    )
 
 
 def test_metronome_click_layers_on_top_of_notes_when_enabled(
