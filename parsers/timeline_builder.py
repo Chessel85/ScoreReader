@@ -40,7 +40,9 @@ from models.vocabulary import (
     articulation_name,
     clef_name,
     dynamic_name,
+    dynamics_instruction_kind,
     spell_out_minor_chord,
+    tempo_instruction_label,
 )
 from parsers.xml_source import read_musicxml_root
 
@@ -405,7 +407,6 @@ class _FirstPartScan:
     barline_marks: List[BarlineMark] = field(default_factory=list)
     repeat_spans: List[RepeatSpan] = field(default_factory=list)
     ending_spans: List[EndingSpan] = field(default_factory=list)
-    hairpin_spans: List[HairpinSpan] = field(default_factory=list)
     segno_marks: List[SegnoMark] = field(default_factory=list)
     coda_marks: List[CodaMark] = field(default_factory=list)
     to_coda_marks: List[ToCodaMark] = field(default_factory=list)
@@ -582,6 +583,17 @@ class _PartState:
         default_factory=dict
     )
 
+    # Ref 29: crescendo/diminuendo wedges still open, keyed by (staff,
+    # number). Unlike open_direction_spans' single most-recent-wins slot,
+    # each value is a STACK: a long hairpin with shorter ones nested inside
+    # it is a real notation concept (files/etude 2.mxl), so a <wedge
+    # type="stop"> closes the innermost (most recently opened) wedge first.
+    # Each entry is (kind, start_measure, start_beat_position,
+    # start_quarters_from_start).
+    open_wedges: Dict[Tuple[int, int], List[Tuple[str, int, float, float]]] = field(
+        default_factory=dict
+    )
+
     # P4/M7: the clef identity (sign, line, clef-octave-change) currently in
     # force per staff. The first entry for a staff seeds this silently; a
     # later, different one is a ClefChangeMark. Per part (D5).
@@ -720,8 +732,12 @@ class TimelineBuilder:
         # timeline_slices - see build().
         self.beat_markers: List[EventSlice] = []
 
-        # Ref 29: repeat-barline pairs, endings and hairpins, same
-        # side-channel pattern as tempo_changes.
+        # Ref 29: repeat-barline pairs and endings, from the first-part
+        # structural scan. Hairpins (below) are collected in the per-part
+        # walk instead - a wedge on any staff of any part must be reported,
+        # and overlapping/nested wedges (real notation - a long hairpin with
+        # shorter ones inside it) need a per-(staff, number) stack, not the
+        # single most-recent-wins slot the first-part scan used.
         self.repeat_spans: List[RepeatSpan] = []
         self.ending_spans: List[EndingSpan] = []
         self.hairpin_spans: List[HairpinSpan] = []
@@ -811,7 +827,6 @@ class TimelineBuilder:
         self.barline_marks = scan.barline_marks
         self.repeat_spans = scan.repeat_spans
         self.ending_spans = scan.ending_spans
-        self.hairpin_spans = scan.hairpin_spans
         self.segno_marks = scan.segno_marks
         self.coda_marks = scan.coda_marks
         self.to_coda_marks = scan.to_coda_marks
@@ -879,6 +894,13 @@ class TimelineBuilder:
             self._flush_open_direction_spans(
                 part_state, measure_state.m_num, measure_start_quarters
             )
+            self._flush_open_wedges(
+                part_state, measure_state.m_num, measure_start_quarters
+            )
+
+        # Multi-part collection - sort chronologically, mirroring
+        # scan.tempo_changes.sort(...) in _scan_first_part.
+        self.hairpin_spans.sort(key=lambda s: s.start_quarters_from_start)
 
         return self._assemble_slices(
             root, sink, measure_start_quarters, measure_ts_fifths, pickup_filled_quarters
@@ -894,7 +916,9 @@ class TimelineBuilder:
         picks it up), generic stave text (bucketed immediately), and (P3)
         the pedal / octave-shift / rehearsal / dashed / bracketed
         <direction-type> spans and points, plus the D6 catch-all for any
-        other <direction-type> child."""
+        other <direction-type> child; a crescendo/diminuendo wedge; and a
+        plain-text dynamics/tempo instruction ("cresc.", "rall.") surfaced
+        as a point DirectionMark."""
         walker = measure_state.walker
 
         # A MuseScore-style dynamics mark is a <direction> SIBLING of
@@ -932,6 +956,30 @@ class TimelineBuilder:
                 overwrite_state=False,
             )
 
+            # The same word ALSO stays a Stave Text event (above) - that is
+            # per-note reading in Region 3; this point mark is the score-level
+            # overview, a different region, not a duplicate row. Classified on
+            # the whole stripped text against a narrow allow-list (see
+            # models/vocabulary.py) - never a substring sweep.
+            text = words_el.text.strip()
+            dyn_kind = dynamics_instruction_kind(text)
+            tempo_label = tempo_instruction_label(text)
+            if dyn_kind is not None or tempo_label is not None:
+                self.direction_marks.append(
+                    DirectionMark(
+                        kind="dynamics_word" if dyn_kind is not None else "tempo_word",
+                        part_id=part_state.part_id,
+                        staff=_staff_number(elem, default=1),
+                        label=text,
+                        measure=measure_state.m_num,
+                        beat_position=part_state.beat_position(measure_state.m_num, offset_q),
+                        quarters_from_start=(
+                            measure_start_quarters.get(measure_state.m_num, 0.0) + offset_q
+                        ),
+                    )
+                )
+
+        self._step_wedge(elem, part_state, measure_state, measure_start_quarters)
         self._step_direction_marks(elem, part_state, measure_state, measure_start_quarters)
 
     # --- P3: <direction-type> spans and points ------------------------
@@ -950,6 +998,11 @@ class TimelineBuilder:
         beat_pos = part_state.beat_position(m_num, offset_q)
         quarters = measure_start_quarters.get(m_num, 0.0) + offset_q
         staff = _staff_number(elem, default=1)
+        # A <dashes>/<bracket type="start"> extends whatever instruction is
+        # printed alongside it - MusicXML puts that <words> text as a sibling
+        # direction-type inside this SAME <direction> element (e.g. "cresc."
+        # next to a dashes start), not at some nearby offset to be matched.
+        words_text = (elem.findtext("direction-type/words") or "").strip()
 
         for dt_child in elem.findall("direction-type/*"):
             tag = dt_child.tag
@@ -965,7 +1018,8 @@ class TimelineBuilder:
                 )
             elif tag in ("dashes", "bracket"):
                 self._step_direction_line(
-                    dt_child, tag, part_state, m_num, beat_pos, quarters, staff
+                    dt_child, tag, part_state, m_num, beat_pos, quarters, staff,
+                    words_text,
                 )
             elif tag == "rehearsal":
                 self.direction_marks.append(
@@ -1063,13 +1117,19 @@ class TimelineBuilder:
             self._close_direction_span(part_state, "octave_shift", m_num, beat_pos, quarters)
 
     def _step_direction_line(
-        self, line_el, kind: str, part_state, m_num, beat_pos, quarters, staff
+        self, line_el, kind: str, part_state, m_num, beat_pos, quarters, staff,
+        words_text: str = "",
     ) -> None:
         """<dashes>/<bracket> type="start"|"stop" - a plain span, the same
-        open/close shape as pedal."""
+        open/close shape as pedal. `words_text` is whatever sibling <words>
+        text shared this <direction> with the start - what the line is
+        extending (e.g. "cresc.") - carried forward to the closed span via
+        _close_direction_span; unused on stop, which has no sibling text."""
         ltype = line_el.attrib.get("type", "")
         if ltype == "start":
-            self._open_direction_span(part_state, kind, m_num, beat_pos, quarters, staff, "")
+            self._open_direction_span(
+                part_state, kind, m_num, beat_pos, quarters, staff, words_text
+            )
         elif ltype in ("stop", "end"):
             self._close_direction_span(part_state, kind, m_num, beat_pos, quarters)
 
@@ -1732,12 +1792,14 @@ class TimelineBuilder:
     ) -> "_FirstPartScan":
         """One walk of the first <part>, collecting everything score-wide:
         measure start positions, per-measure time/key signature, tempo
-        changes, repeat and ending spans, hairpins.
+        changes, repeat and ending spans.
 
         Read from the FIRST <part> only, the "structural, not per-voice"
         convention _detect_pickup also follows: time signatures, tempo
-        markings, barlines and hairpins are score-wide properties, not
-        things that vary between parts.
+        markings and barlines are score-wide properties, not things that
+        vary between parts. Hairpins are NOT here - a wedge is per-part/
+        per-staff and is collected in the per-part walk (_step_wedge, called
+        from _handle_direction).
 
         Measure LENGTH uses the time signature at the START of the measure
         (snapshotted at its first <attributes>), since a time signature
@@ -1754,11 +1816,6 @@ class TimelineBuilder:
         divisions, ts_num, ts_den, fifths = 1, 4, 4, 0
         open_repeat_measure: Optional[int] = None
         open_endings: Dict[int, int] = {}
-        # Unlike pending_dynamics in build() (reset per measure), an open
-        # wedge must persist ACROSS measures - a hairpin routinely spans
-        # several bars.
-        # (kind, start_measure, start_beat_position, start_quarters_from_start)
-        open_wedge: Optional[Tuple[str, int, float, float]] = None
 
         for m in first_part.findall("measure"):
             m_num = _measure_number(m, needs_reindex)
@@ -1781,9 +1838,6 @@ class TimelineBuilder:
                     )
                     if change is not None:
                         scan.tempo_changes.append(change)
-                    open_wedge = self._step_wedge(
-                        elem, m_num, walker, scan, open_wedge, pickup_filled_quarters
-                    )
                     self._step_direction_jump_marks(elem, m_num, scan)
                 elif elem.tag == "barline":
                     open_repeat_measure = self._step_barline(
@@ -1880,56 +1934,118 @@ class TimelineBuilder:
         return open_repeat_measure
 
     def _step_wedge(
-        self,
-        direction_elem,
-        m_num: int,
-        walker: "_MeasureOffsetWalker",
-        scan: "_FirstPartScan",
-        open_wedge: Optional[Tuple[str, int, float, float]],
-        pickup_filled_quarters: float,
-    ) -> Optional[Tuple[str, int, float, float]]:
-        """Ref 29: crescendo/diminuendo hairpins. Returns the new open-wedge
-        state.
+        self, elem, part_state, measure_state, measure_start_quarters
+    ) -> None:
+        """Ref 29: crescendo/diminuendo hairpins (<direction-type>/<wedge>),
+        collected in the per-part walk (called from _handle_direction) so a
+        wedge on any staff of any part is reported - unlike tempo/time
+        signature, a wedge is NOT a score-wide fact.
 
-        MusicXML's wedge `number` attribute, which disambiguates overlapping
-        wedges on one staff, is ignored - only a single open wedge is
-        tracked. A deliberate simplification; no file tested so far has
-        overlapping wedges.
+        Each (staff, number) key in part_state.open_wedges holds a STACK: a
+        <wedge type="stop"> closes the innermost (most recently opened) wedge
+        first, which reconstructs exactly what is printed when a file gives a
+        long hairpin with shorter ones nested inside it and no `number` to
+        tell them apart (files/etude 2.mxl). A stop with an empty stack is
+        emitted as a start_known=False span (its kind is unknowable from a
+        bare stop); a wedge still open when the part ends is flushed with
+        end_known=False by _flush_open_wedges.
         """
-        wedge_el = direction_elem.find("direction-type/wedge")
+        wedge_el = elem.find("direction-type/wedge")
         if wedge_el is None:
-            return open_wedge
+            return
 
+        walker = measure_state.walker
+        m_num = measure_state.m_num
         wedge_type = wedge_el.attrib.get("type")
-        beat_unit_quarter_len = 4.0 / walker.ts_den
-        full_bar_quarters = walker.ts_num * beat_unit_quarter_len
-        offset_q = walker.offset_divs / walker.divisions
-        if m_num == 0:
-            start_beat = self._start_beat(
-                full_bar_quarters, pickup_filled_quarters, beat_unit_quarter_len
-            )
-            beat_pos = start_beat + (offset_q / beat_unit_quarter_len)
-        else:
-            beat_pos = 1.0 + (offset_q / beat_unit_quarter_len)
-        quarters = scan.measure_start_quarters.get(m_num, 0.0) + offset_q
+        offset_q = _displaced_offset_divs(elem, walker) / walker.divisions
+        beat_pos = part_state.beat_position(m_num, offset_q)
+        quarters = measure_start_quarters.get(m_num, 0.0) + offset_q
+        staff = _staff_number(elem, default=1)
+        try:
+            number = int(wedge_el.attrib.get("number", "1"))
+        except ValueError:
+            number = 1
+        key = (staff, number)
 
         if wedge_type in ("crescendo", "diminuendo"):
-            return (wedge_type, m_num, round(beat_pos, 2), quarters)
-        if wedge_type == "stop" and open_wedge is not None:
-            kind, start_m, start_beat_pos, start_quarters = open_wedge
-            scan.hairpin_spans.append(
+            part_state.open_wedges.setdefault(key, []).append(
+                (wedge_type, m_num, beat_pos, quarters)
+            )
+            return
+
+        if wedge_type != "stop":
+            return
+
+        stack = part_state.open_wedges.get(key)
+        if stack:
+            kind, start_m, start_beat, start_quarters = stack.pop()
+            self.hairpin_spans.append(
                 HairpinSpan(
                     kind=kind,
                     start_measure=start_m,
-                    start_beat_position=start_beat_pos,
+                    start_beat_position=start_beat,
                     start_quarters_from_start=start_quarters,
                     end_measure=m_num,
-                    end_beat_position=round(beat_pos, 2),
+                    end_beat_position=beat_pos,
                     end_quarters_from_start=quarters,
+                    part_id=part_state.part_id,
+                    staff=staff,
+                    number=number,
                 )
             )
-            return None
-        return open_wedge
+            return
+
+        # A stop with nothing open: reported with the gap stated rather than
+        # dropped. start_* is pinned to the start of the stop's own measure
+        # only so containment still resolves - start_known=False is what the
+        # wording keys off.
+        self.hairpin_spans.append(
+            HairpinSpan(
+                kind="",
+                start_measure=m_num,
+                start_beat_position=part_state.beat_position(m_num, 0.0),
+                start_quarters_from_start=measure_start_quarters.get(m_num, 0.0),
+                end_measure=m_num,
+                end_beat_position=beat_pos,
+                end_quarters_from_start=quarters,
+                part_id=part_state.part_id,
+                staff=staff,
+                number=number,
+                start_known=False,
+            )
+        )
+
+    def _flush_open_wedges(
+        self, part_state, last_m_num: int, measure_start_quarters
+    ) -> None:
+        """A wedge with no <wedge type="stop"> before its part ends
+        (files/etude 2.mxl has one) - emitted with end_known=False, its end
+        pinned to the end of the part's last measure so containment and
+        Ctrl+End still resolve. Sibling of _flush_open_direction_spans."""
+        if not any(part_state.open_wedges.values()):
+            return
+        end_quarters = (
+            measure_start_quarters.get(last_m_num, 0.0) + part_state.full_bar_quarters
+        )
+        end_beat = part_state.beat_position(last_m_num, part_state.full_bar_quarters)
+        for (staff, number), stack in part_state.open_wedges.items():
+            for kind, start_m, start_beat, start_quarters in stack:
+                self.hairpin_spans.append(
+                    HairpinSpan(
+                        kind=kind,
+                        start_measure=start_m,
+                        start_beat_position=start_beat,
+                        start_quarters_from_start=start_quarters,
+                        end_measure=last_m_num,
+                        end_beat_position=end_beat,
+                        end_quarters_from_start=end_quarters,
+                        part_id=part_state.part_id,
+                        staff=staff,
+                        number=number,
+                        end_known=False,
+                    )
+                )
+            stack.clear()
 
     # D.C./D.S. "al Fine"/"al Coda" is matched but its qualifier is
     # discarded - the actual Fine/To-Coda marks live in their OWN separate

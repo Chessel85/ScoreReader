@@ -51,6 +51,7 @@ from widgets.status_bar_widget import StatusBarWidget
 from widgets.tempo_offset_dialog import TempoOffsetDialog
 from widgets.timeline_list_widget import TimelineListWidget
 from widgets.tuner_dialog import TunerDialog
+from widgets.tuner_settings_dialog import TunerSettingsDialog
 from widgets.ultimate_guitar_import_dialog import UltimateGuitarImportDialog
 from widgets.voice_control_dialog import VoiceControlDialog
 from widgets.voice_control_test_dialog import VoiceControlTestDialog
@@ -1180,27 +1181,19 @@ class MainWindow(QMainWindow):
             self.voice_control_action.setChecked(self.voice_control.settings.enabled)
 
     def _show_tuner_dialog(self):
-        """Tools > Tuner (speculative feature - see the tuner plan). Pure
-        view (see widgets/tuner_dialog.py's own docstring) - this method
-        wires its signals and decides commit vs. revert from exec()'s
-        result, the same shape _show_live_midi_input_dialog already has.
-        Unlike that dialog, listening starts/stops with the dialog itself
-        (listening_requested/listening_stopped, wired here) rather than
-        being a persistent toggle - needs no loaded score at all, the
-        feature is global, not per-score."""
+        """Tools > Tuner - a generic chromatic tuner (see controllers/
+        tuner_controller.py's module docstring for the redesign that
+        removed its old Instrument/String pickers). Pure view (see
+        widgets/tuner_dialog.py's own docstring) - listening starts/stops
+        with the dialog itself (listening_requested/listening_stopped,
+        wired here) rather than being a persistent toggle - needs no loaded
+        score at all, the feature is global, not per-score. Unlike before
+        this redesign, the outer dialog itself has no editable settings of
+        its own to commit/cancel - only its nested Settings dialog
+        (_open_tuner_settings_dialog below) does."""
         with self._preserving_focus():
-            dialog = TunerDialog(
-                self,
-                devices=self.tuner.available_devices(),
-                settings=self.tuner.begin_settings_edit(),
-            )
-            dialog.target_changed.connect(self.tuner.set_target)
-            dialog.threshold_changed.connect(self.tuner.set_signal_threshold)
-            dialog.device_changed.connect(self.tuner.start_listening)
-            dialog.refresh_requested.connect(
-                lambda: dialog.set_devices(self.tuner.available_devices())
-            )
-            dialog.listening_requested.connect(self.tuner.start_listening)
+            dialog = TunerDialog(self)
+            dialog.listening_requested.connect(lambda: self.tuner.start_listening(self.tuner.settings.input_device))
             dialog.listening_stopped.connect(self.tuner.stop_listening)
             self.tuner.pitch_result_changed.connect(dialog.update_pitch_display)
             # dialog.announce, not a controller-side QAccessible call - see
@@ -1216,23 +1209,37 @@ class MainWindow(QMainWindow):
             # problem - and, being a QAccessibleAnnouncementEvent, reaches NVDA
             # regardless of which control currently has keyboard focus.
             self.tuner.announcement_requested.connect(dialog.announce)
-            # Seeded explicitly, not left to TunerDialog.__init__'s own trailing
-            # target_changed emission - that emission fires BEFORE the connect()
-            # above runs (it happens during TunerDialog(...) construction, three
-            # lines up), so it was never actually received. Reported live: with
-            # no target ever reaching the controller, TunerCapture searched the
-            # wrong (stale default 440Hz) band and the old _handle_pitch_result
-            # skipped feedback entirely whenever _target_string was None -
-            # together those made the tuner look totally unresponsive. See
-            # controllers/tuner_controller.py's module docstring.
-            self.tuner.set_target(dialog.current_string(), dialog.current_offset(), dialog.current_a4_hz())
-            self.tuner.set_signal_threshold(dialog.current_threshold_percent())
-            if dialog.exec() == QDialog.DialogCode.Accepted:
-                self.tuner.commit_settings_edit(dialog.result_settings())
-            else:
-                self.tuner.cancel_settings_edit()
+            dialog.settings_requested.connect(lambda: self._open_tuner_settings_dialog(dialog))
+            dialog.exec()
             self.tuner.pitch_result_changed.disconnect(dialog.update_pitch_display)
             self.tuner.announcement_requested.disconnect(dialog.announce)
+
+    def _open_tuner_settings_dialog(self, parent_dialog):
+        """TunerDialog's Settings button - opened from within a slot while
+        parent_dialog is still exec()'d, the same "open a second dialog from
+        a still-open first one" pattern _show_voice_control_test_dialog
+        already uses. Unlike that dialog (which pauses the real listening
+        session to avoid two recognizers competing for one microphone), the
+        tuner keeps listening the whole time this is open - its live-preview
+        signals below take effect immediately, which is exactly why device
+        selection here (unlike widgets/live_midi_input_dialog.py's) is live
+        rather than deferred to OK - see widgets/tuner_settings_dialog.py's
+        own docstring."""
+        settings_dialog = TunerSettingsDialog(
+            parent_dialog,
+            devices=self.tuner.available_devices(),
+            settings=self.tuner.begin_settings_edit(),
+        )
+        settings_dialog.a4_changed.connect(self.tuner.set_a4_reference)
+        settings_dialog.threshold_changed.connect(self.tuner.set_signal_threshold)
+        settings_dialog.device_changed.connect(self.tuner.start_listening)
+        settings_dialog.refresh_requested.connect(
+            lambda: settings_dialog.set_devices(self.tuner.available_devices())
+        )
+        if settings_dialog.exec() == QDialog.DialogCode.Accepted:
+            self.tuner.commit_settings_edit(settings_dialog.result_settings())
+        else:
+            self.tuner.cancel_settings_edit()
 
     def _show_voice_control_test_dialog(self, device_name: str, confidence_threshold: float):
         """Voice Control Settings' Test... button. Pauses the real listening

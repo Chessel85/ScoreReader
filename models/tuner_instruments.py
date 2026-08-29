@@ -1,116 +1,65 @@
 # models/tuner_instruments.py
-"""Tools > Tuner (widgets/tuner_dialog.py) - static table of supported
-instruments and their standard string pitches, numbered the way players
-actually refer to them (string 1 = highest-pitched string). stdlib-only,
-like every other models/ module (test_models_package_does_not_import_qt).
+"""Tools > Tuner (widgets/tuner_dialog.py) - a generic chromatic tuner: no
+instrument/string selection, no per-string drop-tuning offset. The dialog
+auto-detects whatever note is currently sounding (controllers/
+tuner_controller.py's tracking/acquisition search-band state machine,
+audio/pitch_detector.py's detect_pitch) and this module supplies the pure
+math for "what's the nearest chromatic note to this frequency, and what do
+I call it" - nearest_note()/nearest_note_name() below.
 
-Harp is deliberately excluded from v1 - a full pedal/lever harp has ~40+
-strings across many octaves with its own enharmonic pedal system, and
-doesn't fit this "pick instrument, pick one of a handful of strings" model
-without a much bigger design (see the tuner plan).
-
-Every supported instrument's standard tuning is entirely natural notes (E,
-B, G, D, A, C) - so unlike parsers/midi_timeline_builder.py's sharp/flat
-enharmonic spelling, there's no accidental-spelling decision to make here.
+Redesigned from the original "pick instrument, pick one of a handful of
+strings, tune to that fixed target" model (which had TUNER_INSTRUMENTS,
+TunerString, expected_frequency_hz, a per-string reference-offset control)
+after live use showed the picker UI was the main friction: a player already
+knows what note each string should be, so having the tuner ask them to
+re-select a string every time they moved to a different one was pure
+overhead. stdlib-only, like every other models/ module
+(test_models_package_does_not_import_qt).
 """
 import math
-from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Tuple
 
-# Scientific pitch notation: MIDI 60 = C4 (middle C), matching the rest of
-# this app's octave convention (parsers/midi_timeline_builder.py's
-# _spell_pitch).
-_NATURAL_PITCH_CLASS: Dict[str, int] = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+from models.pitch_spelling import spell_pitch
 
 A4_FREQUENCY_HZ = 440.0
 A4_MIDI_PITCH = 69
 
-# A configurable A4 reference pitch, in Hz - a different axis from
-# REFERENCE_OFFSET_*_SEMITONES below: that shifts a STRING away from its own
-# standard pitch (e.g. drop-D), this shifts the whole PITCH STANDARD itself.
+# A configurable A4 reference pitch, in Hz - shifts the whole pitch
+# STANDARD (e.g. Baroque 415Hz, orchestral 442Hz), not any individual note.
 # 415 covers Baroque pitch, 446 comfortably covers the common 442-443
 # orchestral convention with headroom - real tuners' typical range.
 A4_REFERENCE_MIN_HZ = 415
 A4_REFERENCE_MAX_HZ = 446
 
-# Reference-pitch offset range, in semitones either side of a string's
-# standard pitch - the user's "two tones either side... in semitone
-# increments" read as +/-2 whole tones = +/-4 semitones. Flagged in the
-# tuner plan as an interpretation worth confirming once the dialog exists;
-# trivial to change these two constants either way.
-REFERENCE_OFFSET_MIN_SEMITONES = -4
-REFERENCE_OFFSET_MAX_SEMITONES = 4
+
+def nearest_note(frequency_hz: float, a4_hz: float = A4_FREQUENCY_HZ) -> Tuple[int, float]:
+    """(midi_pitch, cents) for the nearest equal-tempered CHROMATIC note to
+    frequency_hz - the whole basis of a chromatic auto-detecting tuner. All
+    12 semitones, not just natural pitch classes - unlike the old fixed
+    per-string target, there's no known target here to compare against, so
+    every detected frequency is quantized to whichever of the 12 semitones
+    it's actually closest to. cents keeps cents_deviation's own sign
+    convention (positive = sharp). frequency_hz<=0 returns (A4_MIDI_PITCH,
+    0.0), the same "never raise, return something inert" convention
+    cents_deviation itself already has."""
+    if frequency_hz <= 0:
+        return A4_MIDI_PITCH, 0.0
+    midi_pitch = round(12 * math.log2(frequency_hz / a4_hz) + A4_MIDI_PITCH)
+    target_hz = a4_hz * (2 ** ((midi_pitch - A4_MIDI_PITCH) / 12))
+    return midi_pitch, cents_deviation(frequency_hz, target_hz)
 
 
-def midi_pitch_for(note_name: str, octave: int) -> int:
-    return (octave + 1) * 12 + _NATURAL_PITCH_CLASS[note_name]
-
-
-@dataclass(frozen=True)
-class TunerString:
-    number: int  # 1-indexed, as players refer to strings (1 = highest)
-    note_name: str  # a bare natural pitch class, e.g. "E" - see module docstring
-    octave: int  # scientific pitch notation, e.g. 4 for the guitar's high E
-
-    @property
-    def label(self) -> str:
-        """"String 1 (E4)" - the tuner dialog's string-combo entry text."""
-        return f"String {self.number} ({self.note_name}{self.octave})"
-
-    @property
-    def midi_pitch(self) -> int:
-        return midi_pitch_for(self.note_name, self.octave)
-
-
-@dataclass(frozen=True)
-class TunerInstrument:
-    name: str
-    strings: Tuple[TunerString, ...]  # string 1 (highest) first
-
-
-def _strings(*pitches: Tuple[str, int]) -> Tuple[TunerString, ...]:
-    return tuple(TunerString(i + 1, name, octave) for i, (name, octave) in enumerate(pitches))
-
-
-TUNER_INSTRUMENTS: Tuple[TunerInstrument, ...] = (
-    TunerInstrument("Guitar", _strings(("E", 4), ("B", 3), ("G", 3), ("D", 3), ("A", 2), ("E", 2))),
-    TunerInstrument("Bass Guitar", _strings(("G", 2), ("D", 2), ("A", 1), ("E", 1))),
-    TunerInstrument("Violin", _strings(("E", 5), ("A", 4), ("D", 4), ("G", 3))),
-    TunerInstrument("Viola", _strings(("A", 4), ("D", 4), ("G", 3), ("C", 3))),
-    TunerInstrument("Cello", _strings(("A", 3), ("D", 3), ("G", 2), ("C", 2))),
-    TunerInstrument("Double Bass", _strings(("G", 2), ("D", 2), ("A", 1), ("E", 1))),
-    # Re-entrant tuning (string 1 is not the lowest-pitched, string 4 is
-    # lower than string 3) - as strung, not as pitch-ordered, per how a
-    # ukulele player actually refers to their strings.
-    TunerInstrument("Ukulele", _strings(("G", 4), ("C", 4), ("E", 4), ("A", 4))),
-    # Courses, not individual strings - each pair is tuned to one
-    # representative pitch (the tuner plan's own scope for this instrument).
-    TunerInstrument("Mandolin", _strings(("E", 5), ("A", 4), ("D", 4), ("G", 3))),
-)
-
-TUNER_INSTRUMENT_NAMES: Tuple[str, ...] = tuple(instrument.name for instrument in TUNER_INSTRUMENTS)
-_INSTRUMENTS_BY_NAME: Dict[str, TunerInstrument] = {i.name: i for i in TUNER_INSTRUMENTS}
-
-
-def tuner_instrument_by_name(name: str) -> TunerInstrument:
-    """Falls back to the first instrument (Guitar) for an unrecognised
-    name - the same "best-effort, never raise" reasoning ScoreConfig's
-    apply_config already uses for a saved value the current state doesn't
-    recognise."""
-    return _INSTRUMENTS_BY_NAME.get(name, TUNER_INSTRUMENTS[0])
-
-
-def expected_frequency_hz(
-    tuner_string: TunerString, offset_semitones: int = 0, a4_hz: float = A4_FREQUENCY_HZ
-) -> float:
-    """Equal temperament. offset_semitones shifts the target away from the
-    string's own standard pitch (e.g. tuning a whole step down); a4_hz
-    shifts the pitch standard itself (e.g. Baroque 415Hz or orchestral
-    442Hz) - see A4_REFERENCE_MIN_HZ/MAX_HZ above for the two are distinct.
-    Defaults to the standard 440Hz concert pitch, so every existing caller
-    that doesn't pass a4_hz explicitly is unaffected."""
-    midi_pitch = tuner_string.midi_pitch + offset_semitones
-    return a4_hz * (2 ** ((midi_pitch - A4_MIDI_PITCH) / 12))
+def nearest_note_name(midi_pitch: int) -> Tuple[str, int]:
+    """(spoken note name, octave) for a MIDI pitch - always sharp, never
+    flat, always the whole word ("D sharp", never "D#"/"Eb") - a chromatic
+    tuner has no key-signature context to make a flat-vs-sharp spelling
+    decision with, so always-sharp is both the simplest rule and what was
+    requested. A thin wrapper around models/pitch_spelling.spell_pitch:
+    fifths=0 lands in that function's non-negative-fifths branch, which is
+    already exactly this always-sharp table - reused rather than
+    duplicated, since it's already tested and relied on elsewhere (MIDI
+    import, key-signature overrides)."""
+    return spell_pitch(midi_pitch, fifths=0)
 
 
 def cents_deviation(detected_hz: float, target_hz: float) -> float:

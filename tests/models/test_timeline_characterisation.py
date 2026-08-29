@@ -361,6 +361,57 @@ def test_hairpin_spans_cross_measure_and_same_measure(timeline, hairpin_score):
     assert (diminuendo.end_measure, diminuendo.end_beat_position) == (3, 3.0)
 
 
+def test_nested_and_unmatched_hairpins_paired_innermost_first(
+    timeline, nested_hairpins_score
+):
+    """Overlapping/nested wedges with no `number` to tell them apart (all
+    number="1", modelled on files/etude 2.mxl): a <wedge type="stop">
+    closes the most recently opened wedge, so a long hairpin with two
+    shorter ones inside it reconstructs exactly what is printed. An
+    unmatched stop and an unclosed start are reported with the gap stated,
+    never dropped or filled in. Spans come back sorted by start position."""
+    md = timeline(nested_hairpins_score)
+
+    spans = md.hairpin_spans
+    assert len(spans) == 5
+
+    long_outer, inner_a, inner_b, unmatched_stop, unclosed_start = spans
+
+    assert long_outer.kind == "crescendo"
+    assert (long_outer.start_measure, long_outer.start_beat_position) == (1, 1.0)
+    assert (long_outer.end_measure, long_outer.end_beat_position) == (3, 3.0)
+    assert long_outer.start_known and long_outer.end_known
+
+    assert inner_a.kind == "crescendo"
+    assert (inner_a.start_measure, inner_a.start_beat_position) == (1, 3.0)
+    assert (inner_a.end_measure, inner_a.end_beat_position) == (2, 1.0)
+
+    assert inner_b.kind == "diminuendo"
+    assert (inner_b.start_measure, inner_b.start_beat_position) == (2, 3.0)
+    assert (inner_b.end_measure, inner_b.end_beat_position) == (3, 1.0)
+
+    # A bare stop: its kind is unknowable, start_* pinned only so containment
+    # resolves.
+    assert unmatched_stop.kind == ""
+    assert unmatched_stop.start_known is False
+    assert unmatched_stop.end_known is True
+    assert (unmatched_stop.end_measure, unmatched_stop.end_beat_position) == (4, 3.0)
+
+    # A start that never stops: end pinned to the end of the part's last bar.
+    assert unclosed_start.kind == "crescendo"
+    assert unclosed_start.start_known is True
+    assert unclosed_start.end_known is False
+    assert (unclosed_start.start_measure, unclosed_start.start_beat_position) == (4, 4.0)
+
+
+def test_hairpins_are_collected_from_every_part(timeline, hairpins_two_parts_score):
+    """A wedge on any part is reported, not just the first - Guitar carries a
+    diminuendo, Cello a crescendo, both come back."""
+    md = timeline(hairpins_two_parts_score)
+    by_part = {(s.part_id, s.kind) for s in md.hairpin_spans}
+    assert by_part == {("P1", "diminuendo"), ("P2", "crescendo")}
+
+
 def test_total_measures_counts_the_whole_score_not_just_sounding_slices(
     timeline, repeats_and_endings_score
 ):
@@ -488,8 +539,8 @@ def test_performance_region_rows_hairpin_wording_omits_beat_on_the_downbeat(
     crescendo_start_index = md.slice_index_at_or_after_quarters(2.0)  # m1 beat 3
     labels = [r.label for r in md.get_performance_region_rows(crescendo_start_index)]
     assert labels == [
-        "Crescendo start: measure 1 beat 3",
-        "Crescendo end: measure 2 beat 2",
+        "Crescendo start: measure 1 beat 3, to measure 2 beat 2",
+        "Crescendo end: measure 2 beat 2, from measure 1 beat 3",
     ]
 
     diminuendo_start_index = next(
@@ -499,8 +550,8 @@ def test_performance_region_rows_hairpin_wording_omits_beat_on_the_downbeat(
     )
     labels = [r.label for r in md.get_performance_region_rows(diminuendo_start_index)]
     assert labels == [
-        "Diminuendo start: measure 3",
-        "Diminuendo end: measure 3 beat 3",
+        "Diminuendo start: measure 3, to measure 3 beat 3",
+        "Diminuendo end: measure 3 beat 3, from measure 3",
     ]
 
 

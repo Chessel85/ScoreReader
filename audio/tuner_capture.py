@@ -15,6 +15,7 @@ PortAudio's callback thread and read by a separate detection-cycle thread) -
 so, unlike that module, a lock IS needed here to avoid tearing a numpy array
 mid-read/mid-write.
 """
+import math
 import threading
 from typing import Callable, List, Optional
 
@@ -33,7 +34,9 @@ SAMPLE_RATE = 44100
 # One detection cycle's worth of audio to analyse - long enough for a low
 # string's fundamental to complete several periods (a double bass low B0,
 # ~31Hz, needs roughly 100-200ms per cycle - see the tuner plan's forecast),
-# short enough to stay reasonably responsive for the highest strings.
+# short enough to stay reasonably responsive for the highest strings. Also
+# comfortably covers ACQUISITION_MIN_HZ below (2*max_lag at 30Hz is ~2940
+# frames, well under BUFFER_FRAMES).
 BUFFER_SECONDS = 0.25
 BUFFER_FRAMES = int(SAMPLE_RATE * BUFFER_SECONDS)
 
@@ -43,10 +46,25 @@ BUFFER_FRAMES = int(SAMPLE_RATE * BUFFER_SECONDS)
 # position-announcer cadence before it (see the tuner plan).
 DETECT_INTERVAL_SECONDS = 0.2
 
-# Default search band passed to detect_pitch - matches the reference-pitch
-# offset range (models/tuner_instruments.py), so a mistuned string anywhere
-# in that range is still inside the searched band.
-DEFAULT_SEARCH_SEMITONES = 4.0
+# Tracking-mode search width (controllers/tuner_controller.py) - re-centered
+# each cycle on the last confidently-detected frequency rather than a
+# preselected string's target, but otherwise identical in width/reliability
+# to what the old per-string design always used.
+TRACKING_SEARCH_SEMITONES = 4.0
+
+# Acquisition-mode search band (no recent lock - dialog just opened, or
+# returning from silence): one fixed, generous range covering realistic
+# string-instrument fundamentals now that there's no instrument selection to
+# bound it with - roughly a 5-string bass's low B0 (~31Hz) up to a
+# mandolin/violin's high E5 (~659Hz), rounded outward for headroom.
+ACQUISITION_MIN_HZ = 30.0
+ACQUISITION_MAX_HZ = 700.0
+# detect_pitch's band is symmetric in LOG space around expected_hz - the
+# geometric mean of the two endpoints is the center that reproduces exactly
+# [ACQUISITION_MIN_HZ, ACQUISITION_MAX_HZ] via expected_hz/search_semitones,
+# with no new band-shape parameter needed on detect_pitch itself.
+ACQUISITION_CENTER_HZ = math.sqrt(ACQUISITION_MIN_HZ * ACQUISITION_MAX_HZ)
+ACQUISITION_SEARCH_SEMITONES = 12 * math.log2(ACQUISITION_MAX_HZ / ACQUISITION_CENTER_HZ)
 
 
 def list_input_devices() -> List[str]:
@@ -86,8 +104,9 @@ class TunerCapture:
     def __init__(self):
         self._stream = None
         self._device_name: Optional[str] = None
-        self._expected_hz: float = 440.0
-        self._search_semitones: float = DEFAULT_SEARCH_SEMITONES
+        self._expected_hz: float = ACQUISITION_CENTER_HZ
+        self._search_semitones: float = ACQUISITION_SEARCH_SEMITONES
+        self._prefer_lower_octave: bool = True
         self._callback: Optional[PitchResultCallback] = None
         self._buffer = np.zeros(BUFFER_FRAMES, dtype=np.float64)
         self._buffer_lock = threading.Lock()
@@ -99,13 +118,20 @@ class TunerCapture:
         early result. Safe to call at any time otherwise."""
         self._callback = callback
 
-    def set_target(self, expected_hz: float, search_semitones: float = DEFAULT_SEARCH_SEMITONES) -> None:
-        """Updates the frequency band detect_pitch searches - e.g. when the
-        user changes the selected string or reference-pitch offset while the
-        dialog is already listening. Takes effect on the next detection
-        cycle; no restart needed."""
+    def set_target(
+        self,
+        expected_hz: float,
+        search_semitones: float = TRACKING_SEARCH_SEMITONES,
+        prefer_lower_octave: bool = False,
+    ) -> None:
+        """Updates the frequency band (and octave-correction mode)
+        detect_pitch searches - driven by controllers/tuner_controller.py's
+        own tracking/acquisition state (a recent confident lock vs. none),
+        not a selected string/offset (the tuner has neither any more).
+        Takes effect on the next detection cycle; no restart needed."""
         self._expected_hz = expected_hz
         self._search_semitones = search_semitones
+        self._prefer_lower_octave = prefer_lower_octave
 
     def list_devices(self) -> List[str]:
         """Instance wrapper around the module-level list_input_devices(), so
@@ -199,7 +225,9 @@ class TunerCapture:
         with self._buffer_lock:
             snapshot = self._buffer.copy()
         peak_level = float(np.max(np.abs(snapshot))) if len(snapshot) else 0.0
-        result = detect_pitch(snapshot, SAMPLE_RATE, self._expected_hz, self._search_semitones)
+        result = detect_pitch(
+            snapshot, SAMPLE_RATE, self._expected_hz, self._search_semitones, self._prefer_lower_octave
+        )
         if self._callback is not None:
             self._callback(result, peak_level)
         self._schedule_detection()

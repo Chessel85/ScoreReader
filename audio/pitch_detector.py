@@ -22,6 +22,14 @@ import numpy as np
 # lag is accepted as a genuine periodicity rather than noise.
 YIN_THRESHOLD = 0.15
 
+# "Nearly as good" tolerance for the acquisition-mode octave-down sanity
+# check in detect_pitch (prefer_lower_octave) - the octave-below candidate
+# doesn't need to beat the originally-chosen lag's own CMND dip, just come
+# close to it, since a missed fundamental's own dip is often shallower than
+# a strong harmonic's. FLAGGED FOR LIVE TUNING like every other threshold
+# in this feature.
+OCTAVE_DOWN_CMND_SLACK = 0.05
+
 
 class PitchResult(NamedTuple):
     frequency_hz: float
@@ -33,6 +41,7 @@ def detect_pitch(
     sample_rate: int,
     expected_hz: float,
     search_semitones: float = 4.0,
+    prefer_lower_octave: bool = False,
 ) -> Optional[PitchResult]:
     """samples: mono float audio, most-recent buffer (see
     audio/tuner_capture.py). expected_hz/search_semitones bound the lag
@@ -40,7 +49,23 @@ def detect_pitch(
     [expected_hz * 2**(-search_semitones/12), expected_hz * 2**(+search_semitones/12)]
     - deliberately NOT the whole audible range. Returns None if the buffer
     is too short for the lags this band needs, or expected_hz/sample_rate
-    aren't usable."""
+    aren't usable.
+
+    prefer_lower_octave (default False - every existing caller/test is
+    unaffected): an acquisition-mode-only sanity check (see
+    audio/tuner_capture.py's ACQUISITION_* constants and
+    controllers/tuner_controller.py) for a wide search band with no known
+    per-string target to anchor it - a wide band is exactly where YIN's
+    classic harmonic-instead-of-fundamental failure mode becomes likely
+    again, since the "first CMND dip below YIN_THRESHOLD" scan walks from
+    min_lag (highest frequency in the band) upward, biasing it toward the
+    *shortest* periodic lag that clears the threshold. When set, and the
+    chosen candidate's own octave-DOWN alternative (double the lag = half
+    the frequency) has a CMND dip within OCTAVE_DOWN_CMND_SLACK of the
+    chosen one, that lower-frequency candidate is preferred instead - a
+    missed fundamental is far more common in practice than a phantom
+    sub-harmonic. Never triggers in tracking mode's narrow per-string band,
+    which never had a harmonic living inside it to begin with."""
     if expected_hz <= 0 or sample_rate <= 0:
         return None
 
@@ -87,6 +112,11 @@ def detect_pitch(
             break
     if tau_estimate is None:
         tau_estimate = int(np.argmin(cmnd[min_lag: max_lag + 1])) + min_lag
+
+    if prefer_lower_octave:
+        lower_octave_tau = 2 * tau_estimate
+        if lower_octave_tau <= max_lag and cmnd[lower_octave_tau] <= cmnd[tau_estimate] + OCTAVE_DOWN_CMND_SLACK:
+            tau_estimate = lower_octave_tau
 
     # Parabolic interpolation around tau_estimate for sub-sample precision
     # (YIN step 5) - skipped at either edge of the search band, where there's

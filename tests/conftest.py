@@ -299,6 +299,14 @@ def direction_lines_score() -> str:
 
 
 @pytest.fixture
+def direction_lines_with_words_score() -> str:
+    """P3 follow-up: like direction_lines_score, but each start shares its
+    <direction> with a sibling <words> - the real MusicXML pattern for what
+    a dashed/bracketed line is extending (e.g. "cresc.")."""
+    return _require(FIXTURES_DIR / "direction_lines_with_words.musicxml")
+
+
+@pytest.fixture
 def unknown_direction_score() -> str:
     """P3 (M5/D6): one 4/4 bar - an <other-direction> and an invented
     <harp-pedals> child both become the `other_direction` catch-all
@@ -537,6 +545,31 @@ def hairpin_score() -> str:
     spanning a measure boundary (m1 beat 3 -> m2 beat 2) and a diminuendo
     fully contained within one measure (m3 beat 1 -> m3 beat 3)."""
     return _require(FIXTURES_DIR / "hairpin.musicxml")
+
+
+@pytest.fixture
+def nested_hairpins_score() -> str:
+    """Modelled on files/etude 2.mxl: a long outer hairpin with two shorter
+    ones nested inside it (all number="1", one staff), plus an unmatched
+    stop and an unclosed start - the innermost-first pairing and the
+    start_known/end_known conventions."""
+    return _require(FIXTURES_DIR / "nested_hairpins.musicxml")
+
+
+@pytest.fixture
+def hairpins_two_parts_score() -> str:
+    """Two parts, each with its own wedge (Guitar diminuendo, Cello
+    crescendo) - the multi-part hairpin collection plus the D5 part-name
+    prefix (which shows because more than one part contributes)."""
+    return _require(FIXTURES_DIR / "hairpins_two_parts.musicxml")
+
+
+@pytest.fixture
+def instruction_words_score() -> str:
+    """Plain-text "cresc." (with a dashed line) and "rall." <words> - the
+    dynamics/tempo instruction point marks, and that the dashed line is
+    reported separately from the word."""
+    return _require(FIXTURES_DIR / "instruction_words.musicxml")
 
 
 @pytest.fixture

@@ -64,6 +64,7 @@ def test_every_required_command_maps_to_a_distinct_canonical_name():
     required = {
         "preview": PREVIEW, "play": PLAY, "stop": STOP, "pause": PAUSE,
         "forward": "forward", "back": "back",
+        "right": "forward", "left": "back",
         "next bar": NEXT_BAR, "next measure": NEXT_BAR,
         "previous bar": PREVIOUS_BAR, "previous measure": PREVIOUS_BAR,
         "home": HOME, "end": END,

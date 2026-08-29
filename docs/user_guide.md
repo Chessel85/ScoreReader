@@ -375,10 +375,11 @@ kinds of thing are findable:
   glissando, chord symbol and chord diagram.
 - **Performance markings** - structural events not tied to a single
   note: repeat and ending starts and ends, crescendo and diminuendo
-  hairpins, Segno, Coda, To Coda, Fine, Da Capo, Dal Segno, key, time
-  and tempo changes, the sustain pedal, octave shifts, rehearsal marks,
-  dashed and bracket lines, clef changes, double barlines, and
-  multi-measure rests.
+  hairpins, written dynamics instructions ("cresc.", "dim.") and tempo
+  instructions ("rall.", "a tempo"), Segno, Coda, To Coda, Fine, Da Capo,
+  Dal Segno, key, time and tempo changes, the sustain pedal, octave
+  shifts, rehearsal marks, dashed and bracket lines, clef changes, double
+  barlines, and multi-measure rests.
 
 Anything in the score that is not a plain note, a rest or a lyric is
 meant to be findable. Two catch-all rows - "Other notation" and
@@ -679,8 +680,8 @@ The full list of recognized commands:
 - play - starts or resumes playback
 - stop - stops playback
 - pause - pauses playback
-- forward - moves right one note, like the Right Arrow key
-- back - moves left one note, like the Left Arrow key
+- forward / right - moves right one note, like the Right Arrow key
+- back / left - moves left one note, like the Left Arrow key
 - next bar / next measure - moves to the start of the next bar
 - previous bar / previous measure - moves to the start of the previous bar
 - home - moves to the first note
@@ -720,15 +721,27 @@ or, for a hairpin that doesn't begin or end exactly on the first beat of
 a bar:
 
 ```
-Crescendo start: bar 12 beat 3
-Crescendo end: bar 13
+Crescendo start: bar 12 beat 3, to bar 13
+Crescendo end: bar 13, from bar 12 beat 3
 ```
 
-A beat position is only shown when a marking's start or end doesn't fall
-on beat 1 of its bar - repeats and endings never show one, since
-barlines only ever occur at the start of a bar. When your current
-position isn't covered by any marking, Region 5 shows a single "None"
-row.
+Each hairpin row states its full range, so one row read on its own tells
+you where the marking begins and ends. A beat position is only shown
+when an endpoint doesn't fall on beat 1 of its bar - repeats and endings
+never show one, since barlines only ever occur at the start of a bar.
+When your current position isn't covered by any marking, Region 5 shows
+a single "None" row.
+
+Hairpins are gathered from every part in the score, not just the first.
+Where more than one part has a hairpin, each row names its part, for
+example "Cello: Crescendo start: bar 12, to bar 14". If the file gives a
+hairpin a start with no matching end (or an end with no start), the row
+says so plainly - "Diminuendo start: bar 23, no end marked in the file" -
+rather than guessing or dropping it.
+
+A written instruction such as "cresc.", "dim." or "rall." also shows as
+its own one-off Region 5 row when you land on the bar it sits in - for
+example `Crescendo (marked "cresc.")` or `Tempo instruction: rall.`.
 
 Region 5 also shows a one-off row - with no start/end pair - the moment
 you land exactly where the time signature or tempo changes, or exactly
@@ -771,10 +784,24 @@ piece, independent of whatever's currently filtered in Region 2: title,
 composer, key, time signature and tempo (the same details Region 1
 shows), whether the piece has a pickup bar, its total number of bars, a
 note count for each instrument, and a list of every repeat, ending,
-dynamics hairpin, Segno, Coda and Fine mark and Da Capo/Dal Segno
-instruction in the score by bar number. It's a single flat list you can
-read top to bottom with Up/Down Arrow. Close it with the Close button or
-`Escape`; focus returns to wherever it was before you opened it.
+Segno, Coda, "To Coda" and Fine mark and Da Capo/Dal Segno instruction
+in the score by bar number.
+
+The report's **Dynamics** section is one list, in bar order, of every
+way the piece marks a change of volume: crescendo/diminuendo hairpins
+(named by part where more than one part has them), written words such as
+"cresc." or "dim.", and single dynamic marks like "mf" or "p". A hairpin
+with a missing start or end is listed with that stated. Written tempo
+instructions ("rall.", "a tempo") get their own **Tempo instructions**
+section. A dashed or bracketed line drawn under a word like "cresc." is
+listed separately under "Dashed lines" or "Bracket lines" - it and the
+word are two things in the file, so the report shows both.
+
+The whole report is a single flat list you can read top to bottom with
+Up/Down Arrow. Like the Performance region, it describes the whole piece
+and ignores whatever is currently filtered in Region 2. Close it with
+the Close button or `Escape`; focus returns to wherever it was before
+you opened it.
 
 ## 9. Understanding Note Attributes
 
@@ -1014,37 +1041,22 @@ currently loaded.
 There's no separate Start/Stop Listening control: the tuner listens
 continuously for as long as the dialog is open, the same way a physical
 clip-on tuner behaves once switched on, and stops the moment you close
-the dialog with OK, Cancel or `Escape`.
+the dialog (the Close button or `Escape`).
 
-### 11.2 Choosing an Instrument and String
+### 11.2 Reading the Tuner
 
-The Instrument combo box chooses which instrument you're tuning; the
-String combo box updates to that instrument's own strings (for example a
-guitar's six strings, high to low). Selecting a string tells the tuner
-which pitch to listen for next.
-
-### 11.3 Adjusting the Reference Pitch
-
-Two further fields let you tune against something other than an
-instrument's standard pitch:
-
-- Reference Pitch Offset (in semitones) shifts one individual string
-  away from its own standard pitch - useful for a deliberately altered
-  tuning such as tuning a whole step down.
-- Reference Pitch (A4) shifts the whole pitch standard itself, in Hz -
-  useful for Baroque pitch (commonly 415Hz) or a slightly sharper
-  orchestral pitch (commonly around 442-443Hz), rather than the usual
-  440Hz concert pitch.
-
-### 11.4 Reading the Tuner
-
-Play the chosen string. Once a clear, sustained pluck or bow stroke is
-detected, the tuner speaks the result once - for example "signal 50
-percent. E. 5 cents sharp" or "signal 62 percent. E. in tune" - then goes
-quiet again until you play another note. It doesn't talk continuously
-while a note rings, and it won't react to background noise or a note
-that's too quiet: the Signal Threshold field (section 11.5) controls how
-loud a pluck needs to be before it's trusted as a real reading at all.
+There's no Instrument or String list to choose from first - the tuner
+auto-detects whatever note is currently sounding, the nearest of the 12
+chromatic notes (always named with "sharp", e.g. "D sharp", never a flat
+or a symbol), so you just play the string you want to tune and it tells
+you what it heard. Play a note. Once a clear, sustained pluck or bow
+stroke is detected, the tuner speaks the result once - for example
+"signal 50 percent. D sharp. 5 cents sharp" or "signal 62 percent. A. in
+tune" - then goes quiet again until you play another note. It doesn't
+talk continuously while a note rings, and it won't react to background
+noise or a note that's too quiet: the Signal Threshold setting (section
+11.3) controls how loud a pluck needs to be before it's trusted as a real
+reading at all.
 
 The Current Reading field alongside the spoken result always shows the
 same information as plain text, so you can confirm what was detected
@@ -1052,13 +1064,28 @@ independently of speech - useful for checking your microphone is picking
 up sound at all, even before you've settled on a threshold that suits
 your room.
 
-### 11.5 Choosing a Microphone and Sensitivity
+If you're tuning to an interval other than a plain note - for example a
+deliberately dropped string - just aim for 50 cents off the natural
+neighbour on whichever side you expect; the tuner will name the actual
+nearest chromatic note once you're close enough to it.
 
-The Device field chooses which microphone to listen on, with a Refresh
-button to re-scan for devices that were plugged in after the dialog
-opened. The Signal Threshold field (as a percentage) sets how loud a
-pluck must be before a reading is trusted - raise it in a noisy room, or
-lower it if the tuner isn't reacting to quiet playing.
+### 11.3 Settings: Reference Pitch, Microphone and Sensitivity
+
+The Settings... button opens a second dialog for the values you're
+unlikely to change mid-session:
+
+- Reference Pitch (A4), in Hz - shifts the whole pitch standard, useful
+  for Baroque pitch (commonly 415Hz) or a slightly sharper orchestral
+  pitch (commonly around 442-443Hz), rather than the usual 440Hz concert
+  pitch.
+- Signal Threshold, as a percentage - sets how loud a pluck must be
+  before a reading is trusted; raise it in a noisy room, or lower it if
+  the tuner isn't reacting to quiet playing.
+- Device - chooses which microphone to listen on, with a Refresh button
+  to re-scan for devices that were plugged in after the dialog opened.
+  Unlike the other two fields, a device change here takes effect
+  immediately, since the main Tuner dialog keeps listening the whole
+  time this Settings dialog is open.
 
 For best results, make sure any microphone enhancement features (echo
 cancellation, noise suppression and similar effects, usually configured

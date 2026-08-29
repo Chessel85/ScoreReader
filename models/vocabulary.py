@@ -10,6 +10,7 @@ dialect, a simplification the user asked for.
 """
 
 import re
+from typing import Optional
 
 UK_BASE_DURATION_NAMES = {
     # Checked longest-key-first by duration_name() so "double whole" isn't
@@ -131,6 +132,66 @@ def articulation_name(tag: str) -> str:
     the tag with hyphens replaced by spaces for anything not in
     ARTICULATION_NAMES."""
     return ARTICULATION_NAMES.get(tag, tag.replace("-", " "))
+
+
+# A free-text <direction><words> instruction that is really a dynamics or a
+# tempo change, not per-note stave text. Both tables are matched against the
+# WHOLE stripped text (an optional trailing "." allowed, plus one leading or
+# trailing qualifier word), NEVER a substring scan - the corpus survey found
+# <words> in the tab files dominated by SMuFL private-use glyphs and Roman-
+# numeral position markers ("III", "V"), and phrases like "Moderato con
+# espressione" that a substring sweep would misread. Shared by the parser
+# (parsers/timeline_builder.py, instruction-word point marks) and never
+# duplicated - the R5 rule.
+_DYNAMICS_INSTRUCTION_WORDS = {
+    "cresc": "crescendo", "crescendo": "crescendo",
+    "decresc": "diminuendo", "decrescendo": "diminuendo",
+    "dim": "diminuendo", "diminuendo": "diminuendo",
+    "smorz": "diminuendo", "smorzando": "diminuendo",
+    "morendo": "diminuendo", "perdendosi": "diminuendo",
+}
+
+_TEMPO_INSTRUCTION_WORDS = {
+    "rall": "rallentando", "rallentando": "rallentando",
+    "rit": "ritardando", "ritard": "ritardando", "ritardando": "ritardando",
+    "accel": "accelerando", "accelerando": "accelerando",
+    "allarg": "allargando", "allargando": "allargando",
+    "string": "stringendo", "stringendo": "stringendo",
+    "a tempo": "a tempo",
+    "meno mosso": "meno mosso",
+    "più mosso": "più mosso", "piu mosso": "più mosso",
+    "rubato": "rubato",
+}
+
+_INSTRUCTION_QUALIFIERS = ("poco a poco", "sempre", "molto", "poco")
+
+
+def _strip_instruction_text(text: str) -> str:
+    """Lower-case, drop a trailing '.', and remove one leading or trailing
+    qualifier phrase ("poco a poco cresc.", "dim. molto")."""
+    t = text.strip().lower().rstrip(".").strip()
+    for q in _INSTRUCTION_QUALIFIERS:
+        if t.startswith(q + " "):
+            t = t[len(q) + 1:].strip()
+        if t.endswith(" " + q):
+            t = t[: -(len(q) + 1)].strip()
+    return t.rstrip(".").strip()
+
+
+def dynamics_instruction_kind(text: Optional[str]) -> Optional[str]:
+    """"crescendo" / "diminuendo" for a whole-text <words> match against
+    _DYNAMICS_INSTRUCTION_WORDS, else None."""
+    if not text:
+        return None
+    return _DYNAMICS_INSTRUCTION_WORDS.get(_strip_instruction_text(text))
+
+
+def tempo_instruction_label(text: Optional[str]) -> Optional[str]:
+    """The normalised spoken tempo word ("rallentando", "a tempo") for a
+    whole-text <words> match against _TEMPO_INSTRUCTION_WORDS, else None."""
+    if not text:
+        return None
+    return _TEMPO_INSTRUCTION_WORDS.get(_strip_instruction_text(text))
 
 
 def clef_name(sign, line=None, octave_change=None) -> str:

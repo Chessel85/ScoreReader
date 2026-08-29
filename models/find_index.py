@@ -198,6 +198,12 @@ class FindIndex:
         if kind == "other_direction":
             return [first_of(m.measure)
                     for m in data.direction_marks if m.kind == "other_direction"]
+        if kind == "dynamics_instruction":
+            return [first_of(m.measure)
+                    for m in data.direction_marks if m.kind == "dynamics_word"]
+        if kind == "tempo_instruction":
+            return [first_of(m.measure)
+                    for m in data.direction_marks if m.kind == "tempo_word"]
         # P4: barline / clef-change / measure-style points, all resolved to
         # the first visible event of their measure (uniform with every other
         # point marking - the barline @location nuance is deferred).

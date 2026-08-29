@@ -26,15 +26,19 @@ class NullTunerCapture:
         self._is_open: bool = False
         self.expected_hz: Optional[float] = None
         self.search_semitones: Optional[float] = None
+        self.prefer_lower_octave: Optional[bool] = None
         self.open_calls: List[Optional[str]] = []
         self.close_count: int = 0
 
     def set_callback(self, callback: Optional[PitchResultCallback]) -> None:
         self._callback = callback
 
-    def set_target(self, expected_hz: float, search_semitones: float = 4.0) -> None:
+    def set_target(
+        self, expected_hz: float, search_semitones: float = 4.0, prefer_lower_octave: bool = False
+    ) -> None:
         self.expected_hz = expected_hz
         self.search_semitones = search_semitones
+        self.prefer_lower_octave = prefer_lower_octave
 
     def list_devices(self) -> List[str]:
         return list(self.available_devices)

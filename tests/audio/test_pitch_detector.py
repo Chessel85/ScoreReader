@@ -94,6 +94,50 @@ def test_buffer_too_short_for_the_search_band_returns_none():
     assert result is None
 
 
+def test_octave_correction_prefers_lower_fundamental_when_enabled():
+    """A signal with a weak fundamental and a dominant first harmonic - the
+    plain "first CMND dip from high frequency" scan locks onto the harmonic
+    instead of the true fundamental when the search band is wide enough to
+    contain both (exactly the acquisition-mode risk prefer_lower_octave
+    exists to correct - see audio/tuner_capture.py's ACQUISITION_* band and
+    controllers/tuner_controller.py)."""
+    fundamental_hz = 100.0
+    t = np.arange(int(SAMPLE_RATE * 0.3)) / SAMPLE_RATE
+    samples = (
+        0.02 * np.sin(2 * np.pi * fundamental_hz * t)
+        + 1.0 * np.sin(2 * np.pi * fundamental_hz * 2 * t)
+    )
+    without_correction = detect_pitch(
+        samples, SAMPLE_RATE, expected_hz=fundamental_hz, search_semitones=13.0, prefer_lower_octave=False,
+    )
+    with_correction = detect_pitch(
+        samples, SAMPLE_RATE, expected_hz=fundamental_hz, search_semitones=13.0, prefer_lower_octave=True,
+    )
+    assert without_correction is not None and with_correction is not None
+    # Without correction, the dominant harmonic (2x) is mistaken for the
+    # fundamental.
+    assert abs(without_correction.frequency_hz - 2 * fundamental_hz) < 5
+    # With correction, the true (weaker) fundamental is recovered instead.
+    assert abs(with_correction.frequency_hz - fundamental_hz) < 5
+
+
+def test_prefer_lower_octave_is_a_noop_when_the_search_band_is_too_narrow_to_contain_it():
+    """A narrow (tracking-mode-width) search band never has room for an
+    octave-down alternative - 2x tau_estimate exceeds max_lag whenever the
+    band is only +/-4 semitones wide (its own max_lag/min_lag ratio is under
+    2), so the flag has no effect there, matching every existing tracking-
+    mode caller/test."""
+    samples = _sine(220.0, duration_s=0.3)
+    baseline = detect_pitch(
+        samples, SAMPLE_RATE, expected_hz=220.0, search_semitones=4.0, prefer_lower_octave=False
+    )
+    corrected = detect_pitch(
+        samples, SAMPLE_RATE, expected_hz=220.0, search_semitones=4.0, prefer_lower_octave=True
+    )
+    assert baseline is not None and corrected is not None
+    assert corrected.frequency_hz == pytest.approx(baseline.frequency_hz)
+
+
 def test_silence_returns_low_confidence():
     samples = np.zeros(int(SAMPLE_RATE * 0.3))
     result = detect_pitch(samples, SAMPLE_RATE, expected_hz=220.0, search_semitones=4.0)

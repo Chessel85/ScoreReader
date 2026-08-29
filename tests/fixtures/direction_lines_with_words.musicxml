@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- P3 follow-up: like direction_lines.musicxml, but each <dashes>/<bracket
+     type="start"> shares its <direction> with a sibling <words> - the real
+     MusicXML convention for "what this line is extending" (e.g. "cresc."
+     next to a dashes start). One 4/4 bar:
+       beat 1 - <dashes type="start"> next to words="cresc."
+       beat 1 - <bracket type="start"> next to words="8vb sim."
+       beat 3 - <dashes type="stop">
+       beat 4 - <bracket type="stop"> -->
+<score-partwise version="4.0">
+  <part-list>
+    <score-part id="P1">
+      <part-name>Test Part</part-name>
+      <score-instrument id="P1-I1">
+        <instrument-name>Test Instrument</instrument-name>
+      </score-instrument>
+      <midi-instrument id="P1-I1">
+        <midi-channel>1</midi-channel>
+        <midi-program>1</midi-program>
+      </midi-instrument>
+    </score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <key><fifths>0</fifths></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <clef number="1"><sign>G</sign><line>2</line></clef>
+      </attributes>
+      <direction placement="below">
+        <direction-type><words>cresc.</words></direction-type>
+        <direction-type><dashes type="start" number="1"/></direction-type>
+      </direction>
+      <direction placement="above">
+        <direction-type><words>8vb sim.</words></direction-type>
+        <direction-type><bracket type="start" line-end="down" number="2"/></direction-type>
+      </direction>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>1</duration><voice>1</voice><type>quarter</type><staff>1</staff>
+      </note>
+      <note>
+        <pitch><step>D</step><octave>4</octave></pitch>
+        <duration>1</duration><voice>1</voice><type>quarter</type><staff>1</staff>
+      </note>
+      <direction placement="below">
+        <direction-type><dashes type="stop" number="1"/></direction-type>
+      </direction>
+      <note>
+        <pitch><step>E</step><octave>4</octave></pitch>
+        <duration>1</duration><voice>1</voice><type>quarter</type><staff>1</staff>
+      </note>
+      <direction placement="above">
+        <direction-type><bracket type="stop" line-end="down" number="2"/></direction-type>
+      </direction>
+      <note>
+        <pitch><step>F</step><octave>4</octave></pitch>
+        <duration>1</duration><voice>1</voice><type>quarter</type><staff>1</staff>
+      </note>
+    </measure>
+  </part>
+</score-partwise>

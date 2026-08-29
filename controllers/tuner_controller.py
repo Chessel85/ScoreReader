@@ -24,6 +24,16 @@ target_changed is connected, and (2) peak_level being computed and reported
 on every single detection cycle regardless of target/pitch-lock state, so a
 level reading is always available as an independent diagnostic signal.
 
+SUPERSEDED by the chromatic-auto-detection redesign: the Instrument/String
+pickers and their `target_changed`/`set_target` plumbing described in the
+paragraph above no longer exist. `start_listening` now seeds acquisition
+mode itself (see its own docstring), which structurally removes the
+seeding-order race described above rather than just working around it -
+there's no dialog-owned target left to race a signal connection against.
+The rest of this file's history below (SECOND through SIXTH reports) is
+about the WAITING/REPORTING/attack-validation state machine, which is
+unchanged by that redesign and kept verbatim.
+
 GOTCHA, found on the SECOND live-testing report (level diagnostic confirmed
 real audio WAS flowing through detect_pitch, yet NVDA still spoke nothing
 at all): this controller does NOT perform the actual
@@ -108,13 +118,17 @@ from typing import Callable, List, Optional
 from PySide6.QtCore import QObject, Qt, Signal
 
 from audio.pitch_detector import PitchResult
-from audio.tuner_capture import TunerCapture
+from audio.tuner_capture import (
+    ACQUISITION_CENTER_HZ,
+    ACQUISITION_SEARCH_SEMITONES,
+    TRACKING_SEARCH_SEMITONES,
+    TunerCapture,
+)
 from models.tuner_instruments import (
-    TunerString,
-    cents_deviation,
     cents_description,
-    expected_frequency_hz,
     level_description,
+    nearest_note,
+    nearest_note_name,
 )
 from models.tuner_settings import TunerSettings
 from persistence import app_settings
@@ -166,14 +180,23 @@ MIN_ATTACK_RISE_FRACTION = 0.5
 
 
 class TunerController(QObject):
-    """pitch_result_changed carries (PitchResult|None, cents|None, peak_level)
-    so the dialog's live status label can update on every detection cycle
-    even though speech is throttled separately below. peak_level (0.0-1.0)
-    is reported on EVERY cycle regardless of whether a pitch was confidently
-    matched or a target is even selected yet - see level_description's own
-    docstring for why: without it, "the mic isn't hearing anything" and "the
-    mic hears something but nothing is locking on" were indistinguishable
-    from the outside, which is exactly what was reported live.
+    """A generic chromatic tuner - no instrument/string selection. Every
+    confidently-detected frequency is mapped fresh, each cycle, to the
+    nearest of the 12 equal-tempered chromatic semitones (models.
+    tuner_instruments.nearest_note/nearest_note_name), so there is no fixed
+    "target" to compare against any more - see _locked_hz below for how the
+    search band itself follows whatever was last confidently heard instead
+    of a preselected string.
+
+    pitch_result_changed carries the fully-composed status string (e.g.
+    "signal 40 percent - D sharp: 5 cents sharp") so the dialog's live
+    status label can update on every detection cycle even though speech is
+    throttled separately below. The underlying peak_level is always
+    reflected in that string regardless of whether a pitch was confidently
+    matched - see level_description's own docstring for why: without it,
+    "the mic isn't hearing anything" and "the mic hears something but
+    nothing is locking on" were indistinguishable from the outside, which is
+    exactly what was reported live.
 
     announcement_requested carries the fully-composed message string once
     the WAITING/REPORTING state machine below decides a pluck has settled
@@ -182,7 +205,7 @@ class TunerController(QObject):
     docstring's GOTCHA); widgets/tuner_dialog.py's announce() does that,
     using itself (a real widget) as the event's target."""
 
-    pitch_result_changed = Signal(object, object, float)  # Optional[PitchResult], Optional[float] cents, peak_level
+    pitch_result_changed = Signal(str)
     announcement_requested = Signal(str)
 
     _raw_pitch_result = Signal(object, float)  # internal, thread-marshaling only
@@ -198,9 +221,12 @@ class TunerController(QObject):
         self._capture = capture if capture is not None else TunerCapture()
         self._capture.set_callback(self._on_raw_result)
         self._raw_pitch_result.connect(self._handle_pitch_result, Qt.ConnectionType.QueuedConnection)
-        self._target_string: Optional[TunerString] = None
-        self._reference_offset_semitones: int = 0
-        self._a4_hz: float = 440.0
+        # The frequency last confidently locked onto, or None while in
+        # acquisition mode (no recent lock - see _handle_pitch_result). This
+        # is what the narrow tracking-mode search band re-centers on each
+        # cycle, replacing the old fixed per-string target.
+        self._locked_hz: Optional[float] = None
+        self._a4_hz: float = float(self.settings.a4_reference_hz)
         self._signal_threshold_percent: int = self.settings.signal_threshold_percent
         # clock is injectable so tests can control SETTLE_DELAY_SECONDS'/
         # REPORT_HOLD_SECONDS' elapsed-time checks deterministically,
@@ -227,47 +253,36 @@ class TunerController(QObject):
         self._previous_peak_level: float = 0.0
         self._edit_snapshot: Optional[TunerSettings] = None
 
-    # --- device/target -----------------------------------------------------
+    # --- device/reference pitch ---------------------------------------------
 
     def available_devices(self) -> List[str]:
         return self._capture.list_devices()
 
-    def set_target(
-        self, tuner_string: TunerString, reference_offset_semitones: int, a4_hz: float = 440.0
-    ) -> None:
-        """Called whenever the dialog's instrument/string/offset/A4-
-        reference selection changes, live - if capture is already open it
-        keeps running; only the frequency band detect_pitch searches is
-        updated (see TunerCapture.set_target). Resets the WAITING/REPORTING
-        state so a pluck already ringing against the OLD target doesn't get
-        reported against the new one."""
-        self._target_string = tuner_string
-        self._reference_offset_semitones = reference_offset_semitones
-        self._a4_hz = a4_hz
-        expected_hz = expected_frequency_hz(tuner_string, reference_offset_semitones, a4_hz)
-        self._capture.set_target(expected_hz)
-        self._reset_state()
+    def set_a4_reference(self, a4_hz: int) -> None:
+        """Called from the Settings dialog's live preview - changes only
+        what nearest_note treats as the reference pitch, never the search
+        band itself, so no capture restart or state reset is needed."""
+        self._a4_hz = float(a4_hz)
 
     def set_signal_threshold(self, percent: int) -> None:
-        """Called whenever the dialog's threshold_spin changes, live - see
-        TunerSettings.signal_threshold_percent's own docstring. Resets state
-        for the same reason set_target does: a pluck already mid-settle
-        against the OLD threshold shouldn't be judged against a new one."""
+        """Called whenever the Settings dialog's threshold_spin changes,
+        live - see TunerSettings.signal_threshold_percent's own docstring.
+        Resets state so a pluck already mid-settle against the OLD
+        threshold shouldn't be judged against a new one."""
         self._signal_threshold_percent = percent
         self._reset_state()
 
     def _reset_state(self) -> None:
-        """Called from set_target/set_signal_threshold/start_listening -
-        clears only the REPORT/settle TIMING state (a pluck already mid-
-        settle or held against the OLD target/threshold shouldn't be judged
-        against a new one). Deliberately does NOT touch _attack_validated/
-        _previous_peak_level - those describe the real audio signal's own
-        recent dynamics, not anything about which target/threshold is
-        selected, so switching a string or nudging the threshold shouldn't
-        erase a genuinely-already-validated sharp rise (see _advance_state's
-        own docstring, SIXTH report). start_listening resets those two
-        separately, below - that one DOES discard real audio history, since
-        TunerCapture.open() zeroes its buffer."""
+        """Called from set_signal_threshold/start_listening - clears only
+        the REPORT/settle TIMING state (a pluck already mid-settle or held
+        against the OLD threshold shouldn't be judged against a new one).
+        Deliberately does NOT touch _attack_validated/_previous_peak_level -
+        those describe the real audio signal's own recent dynamics, not
+        anything about the configured threshold, so nudging the threshold
+        shouldn't erase a genuinely-already-validated sharp rise (see
+        _advance_state's own docstring, SIXTH report). start_listening
+        resets those two separately, below - that one DOES discard real
+        audio history, since TunerCapture.open() zeroes its buffer."""
         self._reporting = False
         self._signal_since = None
         self._reported_at = None
@@ -281,6 +296,13 @@ class TunerController(QObject):
         # _reset_state's own docstring for why this is separate from it).
         self._attack_validated = False
         self._previous_peak_level = 0.0
+        # No prior lock survives a fresh open - seed acquisition mode
+        # explicitly. This replaces the old dialog-seeds-a-target design
+        # entirely (and its documented seeding-order gotcha): there's no
+        # dialog-owned target to race a signal connection against any more,
+        # the controller always knows what band to search on its own.
+        self._locked_hz = None
+        self._capture.set_target(ACQUISITION_CENTER_HZ, ACQUISITION_SEARCH_SEMITONES, prefer_lower_octave=True)
         opened = self._capture.open(device_name)
         if not opened:
             self._announce_raw("Could not open the selected audio input device.")
@@ -295,6 +317,8 @@ class TunerController(QObject):
 
     # --- settings dialog (begin/commit/cancel, mirrors                    --
     # --- LiveMidiInputController's begin_settings_edit/commit/cancel)      --
+    # --- Gates ONLY the nested Settings dialog (A4/threshold/device) now - --
+    # --- the outer TunerDialog has no editable state of its own left.      --
 
     def begin_settings_edit(self) -> TunerSettings:
         self._edit_snapshot = self.settings.copy()
@@ -303,9 +327,23 @@ class TunerController(QObject):
     def commit_settings_edit(self, new_settings: TunerSettings) -> None:
         self.settings = new_settings.copy()
         app_settings.set_tuner_settings(self.settings)
+        self._a4_hz = float(self.settings.a4_reference_hz)
         self._edit_snapshot = None
 
     def cancel_settings_edit(self) -> None:
+        """Unlike before this redesign - where Cancel closed the whole
+        dialog and stopped listening anyway, making a live-preview revert
+        moot - the outer TunerDialog and its running capture now stay open
+        across the Settings dialog's own lifetime. So Cancel must actively
+        put the running controller back the way it was, mirroring
+        LiveMidiInputController.cancel_settings_edit's "put it back exactly
+        as it was" pattern, which this controller never needed before."""
+        if self._edit_snapshot is not None:
+            snapshot = self._edit_snapshot
+            self._a4_hz = float(snapshot.a4_reference_hz)
+            self.set_signal_threshold(snapshot.signal_threshold_percent)
+            if snapshot.input_device != self._capture.device_name:
+                self.start_listening(snapshot.input_device)
         self._edit_snapshot = None
 
     # --- capture thread -> Qt main thread -----------------------------------
@@ -317,10 +355,10 @@ class TunerController(QObject):
 
     def _handle_pitch_result(self, result: Optional[PitchResult], peak_level: float) -> None:
         """Qt main thread only (see class docstring). Unlike the first cut of
-        this method, this no longer returns early when no target is selected
-        or no pitch was confidently matched - peak_level alone is still
-        reported in that case, so "nothing to say yet" and "the mic isn't
-        hearing anything" stay distinguishable (see the class docstring).
+        this method, this no longer returns early when no pitch was
+        confidently matched - peak_level alone is still reported in that
+        case, so "nothing to say yet" and "the mic isn't hearing anything"
+        stay distinguishable (see the class docstring).
 
         FOURTH report fix: below the user's configured signal threshold, a
         detected result is discarded entirely (not just left unreported) -
@@ -332,22 +370,54 @@ class TunerController(QObject):
         same way - see that constant's own docstring. Confidence is checked
         here (not in _advance_state) so a low-confidence detection reads as
         plain "no result" everywhere downstream, the same as a too-quiet
-        one."""
+        one.
+
+        Tracking/acquisition transition (this redesign's core addition): on
+        genuine silence (peak_level below threshold), forget any lock and
+        revert the capture's search band to the wide acquisition range -
+        NOT on a merely low-confidence/discarded result while peak_level is
+        still loud (an attack transient, a momentary YIN miss - FIFTH
+        report - must not drop an otherwise-still-sounding lock). On a
+        confident result, lock onto its frequency and narrow the capture's
+        search band to track it, exactly as a per-string target's band
+        always was."""
         threshold = self._signal_threshold_percent / 100.0
         if peak_level < threshold or (result is not None and result.confidence < MIN_CONFIDENCE):
             result = None
+
+        if peak_level < threshold:
+            self._locked_hz = None
+            self._capture.set_target(ACQUISITION_CENTER_HZ, ACQUISITION_SEARCH_SEMITONES, prefer_lower_octave=True)
+        elif result is not None:
+            self._locked_hz = result.frequency_hz
+            self._capture.set_target(result.frequency_hz, TRACKING_SEARCH_SEMITONES, prefer_lower_octave=False)
+
         cents = None
-        if result is not None and self._target_string is not None:
-            expected_hz = expected_frequency_hz(
-                self._target_string, self._reference_offset_semitones, self._a4_hz
-            )
-            cents = cents_deviation(result.frequency_hz, expected_hz)
-        self.pitch_result_changed.emit(result, cents, peak_level)
-        self._advance_state(cents, peak_level, threshold)
+        note_name = None
+        if result is not None:
+            midi_pitch, cents = nearest_note(result.frequency_hz, self._a4_hz)
+            note_name, _octave = nearest_note_name(midi_pitch)
+
+        self.pitch_result_changed.emit(self._status_text(cents, note_name, peak_level, threshold))
+        self._advance_state(cents, note_name, peak_level, threshold)
+
+    def _status_text(
+        self, cents: Optional[float], note_name: Optional[str], peak_level: float, threshold: float
+    ) -> str:
+        """Shared by pitch_result_changed's always-on live text and (in
+        _announce below) the spoken message - the same "one function feeds
+        both" pattern cents_description/level_description already
+        establish."""
+        level_text = level_description(peak_level, threshold)
+        if cents is None or note_name is None:
+            return f"{level_text} - waiting"
+        return f"{level_text} - {note_name}: {cents_description(cents)}"
 
     # --- WAITING/REPORTING accessible speech ----------------------------------
 
-    def _advance_state(self, cents: Optional[float], peak_level: float, threshold: float) -> None:
+    def _advance_state(
+        self, cents: Optional[float], note_name: Optional[str], peak_level: float, threshold: float
+    ) -> None:
         """Runs every detection cycle (~0.2s). Replaces the old onset/ARMED
         design (see the module docstring's FOURTH report) with an explicit
         two-state machine:
@@ -446,7 +516,7 @@ class TunerController(QObject):
             self._signal_since = None
             self._reporting = True
             self._reported_at = now
-            self._announce(cents, peak_level, threshold)
+            self._announce(cents, note_name, peak_level, threshold)
 
     def _enter_waiting(self) -> None:
         self._reporting = False
@@ -454,12 +524,14 @@ class TunerController(QObject):
         self._signal_since = None
         self._announce_raw("Waiting.")
 
-    def _announce(self, cents: Optional[float], peak_level: float, threshold: float) -> None:
+    def _announce(
+        self, cents: Optional[float], note_name: Optional[str], peak_level: float, threshold: float
+    ) -> None:
         level_text = level_description(peak_level, threshold)
-        if cents is None or self._target_string is None:
+        if cents is None or note_name is None:
             message = f"{level_text}."
         else:
-            message = f"{level_text}. {self._target_string.note_name}. {cents_description(cents)}"
+            message = f"{level_text}. {note_name}. {cents_description(cents)}"
         self._announce_raw(message)
 
     def _announce_raw(self, message: str) -> None:

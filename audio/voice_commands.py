@@ -45,14 +45,17 @@ ATTRIBUTE = "attribute"
 # canonical command name. Synonyms ("next bar"/"next measure") map to the
 # same command - "bar" vs "measure" is a dialect choice, not two different
 # behaviours (mirrors models/vocabulary.py's bar_word reasoning elsewhere in
-# this app).
+# this app). "left"/"right" are synonyms for "back"/"forward" - same
+# direction as the Left/Right arrow keys they mirror.
 COMMAND_PHRASES: Dict[str, str] = {
     "preview": PREVIEW,
     "play": PLAY,
     "stop": STOP,
     "pause": PAUSE,
     "forward": FORWARD,
+    "right": FORWARD,
     "back": BACK,
+    "left": BACK,
     "next bar": NEXT_BAR,
     "next measure": NEXT_BAR,
     "previous bar": PREVIOUS_BAR,

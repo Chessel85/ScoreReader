@@ -2,13 +2,17 @@
 """controllers/tuner_controller.py, exercised entirely with NullTunerCapture -
 never touches a real microphone (see tests/conftest.py's
 _forbid_real_tuner_capture). Pitch-detection math itself is covered in
-tests/audio/test_pitch_detector.py; this file covers only the controller's
-own wiring: target/A4-reference/threshold updates reaching capture, the
-listening lifecycle, settings persistence, the always-fires-every-cycle
+tests/audio/test_pitch_detector.py; nearest-note/naming math is covered in
+tests/models/test_tuner_instruments.py. This file covers only the
+controller's own wiring: the tracking/acquisition search-band state machine
+that replaced the old fixed per-string target (see the controller's own
+module docstring), A4-reference/threshold updates, the listening lifecycle,
+settings persistence (including the Settings sub-dialog's live-revert-on-
+cancel behavior, new in this redesign), the always-fires-every-cycle
 pitch_result_changed signal (drives reading_edit), and the WAITING/REPORTING
 accessible-announcement state machine (see the controller's own module
 docstring, THIRD/FOURTH reports, for the two live-tested designs this
-replaced).
+replaced - unchanged by the chromatic-tuner redesign).
 
 QApplication.processEvents() is needed after simulate_result, the same
 "a queued signal needs the event loop to actually run before asserting"
@@ -24,6 +28,11 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 from audio.pitch_detector import PitchResult
+from audio.tuner_capture import (
+    ACQUISITION_CENTER_HZ,
+    ACQUISITION_SEARCH_SEMITONES,
+    TRACKING_SEARCH_SEMITONES,
+)
 from controllers.tuner_controller import (
     MIN_ATTACK_RISE_FRACTION,
     MIN_CONFIDENCE,
@@ -31,11 +40,7 @@ from controllers.tuner_controller import (
     SETTLE_DELAY_SECONDS,
     TunerController,
 )
-from models.tuner_instruments import (
-    NO_SIGNAL_LEVEL_THRESHOLD,
-    expected_frequency_hz,
-    tuner_instrument_by_name,
-)
+from models.tuner_instruments import NO_SIGNAL_LEVEL_THRESHOLD
 from models.tuner_settings import TunerSettings
 from persistence import app_settings
 from tests.support.null_tuner_capture import NullTunerCapture
@@ -46,6 +51,11 @@ QUIET_LEVEL = 0.0  # comfortably below it
 # QUIET_LEVEL so a test can tell "true silence" apart from "some signal, but
 # not enough to trust".
 BELOW_THRESHOLD_LEVEL = NO_SIGNAL_LEVEL_THRESHOLD / 2
+
+# Exactly A4, so nearest_note reports it as "in tune" (0 cents) - a stand-in
+# for the old _guitar_string(1) fixed target, now that there's nothing to
+# select, only a raw frequency to detect.
+NOTE_A4 = 440.0
 
 
 class FakeClock:
@@ -79,10 +89,6 @@ def _controller(capture, clock, qtbot):
     return TunerController(capture=capture, clock=clock)
 
 
-def _guitar_string(number: int):
-    return tuner_instrument_by_name("Guitar").strings[number - 1]
-
-
 def _pluck(capture, target_hz=None, confidence=0.9, level=AUDIBLE_LEVEL):
     """Simulates one detection cycle at the clock's current time."""
     result = None if target_hz is None else PitchResult(frequency_hz=target_hz, confidence=confidence)
@@ -98,30 +104,72 @@ def _settle(capture, clock, target_hz, level=AUDIBLE_LEVEL):
     _pluck(capture, target_hz, level=level)
 
 
-# --- target/capture/threshold wiring (unaffected by the state-machine) -----
+# --- tracking/acquisition search-band state machine -------------------------
 
-def test_set_target_updates_the_capture_search_band(capture, clock, qtbot):
+def test_start_listening_seeds_the_acquisition_band(capture, clock, qtbot):
     controller = _controller(capture, clock, qtbot)
 
-    controller.set_target(_guitar_string(1), 0)  # high E4
+    controller.start_listening(None)
 
-    assert capture.expected_hz == pytest.approx(expected_frequency_hz(_guitar_string(1), 0))
+    assert capture.expected_hz == pytest.approx(ACQUISITION_CENTER_HZ)
+    assert capture.search_semitones == pytest.approx(ACQUISITION_SEARCH_SEMITONES)
+    assert capture.prefer_lower_octave is True
 
 
-def test_set_target_applies_the_reference_offset(capture, clock, qtbot):
+def test_a_confident_result_locks_on_and_narrows_to_the_tracking_band(capture, clock, qtbot):
     controller = _controller(capture, clock, qtbot)
+    controller.start_listening(None)
 
-    controller.set_target(_guitar_string(6), -2)  # low E2, two semitones flat
+    _pluck(capture, NOTE_A4)
 
-    assert capture.expected_hz == pytest.approx(expected_frequency_hz(_guitar_string(6), -2))
+    assert capture.expected_hz == pytest.approx(NOTE_A4)
+    assert capture.search_semitones == pytest.approx(TRACKING_SEARCH_SEMITONES)
+    assert capture.prefer_lower_octave is False
 
 
-def test_set_target_applies_the_a4_reference(capture, clock, qtbot):
+def test_genuine_silence_reverts_to_the_acquisition_band(capture, clock, qtbot):
     controller = _controller(capture, clock, qtbot)
+    controller.start_listening(None)
+    _pluck(capture, NOTE_A4)  # lock on
 
-    controller.set_target(_guitar_string(1), 0, a4_hz=442)
+    _pluck(capture, target_hz=None, level=QUIET_LEVEL)  # real silence
 
-    assert capture.expected_hz == pytest.approx(expected_frequency_hz(_guitar_string(1), 0, 442))
+    assert capture.expected_hz == pytest.approx(ACQUISITION_CENTER_HZ)
+    assert capture.search_semitones == pytest.approx(ACQUISITION_SEARCH_SEMITONES)
+    assert capture.prefer_lower_octave is True
+
+
+def test_a_momentary_miss_while_still_loud_does_not_drop_the_lock(capture, clock, qtbot):
+    """FIFTH live-testing report's regression, applied to the search band
+    this time (see the equivalent WAITING/REPORTING test below for the
+    original report): a single cycle's YIN pass can genuinely miss the
+    pitch even while the note is unambiguously still sounding well above
+    the volume threshold - that must not drop the tracking-mode lock back
+    to a wide acquisition search."""
+    controller = _controller(capture, clock, qtbot)
+    controller.start_listening(None)
+    _pluck(capture, NOTE_A4)  # lock on
+
+    _pluck(capture, target_hz=None, level=AUDIBLE_LEVEL)  # loud, but no pitch lock this cycle
+
+    assert capture.expected_hz == pytest.approx(NOTE_A4)
+    assert capture.search_semitones == pytest.approx(TRACKING_SEARCH_SEMITONES)
+    assert capture.prefer_lower_octave is False
+
+
+# --- A4 reference / device / threshold wiring -------------------------------
+
+def test_set_a4_reference_changes_the_reported_note_and_cents(capture, clock, qtbot):
+    controller = _controller(capture, clock, qtbot)
+    received = []
+    controller.pitch_result_changed.connect(received.append)
+
+    _pluck(capture, NOTE_A4)  # in tune under the default 440Hz reference
+    controller.set_a4_reference(442)
+    _pluck(capture, NOTE_A4)  # now flat of a 442Hz reference
+
+    assert received[0] == "signal 50 percent - A: in tune"
+    assert "A:" in received[1] and "flat" in received[1]
 
 
 def test_start_and_stop_listening_delegate_to_capture(capture, clock, qtbot):
@@ -166,19 +214,19 @@ def test_available_devices_reads_through_the_capture(capture, clock, qtbot):
 def test_commit_settings_edit_persists_via_app_settings(capture, clock, qtbot):
     controller = _controller(capture, clock, qtbot)
     working = controller.begin_settings_edit()
-    working.instrument = "Cello"
-    working.reference_offset_semitones = 2
+    working.a4_reference_hz = 442
+    working.signal_threshold_percent = 10
 
     controller.commit_settings_edit(working)
 
-    assert controller.settings.instrument == "Cello"
-    assert app_settings.load().tuner.instrument == "Cello"
-    assert app_settings.load().tuner.reference_offset_semitones == 2
+    assert controller.settings.a4_reference_hz == 442
+    assert app_settings.load().tuner.a4_reference_hz == 442
+    assert app_settings.load().tuner.signal_threshold_percent == 10
 
 
 def test_cancel_settings_edit_leaves_settings_unchanged(capture, clock, qtbot):
     controller = _controller(capture, clock, qtbot)
-    original = TunerSettings(instrument="Guitar")
+    original = TunerSettings(a4_reference_hz=442)
     controller.settings = original
 
     controller.begin_settings_edit()
@@ -187,24 +235,52 @@ def test_cancel_settings_edit_leaves_settings_unchanged(capture, clock, qtbot):
     assert controller.settings is original
 
 
+def test_cancel_settings_edit_reverts_live_a4_threshold_and_device(capture, clock, qtbot):
+    """New in this redesign: unlike before, the outer TunerDialog and its
+    running capture stay open across the Settings dialog's own lifetime, so
+    Cancel must actively put live state back, not just leave self.settings
+    alone (see cancel_settings_edit's own docstring)."""
+    controller = _controller(capture, clock, qtbot)
+    controller.start_listening("My Microphone")
+    controller.commit_settings_edit(
+        TunerSettings(a4_reference_hz=440, signal_threshold_percent=2, input_device="My Microphone")
+    )
+    controller.begin_settings_edit()
+
+    # Live-preview changes, as the Settings dialog would push while open.
+    controller.set_a4_reference(442)
+    controller.set_signal_threshold(20)  # above AUDIBLE_LEVEL (50%)... no, below it - raised well above 2%
+    controller.start_listening("Other Mic")
+
+    controller.cancel_settings_edit()
+
+    assert capture.device_name == "My Microphone"
+
+    # A4 reverted: NOTE_A4 (exactly 440Hz) should read as "in tune" again,
+    # not flat of a 442Hz reference.
+    received = []
+    controller.pitch_result_changed.connect(received.append)
+    _pluck(capture, NOTE_A4)
+    assert received == ["signal 50 percent - A: in tune"]
+
+    # Threshold reverted to 2%: a level that would have been silently
+    # discarded under the previewed 20% threshold now reports again.
+    announcements = []
+    controller.announcement_requested.connect(announcements.append)
+    _settle(capture, clock, NOTE_A4, level=BELOW_THRESHOLD_LEVEL * 4)  # ~4%, above 2%, below 20%
+    assert announcements == ["signal 4 percent. A. in tune"]
+
+
 # --- pitch_result_changed: fires every cycle, unaffected by the state machine
 
 def test_in_tune_result_reaches_pitch_result_changed_with_near_zero_cents(capture, clock, qtbot):
     controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
     received = []
-    controller.pitch_result_changed.connect(
-        lambda result, cents, level: received.append((result, cents, level))
-    )
+    controller.pitch_result_changed.connect(received.append)
 
-    target_hz = expected_frequency_hz(_guitar_string(1), 0)
-    _pluck(capture, target_hz)
+    _pluck(capture, NOTE_A4)
 
-    assert len(received) == 1
-    result, cents, level = received[0]
-    assert result is not None
-    assert cents == pytest.approx(0.0, abs=1.0)
-    assert level == AUDIBLE_LEVEL
+    assert received == ["signal 50 percent - A: in tune"]
 
 
 def test_no_pitch_result_still_reports_level_with_none_cents(capture, clock, qtbot):
@@ -212,15 +288,12 @@ def test_no_pitch_result_still_reports_level_with_none_cents(capture, clock, qtb
     must still carry the level reading through - level diagnostics work
     independently of whether a pitch was matched."""
     controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
     received = []
-    controller.pitch_result_changed.connect(
-        lambda result, cents, level: received.append((result, cents, level))
-    )
+    controller.pitch_result_changed.connect(received.append)
 
     _pluck(capture, target_hz=None)
 
-    assert received == [(None, None, AUDIBLE_LEVEL)]
+    assert received == ["signal 50 percent - waiting"]
 
 
 def test_pitch_result_changed_fires_every_cycle_even_mid_settle(capture, clock, qtbot):
@@ -228,14 +301,12 @@ def test_pitch_result_changed_fires_every_cycle_even_mid_settle(capture, clock, 
     still waiting out SETTLE_DELAY_SECONDS - only the SPOKEN announcement is
     gated, never this per-cycle signal."""
     controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
     received = []
-    controller.pitch_result_changed.connect(lambda *args: received.append(args))
-    target_hz = expected_frequency_hz(_guitar_string(1), 0)
+    controller.pitch_result_changed.connect(received.append)
 
-    _pluck(capture, target_hz)  # onset, not yet settled
+    _pluck(capture, NOTE_A4)  # onset, not yet settled
     clock.advance(SETTLE_DELAY_SECONDS / 2)
-    _pluck(capture, target_hz)  # still not settled
+    _pluck(capture, NOTE_A4)  # still not settled
 
     assert len(received) == 2
 
@@ -244,33 +315,25 @@ def test_a_result_below_threshold_is_discarded_before_cents_are_computed(capture
     """FOURTH live-testing report's regression test: a below-threshold
     peak_level used to still surface a computed cents figure alongside "no
     signal" (e.g. reading_edit showing "no signal - E: 104 cents flat").
-    A result arriving below threshold must be treated as no result at all -
-    both PitchResult and cents come through as None, regardless of what the
-    detector itself returned."""
+    A result arriving below threshold must be treated as no result at all."""
     controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
     received = []
-    controller.pitch_result_changed.connect(
-        lambda result, cents, level: received.append((result, cents, level))
-    )
-    target_hz = expected_frequency_hz(_guitar_string(1), 0)
+    controller.pitch_result_changed.connect(received.append)
 
-    _pluck(capture, target_hz, level=BELOW_THRESHOLD_LEVEL)
+    _pluck(capture, NOTE_A4, level=BELOW_THRESHOLD_LEVEL)
 
-    assert received == [(None, None, BELOW_THRESHOLD_LEVEL)]
+    assert received == ["no signal - waiting"]
 
 
 # --- WAITING/REPORTING accessible announcement ------------------------------
 
 def test_a_quiet_signal_below_threshold_never_reports(capture, clock, qtbot):
     controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
     announcements = []
     controller.announcement_requested.connect(announcements.append)
-    target_hz = expected_frequency_hz(_guitar_string(1), 0)
 
     for _ in range(5):
-        _pluck(capture, target_hz, level=BELOW_THRESHOLD_LEVEL)
+        _pluck(capture, NOTE_A4, level=BELOW_THRESHOLD_LEVEL)
         clock.advance(SETTLE_DELAY_SECONDS)
 
     assert announcements == []
@@ -281,7 +344,6 @@ def test_pure_silence_never_announces(capture, clock, qtbot):
     where the very first result (even silence) always announced
     immediately."""
     controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
     announcements = []
     controller.announcement_requested.connect(announcements.append)
 
@@ -294,28 +356,24 @@ def test_pure_silence_never_announces(capture, clock, qtbot):
 
 def test_a_pluck_does_not_announce_before_the_settle_delay_elapses(capture, clock, qtbot):
     controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
     announcements = []
     controller.announcement_requested.connect(announcements.append)
-    target_hz = expected_frequency_hz(_guitar_string(1), 0)
 
-    _pluck(capture, target_hz)  # onset detected
+    _pluck(capture, NOTE_A4)  # onset detected
     clock.advance(SETTLE_DELAY_SECONDS * 0.5)
-    _pluck(capture, target_hz)  # still settling
+    _pluck(capture, NOTE_A4)  # still settling
 
     assert announcements == []
 
 
 def test_a_pluck_announces_exactly_once_after_settling(capture, clock, qtbot):
     controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
     announcements = []
     controller.announcement_requested.connect(announcements.append)
-    target_hz = expected_frequency_hz(_guitar_string(1), 0)
 
-    _settle(capture, clock, target_hz)
+    _settle(capture, clock, NOTE_A4)
 
-    assert announcements == ["signal 50 percent. E. in tune"]
+    assert announcements == ["signal 50 percent. A. in tune"]
 
 
 def test_a_cycle_with_no_pitch_lock_does_not_reset_the_settle_streak(capture, clock, qtbot):
@@ -327,51 +385,45 @@ def test_a_cycle_with_no_pitch_lock_does_not_reset_the_settle_streak(capture, cl
     sounding well above the volume threshold - that must not restart the
     settle timer, or a real sustained pluck can go unreported."""
     controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
     announcements = []
     controller.announcement_requested.connect(announcements.append)
-    target_hz = expected_frequency_hz(_guitar_string(1), 0)
 
-    _pluck(capture, target_hz)  # onset
+    _pluck(capture, NOTE_A4)  # onset
     clock.advance(SETTLE_DELAY_SECONDS / 2)
     _pluck(capture, target_hz=None, level=AUDIBLE_LEVEL)  # loud, but no pitch lock this cycle
     clock.advance(SETTLE_DELAY_SECONDS / 2)
-    _pluck(capture, target_hz)  # settled - reports, unaffected by the missed cycle
+    _pluck(capture, NOTE_A4)  # settled - reports, unaffected by the missed cycle
 
-    assert announcements == ["signal 50 percent. E. in tune"]
+    assert announcements == ["signal 50 percent. A. in tune"]
 
 
 def test_settle_delay_elapsing_without_a_pitch_lock_waits_for_one_rather_than_reporting_nothing(
     capture, clock, qtbot
 ):
     controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
     announcements = []
     controller.announcement_requested.connect(announcements.append)
-    target_hz = expected_frequency_hz(_guitar_string(1), 0)
 
-    _pluck(capture, target_hz)  # onset
+    _pluck(capture, NOTE_A4)  # onset
     clock.advance(SETTLE_DELAY_SECONDS)
     _pluck(capture, target_hz=None, level=AUDIBLE_LEVEL)  # settle delay elapsed, but no lock yet
     assert announcements == []
 
-    _pluck(capture, target_hz)  # a later cycle with a lock, same clock time - reports now
-    assert announcements == ["signal 50 percent. E. in tune"]
+    _pluck(capture, NOTE_A4)  # a later cycle with a lock, same clock time - reports now
+    assert announcements == ["signal 50 percent. A. in tune"]
 
 
 def test_a_sustained_pluck_does_not_re_announce_before_the_hold_expires(capture, clock, qtbot):
     controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
     announcements = []
     controller.announcement_requested.connect(announcements.append)
-    target_hz = expected_frequency_hz(_guitar_string(1), 0)
 
-    _settle(capture, clock, target_hz)  # first (only, so far) report
+    _settle(capture, clock, NOTE_A4)  # first (only, so far) report
     for _ in range(3):
         clock.advance(SETTLE_DELAY_SECONDS)  # 3 * 0.35s stays under REPORT_HOLD_SECONDS (1.5s)
-        _pluck(capture, target_hz)  # still ringing, same pluck, still holding
+        _pluck(capture, NOTE_A4)  # still ringing, same pluck, still holding
 
-    assert announcements == ["signal 50 percent. E. in tune"]
+    assert announcements == ["signal 50 percent. A. in tune"]
 
 
 def test_reporting_reverts_to_waiting_after_the_hold_and_announces_it(capture, clock, qtbot):
@@ -380,16 +432,14 @@ def test_reporting_reverts_to_waiting_after_the_hold_and_announces_it(capture, c
     also pushed, not just displayed, so it reaches the user regardless of
     where dialog focus currently is."""
     controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
     announcements = []
     controller.announcement_requested.connect(announcements.append)
-    target_hz = expected_frequency_hz(_guitar_string(1), 0)
 
-    _settle(capture, clock, target_hz)  # first report
+    _settle(capture, clock, NOTE_A4)  # first report
     clock.advance(REPORT_HOLD_SECONDS)
     _pluck(capture, target_hz=None, level=QUIET_LEVEL)  # first cycle after the hold expires
 
-    assert announcements == ["signal 50 percent. E. in tune", "Waiting."]
+    assert announcements == ["signal 50 percent. A. in tune", "Waiting."]
 
 
 def test_a_sustained_pluck_cycles_report_waiting_report_while_it_keeps_ringing(capture, clock, qtbot):
@@ -397,77 +447,51 @@ def test_a_sustained_pluck_cycles_report_waiting_report_while_it_keeps_ringing(c
     WAITING, a still-ringing note settles and reports again, cycling for as
     long as it stays above threshold."""
     controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
     announcements = []
     controller.announcement_requested.connect(announcements.append)
-    target_hz = expected_frequency_hz(_guitar_string(1), 0)
 
-    _settle(capture, clock, target_hz)  # first report
+    _settle(capture, clock, NOTE_A4)  # first report
     clock.advance(REPORT_HOLD_SECONDS)
-    _pluck(capture, target_hz)  # reverts to Waiting (this cycle only reverts - see
+    _pluck(capture, NOTE_A4)  # reverts to Waiting (this cycle only reverts - see
     # _advance_state's docstring: a REPORTING cycle either checks the hold
     # or returns, it never also starts tracking a new onset in the same call)
-    _settle(capture, clock, target_hz)  # still ringing - registers onset, then settles again
+    _settle(capture, clock, NOTE_A4)  # still ringing - registers onset, then settles again
 
     assert announcements == [
-        "signal 50 percent. E. in tune",
+        "signal 50 percent. A. in tune",
         "Waiting.",
-        "signal 50 percent. E. in tune",
+        "signal 50 percent. A. in tune",
     ]
 
 
 def test_silence_then_a_new_pluck_announces_again(capture, clock, qtbot):
     controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
     announcements = []
     controller.announcement_requested.connect(announcements.append)
-    target_hz = expected_frequency_hz(_guitar_string(1), 0)
 
-    _settle(capture, clock, target_hz)  # first report
+    _settle(capture, clock, NOTE_A4)  # first report
     clock.advance(REPORT_HOLD_SECONDS)
     _pluck(capture, target_hz=None, level=QUIET_LEVEL)  # reverts to Waiting (silence)
 
     clock.advance(0.1)
-    _settle(capture, clock, target_hz)  # second pluck
+    _settle(capture, clock, NOTE_A4)  # second pluck
 
     assert announcements == [
-        "signal 50 percent. E. in tune",
+        "signal 50 percent. A. in tune",
         "Waiting.",
-        "signal 50 percent. E. in tune",
+        "signal 50 percent. A. in tune",
     ]
-
-
-def test_switching_target_mid_settle_discards_the_in_flight_state(capture, clock, qtbot):
-    """set_target resets state - a pluck ringing against the OLD string
-    shouldn't get reported against a newly-selected one."""
-    controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
-    announcements = []
-    controller.announcement_requested.connect(announcements.append)
-    string1_hz = expected_frequency_hz(_guitar_string(1), 0)
-
-    _pluck(capture, string1_hz)  # onset on string 1
-    clock.advance(SETTLE_DELAY_SECONDS * 0.5)
-
-    controller.set_target(_guitar_string(2), 0)  # switch before it settles
-    clock.advance(SETTLE_DELAY_SECONDS * 0.6)  # would have settled on string 1 by now
-    string2_hz = expected_frequency_hz(_guitar_string(2), 0)
-    _pluck(capture, string2_hz)  # string 2's own onset just starting
-
-    assert announcements == []
 
 
 def test_start_listening_resets_state(capture, clock, qtbot):
     controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
     announcements = []
     controller.announcement_requested.connect(announcements.append)
-    target_hz = expected_frequency_hz(_guitar_string(1), 0)
 
-    _pluck(capture, target_hz)  # onset in flight
+    _pluck(capture, NOTE_A4)  # onset in flight
     controller.start_listening("My Microphone")  # reopen mid-onset
     clock.advance(SETTLE_DELAY_SECONDS)
-    _pluck(capture, target_hz)  # this is the FIRST cycle since reopening
+    _pluck(capture, NOTE_A4)  # this is the FIRST cycle since reopening
 
     assert announcements == []
 
@@ -476,14 +500,12 @@ def test_start_listening_resets_state(capture, clock, qtbot):
 
 def test_set_signal_threshold_raising_it_prevents_a_previously_reportable_level(capture, clock, qtbot):
     controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
     controller.set_signal_threshold(60)  # 60% - above AUDIBLE_LEVEL (50%)
     announcements = []
     controller.announcement_requested.connect(announcements.append)
-    target_hz = expected_frequency_hz(_guitar_string(1), 0)
 
     for _ in range(5):
-        _pluck(capture, target_hz, level=AUDIBLE_LEVEL)
+        _pluck(capture, NOTE_A4, level=AUDIBLE_LEVEL)
         clock.advance(SETTLE_DELAY_SECONDS)
 
     assert announcements == []
@@ -491,33 +513,57 @@ def test_set_signal_threshold_raising_it_prevents_a_previously_reportable_level(
 
 def test_set_signal_threshold_lowering_it_allows_a_previously_too_quiet_level(capture, clock, qtbot):
     controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
     controller.set_signal_threshold(1)  # 1% - below BELOW_THRESHOLD_LEVEL (1%)
     announcements = []
     controller.announcement_requested.connect(announcements.append)
-    target_hz = expected_frequency_hz(_guitar_string(1), 0)
 
-    _settle(capture, clock, target_hz, level=BELOW_THRESHOLD_LEVEL)
+    _settle(capture, clock, NOTE_A4, level=BELOW_THRESHOLD_LEVEL)
 
-    assert announcements == ["signal 1 percent. E. in tune"]
+    assert announcements == ["signal 1 percent. A. in tune"]
 
 
 def test_set_signal_threshold_mid_settle_discards_the_in_flight_state(capture, clock, qtbot):
     controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
     announcements = []
     controller.announcement_requested.connect(announcements.append)
-    target_hz = expected_frequency_hz(_guitar_string(1), 0)
 
-    _pluck(capture, target_hz)  # onset in flight
+    _pluck(capture, NOTE_A4)  # onset in flight
     clock.advance(SETTLE_DELAY_SECONDS * 0.5)
 
     controller.set_signal_threshold(10)  # changed before it settles
 
     clock.advance(SETTLE_DELAY_SECONDS * 0.6)  # would have settled by now, pre-reset
-    _pluck(capture, target_hz)  # this is the FIRST cycle since the threshold change
+    _pluck(capture, NOTE_A4)  # this is the FIRST cycle since the threshold change
 
     assert announcements == []
+
+
+def test_signal_threshold_change_does_not_require_a_fresh_attack_for_a_still_sounding_note(
+    capture, clock, qtbot
+):
+    """_reset_state() (set_signal_threshold/start_listening's shared
+    REPORT/settle-timing reset) deliberately does not clear
+    _attack_validated/_previous_peak_level - those describe the real audio
+    signal's own history, not the configured threshold. Changing the
+    threshold while a note is still ringing at a steady level (no fresh
+    sharp rise to offer) must not block a later report."""
+    controller = _controller(capture, clock, qtbot)
+    announcements = []
+    controller.announcement_requested.connect(announcements.append)
+
+    _settle(capture, clock, NOTE_A4)  # first report
+    clock.advance(REPORT_HOLD_SECONDS)
+
+    controller.set_signal_threshold(3)  # nudge the threshold mid-ring, steady level
+    clock.advance(SETTLE_DELAY_SECONDS)
+    _pluck(capture, NOTE_A4)  # steady level, zero rise - onset via retained attack_validated
+    clock.advance(SETTLE_DELAY_SECONDS)
+    _pluck(capture, NOTE_A4)  # settles - reports again
+
+    assert announcements == [
+        "signal 50 percent. A. in tune",
+        "signal 50 percent. A. in tune",
+    ]
 
 
 # --- confidence gate + attack (sharp-rise) gate, SIXTH report --------------
@@ -528,22 +574,18 @@ def test_a_low_confidence_result_never_reports_even_if_sustained(capture, clock,
     result at all - never contributes to pitch_result_changed's cents, and
     never settles/reports, no matter how long it's sustained."""
     controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
     announcements = []
     controller.announcement_requested.connect(announcements.append)
     received = []
-    controller.pitch_result_changed.connect(
-        lambda result, cents, level: received.append((result, cents, level))
-    )
-    target_hz = expected_frequency_hz(_guitar_string(1), 0)
+    controller.pitch_result_changed.connect(received.append)
     low_confidence = MIN_CONFIDENCE - 0.1
 
     for _ in range(5):
-        _pluck(capture, target_hz, confidence=low_confidence)
+        _pluck(capture, NOTE_A4, confidence=low_confidence)
         clock.advance(SETTLE_DELAY_SECONDS)
 
     assert announcements == []
-    assert all(result is None and cents is None for result, cents, _ in received)
+    assert all(text.endswith("waiting") for text in received)
 
 
 def test_a_gradual_rise_never_reports(capture, clock, qtbot):
@@ -553,53 +595,20 @@ def test_a_gradual_rise_never_reports(capture, clock, qtbot):
     must never validate as an attack, no matter how high it eventually
     climbs above threshold or how long it holds there."""
     controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
     announcements = []
     controller.announcement_requested.connect(announcements.append)
-    target_hz = expected_frequency_hz(_guitar_string(1), 0)
     min_rise = NO_SIGNAL_LEVEL_THRESHOLD * MIN_ATTACK_RISE_FRACTION
     step = min_rise / 2  # comfortably under the per-cycle rise requirement
 
     level = 0.0
     for _ in range(20):
         level += step
-        _pluck(capture, target_hz, level=level)
+        _pluck(capture, NOTE_A4, level=level)
         clock.advance(SETTLE_DELAY_SECONDS)
     # Comfortably above the default 2% threshold by now and holding steady -
     # still never validated, since no single cycle ever jumped sharply.
     for _ in range(5):
-        _pluck(capture, target_hz, level=level)
+        _pluck(capture, NOTE_A4, level=level)
         clock.advance(SETTLE_DELAY_SECONDS)
 
     assert announcements == []
-
-
-def test_switching_target_does_not_require_a_fresh_attack_for_a_still_sounding_note(
-    capture, clock, qtbot
-):
-    """_reset_state() (set_target/set_signal_threshold/start_listening's
-    shared REPORT/settle-timing reset) deliberately does not clear
-    _attack_validated/_previous_peak_level - those describe the real audio
-    signal's own history, not the selected target. Switching strings while
-    a note is still ringing at a steady level (no fresh sharp rise to
-    offer) must not block a report against the new target."""
-    controller = _controller(capture, clock, qtbot)
-    controller.set_target(_guitar_string(1), 0)
-    announcements = []
-    controller.announcement_requested.connect(announcements.append)
-    string1_hz = expected_frequency_hz(_guitar_string(1), 0)
-
-    _settle(capture, clock, string1_hz)  # first report, on string 1 (E)
-    clock.advance(REPORT_HOLD_SECONDS)
-
-    controller.set_target(_guitar_string(2), 0)  # switch strings mid-ring, steady level
-    string2_hz = expected_frequency_hz(_guitar_string(2), 0)
-    clock.advance(SETTLE_DELAY_SECONDS)
-    _pluck(capture, string2_hz)  # steady level, zero rise - onset via retained attack_validated
-    clock.advance(SETTLE_DELAY_SECONDS)
-    _pluck(capture, string2_hz)  # settles - reports against the NEW target
-
-    assert announcements == [
-        "signal 50 percent. E. in tune",
-        "signal 50 percent. B. in tune",
-    ]

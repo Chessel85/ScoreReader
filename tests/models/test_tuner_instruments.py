@@ -2,77 +2,60 @@
 import pytest
 
 from models.tuner_instruments import (
+    A4_MIDI_PITCH,
     NO_SIGNAL_LEVEL_THRESHOLD,
-    TUNER_INSTRUMENTS,
-    TUNER_INSTRUMENT_NAMES,
     cents_deviation,
     cents_description,
-    expected_frequency_hz,
     level_description,
-    tuner_instrument_by_name,
+    nearest_note,
+    nearest_note_name,
 )
 
 
-def test_eight_instruments_are_supported_and_harp_is_excluded():
-    assert len(TUNER_INSTRUMENTS) == 8
-    assert "Harp" not in TUNER_INSTRUMENT_NAMES
+def test_nearest_note_exact_a4():
+    midi_pitch, cents = nearest_note(440.0)
+    assert midi_pitch == A4_MIDI_PITCH
+    assert cents == pytest.approx(0.0)
 
 
-def test_guitar_strings_are_numbered_high_to_low():
-    guitar = tuner_instrument_by_name("Guitar")
-    assert [(s.number, s.note_name, s.octave) for s in guitar.strings] == [
-        (1, "E", 4), (2, "B", 3), (3, "G", 3), (4, "D", 3), (5, "A", 2), (6, "E", 2),
-    ]
+def test_nearest_note_a_few_cents_sharp_still_rounds_to_the_same_pitch():
+    # A few cents above A4 - well inside the nearest-semitone band, so it
+    # should still resolve to A4 itself, with a small positive cents figure.
+    midi_pitch, cents = nearest_note(440.0 * (2 ** (10 / 1200)))
+    assert midi_pitch == A4_MIDI_PITCH
+    assert cents == pytest.approx(10.0, abs=0.5)
 
 
-def test_ukulele_is_re_entrant_string_1_is_not_the_lowest():
-    ukulele = tuner_instrument_by_name("Ukulele")
-    # As strung (G4 C4 E4 A4), not pitch-ordered - string 4 (A4) is HIGHER
-    # than string 1 (G4), the defining feature of re-entrant tuning.
-    assert ukulele.strings[0].midi_pitch < ukulele.strings[3].midi_pitch
+def test_nearest_note_a_semitone_up_resolves_to_the_next_chromatic_pitch():
+    midi_pitch, cents = nearest_note(440.0 * (2 ** (1 / 12)))
+    assert midi_pitch == A4_MIDI_PITCH + 1
+    assert cents == pytest.approx(0.0, abs=0.5)
 
 
-def test_unknown_instrument_name_falls_back_to_guitar():
-    assert tuner_instrument_by_name("Theremin") is TUNER_INSTRUMENTS[0]
-    assert tuner_instrument_by_name("Theremin").name == "Guitar"
+def test_nearest_note_different_a4_shifts_cents_for_the_same_raw_frequency():
+    # 440Hz is exactly A4 under the standard reference, but flat of A4 under
+    # a 442Hz reference (the whole standard moved up).
+    _pitch_440, cents_440 = nearest_note(440.0, a4_hz=440.0)
+    _pitch_442, cents_442 = nearest_note(440.0, a4_hz=442.0)
+    assert cents_440 == pytest.approx(0.0)
+    assert cents_442 < 0
 
 
-def test_string_label_includes_octave():
-    guitar = tuner_instrument_by_name("Guitar")
-    assert guitar.strings[0].label == "String 1 (E4)"
+def test_nearest_note_non_positive_frequency_returns_inert_fallback():
+    assert nearest_note(0.0) == (A4_MIDI_PITCH, 0.0)
+    assert nearest_note(-5.0) == (A4_MIDI_PITCH, 0.0)
 
 
-def test_expected_frequency_hz_concert_a4_is_440():
-    violin = tuner_instrument_by_name("Violin")
-    a4_string = violin.strings[1]  # A4
-    assert expected_frequency_hz(a4_string, 0) == pytest.approx(440.0)
+def test_nearest_note_name_natural():
+    assert nearest_note_name(60) == ("C", 4)  # MIDI 60 = C4
 
 
-def test_expected_frequency_hz_offset_shifts_by_semitones():
-    guitar_e2 = tuner_instrument_by_name("Guitar").strings[5]
-    base = expected_frequency_hz(guitar_e2, 0)
-    up_one = expected_frequency_hz(guitar_e2, 1)
-    assert up_one == pytest.approx(base * (2 ** (1 / 12)))
-
-
-def test_expected_frequency_hz_default_a4_is_440():
-    violin = tuner_instrument_by_name("Violin")
-    a4_string = violin.strings[1]  # A4
-    assert expected_frequency_hz(a4_string) == pytest.approx(440.0)
-
-
-def test_expected_frequency_hz_non_default_a4_shifts_every_note_proportionally():
-    violin = tuner_instrument_by_name("Violin")
-    a4_string = violin.strings[1]  # A4
-    assert expected_frequency_hz(a4_string, 0, a4_hz=442) == pytest.approx(442.0)
-    assert expected_frequency_hz(a4_string, 0, a4_hz=415) == pytest.approx(415.0)
-
-    guitar_e2 = tuner_instrument_by_name("Guitar").strings[5]
-    at_440 = expected_frequency_hz(guitar_e2, 0, a4_hz=440)
-    at_442 = expected_frequency_hz(guitar_e2, 0, a4_hz=442)
-    # A non-A4 string scales by the same ratio as A4 itself did (442/440),
-    # since the whole pitch standard moved, not just one note.
-    assert at_442 == pytest.approx(at_440 * (442 / 440))
+def test_nearest_note_name_is_always_sharp_never_flat_or_symbol():
+    name, octave = nearest_note_name(61)  # C#4/Db4
+    assert name == "C sharp"
+    assert octave == 4
+    assert "#" not in name
+    assert "flat" not in name
 
 
 def test_cents_deviation_sign_and_magnitude():

@@ -1,12 +1,12 @@
 # tests/test_main_window_misc_dialogs.py
 """MainWindow-level wiring for hands-free voice control and the Tuner dialog. Split from test_main_window.py (S10).
 """
-import pytest
 from PySide6.QtWidgets import QDialog
 
 from main_window import MainWindow
 from persistence import app_settings
 from widgets.tuner_dialog import TunerDialog
+from widgets.tuner_settings_dialog import TunerSettingsDialog
 from widgets.voice_control_dialog import VoiceControlDialog
 from tests.support.main_window_helpers import load_and_wait
 
@@ -86,14 +86,31 @@ def test_close_stops_the_voice_control_recognizer(qtbot, null_synth, null_voice_
 
 # --- Tools > Tuner dialog, MainWindow-level wiring -------------------------
 # (pitch-detection math is covered in tests/audio/test_pitch_detector.py,
-# capture/announcement threading in tests/test_tuner_controller.py - these
-# confirm only the shell's own wiring: dialog construction, commit/cancel,
-# and persistence, mirroring _fake_mixer_dialog's shape above. exec() is
-# always faked rather than really shown, so showEvent - and the real
-# listening_requested it would emit - never fires; no real capture opens.)
+# nearest-note math in tests/models/test_tuner_instruments.py, capture/
+# announcement threading in tests/test_tuner_controller.py - these confirm
+# only the shell's own wiring: outer dialog construction/signal wiring, and
+# the nested Settings dialog's commit/cancel/persistence, mirroring
+# _fake_mixer_dialog's shape above. exec() is always faked rather than
+# really shown, so showEvent - and the real listening_requested it would
+# emit - never fires; no real capture opens. TunerDialog itself has no
+# editable settings any more (see controllers/tuner_controller.py's module
+# docstring) - only the nested TunerSettingsDialog does.)
 
-def _fake_tuner_dialog(monkeypatch, window, *, accept: bool, on_exec=None):
-    dialog = TunerDialog(
+def _fake_tuner_dialog(monkeypatch, *, on_exec=None):
+    dialog = TunerDialog()
+
+    def fake_exec():
+        if on_exec is not None:
+            on_exec(dialog)
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(dialog, "exec", fake_exec)
+    monkeypatch.setattr("main_window.TunerDialog", lambda parent: dialog)
+    return dialog
+
+
+def _fake_tuner_settings_dialog(monkeypatch, window, *, accept: bool, on_exec=None):
+    dialog = TunerSettingsDialog(
         window, devices=window.tuner.available_devices(),
         settings=window.tuner.begin_settings_edit(),
     )
@@ -104,62 +121,79 @@ def _fake_tuner_dialog(monkeypatch, window, *, accept: bool, on_exec=None):
         return QDialog.DialogCode.Accepted if accept else QDialog.DialogCode.Rejected
 
     monkeypatch.setattr(dialog, "exec", fake_exec)
-    monkeypatch.setattr("main_window.TunerDialog", lambda parent, devices, settings: dialog)
+    monkeypatch.setattr("main_window.TunerSettingsDialog", lambda parent, devices, settings: dialog)
     return dialog
 
 
-def test_tuner_dialog_ok_commits_and_persists_the_selection(
+def test_show_tuner_dialog_wires_pitch_updates_live(qtbot, null_synth, null_tuner_capture, monkeypatch):
+    """pitch_result_changed is connected before exec() runs, so the reading
+    updates the still-open dialog's reading_edit immediately."""
+    w = MainWindow(synth=null_synth, uk_terms=False, tuner_manager=null_tuner_capture)
+    qtbot.addWidget(w)
+
+    def edit(dialog):
+        w.tuner.pitch_result_changed.emit("signal 50 percent - A: in tune")
+        assert dialog.reading_edit.text() == "signal 50 percent - A: in tune"
+
+    _fake_tuner_dialog(monkeypatch, on_exec=edit)
+    w._show_tuner_dialog()
+
+
+def test_tuner_settings_dialog_ok_commits_and_persists(
     qtbot, null_synth, null_tuner_capture, monkeypatch
 ):
     w = MainWindow(synth=null_synth, uk_terms=False, tuner_manager=null_tuner_capture)
     qtbot.addWidget(w)
+    parent_dialog = TunerDialog(w)
+    qtbot.addWidget(parent_dialog)
 
     def edit(dialog):
-        dialog.instrument_combo.setCurrentText("Violin")
-        dialog.string_combo.setCurrentIndex(2)
-        dialog.offset_spin.setValue(-2)
+        dialog.a4_spin.setValue(442)
+        dialog.threshold_spin.setValue(8)
 
-    _fake_tuner_dialog(monkeypatch, w, accept=True, on_exec=edit)
-    w._show_tuner_dialog()
+    _fake_tuner_settings_dialog(monkeypatch, w, accept=True, on_exec=edit)
+    w._open_tuner_settings_dialog(parent_dialog)
 
-    assert w.tuner.settings.instrument == "Violin"
-    assert w.tuner.settings.last_string_index == 2
-    assert w.tuner.settings.reference_offset_semitones == -2
-    assert app_settings.load().tuner.instrument == "Violin"
+    assert w.tuner.settings.a4_reference_hz == 442
+    assert w.tuner.settings.signal_threshold_percent == 8
+    assert app_settings.load().tuner.a4_reference_hz == 442
 
 
-def test_tuner_dialog_cancel_leaves_settings_unchanged(
+def test_tuner_settings_dialog_cancel_leaves_settings_unchanged(
     qtbot, null_synth, null_tuner_capture, monkeypatch
 ):
     w = MainWindow(synth=null_synth, uk_terms=False, tuner_manager=null_tuner_capture)
     qtbot.addWidget(w)
-    original_instrument = w.tuner.settings.instrument
+    parent_dialog = TunerDialog(w)
+    qtbot.addWidget(parent_dialog)
+    original_a4 = w.tuner.settings.a4_reference_hz
 
     def edit(dialog):
-        dialog.instrument_combo.setCurrentText("Cello")
+        dialog.a4_spin.setValue(415)
 
-    _fake_tuner_dialog(monkeypatch, w, accept=False, on_exec=edit)
-    w._show_tuner_dialog()
+    _fake_tuner_settings_dialog(monkeypatch, w, accept=False, on_exec=edit)
+    w._open_tuner_settings_dialog(parent_dialog)
 
-    assert w.tuner.settings.instrument == original_instrument
-    assert app_settings.load().tuner.instrument == original_instrument
+    assert w.tuner.settings.a4_reference_hz == original_a4
+    assert app_settings.load().tuner.a4_reference_hz == original_a4
 
 
-def test_tuner_target_changed_reaches_the_capture_live(qtbot, null_synth, null_tuner_capture, monkeypatch):
-    """target_changed is connected before exec() runs - selecting a
-    different string mid-dialog should immediately update the capture's
-    search band, without waiting for OK."""
+def test_tuner_settings_device_changed_reaches_the_capture_live(
+    qtbot, null_synth, null_tuner_capture, monkeypatch
+):
+    """device_changed is connected before exec() runs - picking a different
+    device mid-dialog should immediately reopen capture, without waiting
+    for OK."""
+    null_tuner_capture.available_devices = ["Mic A", "Mic B"]
     w = MainWindow(synth=null_synth, uk_terms=False, tuner_manager=null_tuner_capture)
     qtbot.addWidget(w)
+    parent_dialog = TunerDialog(w)
+    qtbot.addWidget(parent_dialog)
 
     def edit(dialog):
-        dialog.string_combo.setCurrentIndex(1)
+        dialog.device_combo.setCurrentIndex(dialog.device_combo.findData("Mic B"))
 
-    _fake_tuner_dialog(monkeypatch, w, accept=True, on_exec=edit)
-    w._show_tuner_dialog()
+    _fake_tuner_settings_dialog(monkeypatch, w, accept=True, on_exec=edit)
+    w._open_tuner_settings_dialog(parent_dialog)
 
-    # Guitar string 2 (B3) - see models/tuner_instruments.py.
-    from models.tuner_instruments import expected_frequency_hz, tuner_instrument_by_name
-
-    expected = expected_frequency_hz(tuner_instrument_by_name("Guitar").strings[1], 0)
-    assert null_tuner_capture.expected_hz == pytest.approx(expected)
+    assert null_tuner_capture.open_calls[-1] == "Mic B"

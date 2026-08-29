@@ -2490,7 +2490,7 @@ def test_p3_octave_shift_size_label_in_the_report(timeline, octave_shift_score):
     md = timeline(octave_shift_score)
     lines = md.get_performance_report_lines()
     assert "Octave shifts: 1" in lines
-    assert "Octave shift 8vb: Measure 1 to Measure 1" in lines
+    assert "Octave shift 8vb: Measure 1 to Measure 1 beat 3" in lines
 
 
 def test_p3_rehearsal_marks_findable_and_reported(timeline, rehearsal_mark_score):
@@ -2508,6 +2508,14 @@ def test_p3_rehearsal_marks_findable_and_reported(timeline, rehearsal_mark_score
     assert "Rehearsal mark A: Measure 1" in lines
 
 
+def test_p3_rehearsal_marks_line_omitted_when_absent(timeline, pedal_score):
+    """A score with no rehearsal marks gets no "Rehearsal marks:" line at
+    all, rather than "Rehearsal marks: 0" - same convention as Anacrusis."""
+    md = timeline(pedal_score)
+    lines = md.get_performance_report_lines()
+    assert not any(l.startswith("Rehearsal marks:") for l in lines)
+
+
 def test_p3_dashes_and_bracket_get_region_5_rows(timeline, direction_lines_score):
     """D15: unlike pedal/octave shift, dashed and bracketed lines are rare
     and DO get Region 5 rows, using the same label prefix as their Find
@@ -2519,6 +2527,141 @@ def test_p3_dashes_and_bracket_get_region_5_rows(timeline, direction_lines_score
     labels = [r.label for r in md.get_performance_region_rows(0)]
     assert "Dashed line start: measure 1" in labels
     assert any(l.startswith("Bracket line end") for l in labels)
+
+
+def test_p3_dashes_and_bracket_labels_from_sibling_words(
+    timeline, direction_lines_with_words_score
+):
+    """A <dashes>/<bracket type="start"> shares its <direction> with a
+    sibling <words> in real MusicXML - that text is what the line extends
+    (e.g. "cresc."). The word "cresc." now becomes its own point mark in the
+    merged Dynamics section; the dashed line drawn under it is reported
+    separately under "Dashed lines:" as written (two things in the file, two
+    lines in the report). A non-dynamics label like "8vb sim." produces no
+    point mark. Region 5 gets a row for both the dashes/bracket span and the
+    "cresc." point."""
+    md = timeline(direction_lines_with_words_score)
+
+    lines = md.get_performance_report_lines()
+    assert 'Crescendo (marked "cresc."): Measure 1' in lines
+    assert "Dashed lines: 1" in lines
+    assert "Dashed line (cresc.): Measure 1 to Measure 1 beat 3" in lines
+    assert "Bracket lines: 1" in lines
+    assert "Bracket line (8vb sim.): Measure 1 to Measure 1 beat 4" in lines
+
+    labels = [r.label for r in md.get_performance_region_rows(0)]
+    assert "Dashed line (cresc.) start: measure 1" in labels
+    assert any(l.startswith("Bracket line (8vb sim.) end") for l in labels)
+    assert 'Crescendo (marked "cresc.")' in labels
+
+
+# --- accurate hairpins / instruction words --------------------------------
+
+
+def test_nested_hairpin_region_5_and_report_state_full_ranges(
+    timeline, nested_hairpins_score
+):
+    """Each overlapping/nested hairpin is reported with its OWN range -
+    nothing is coalesced. An unmatched wedge reads "no start/end marked in
+    the file" in both Region 5 and the report."""
+    md = timeline(nested_hairpins_score)
+
+    lines = md.get_performance_report_lines()
+    assert "Dynamics: 5" in lines
+    assert "Crescendo: Measure 1 to Measure 3 beat 3" in lines
+    assert "Crescendo: Measure 1 beat 3 to Measure 2" in lines
+    assert "Diminuendo: Measure 2 beat 3 to Measure 3" in lines
+    assert "Hairpin: ends at Measure 4 beat 3, no start marked in the file" in lines
+    assert "Crescendo: starts at Measure 4 beat 4, no end marked in the file" in lines
+
+    # Inside the long outer + inner A (m2 beat 1) - both, each stating its
+    # full range, one row readable alone.
+    labels = [r.label for r in md.get_performance_region_rows(
+        md.slice_index_at_or_after_quarters(3.0))]
+    assert labels == [
+        "Crescendo start: measure 1, to measure 3 beat 3",
+        "Crescendo end: measure 3 beat 3, from measure 1",
+        "Crescendo start: measure 1 beat 3, to measure 2",
+        "Crescendo end: measure 2, from measure 1 beat 3",
+    ]
+
+    unmatched = [r.label for r in md.get_performance_region_rows(
+        md.slice_index_at_or_after_quarters(13.0))]
+    assert unmatched == ["Hairpin end: measure 4 beat 3, no start marked in the file"]
+
+    unclosed = [r.label for r in md.get_performance_region_rows(
+        md.slice_index_at_or_after_quarters(15.0))]
+    assert unclosed == ["Crescendo start: measure 4 beat 4, no end marked in the file"]
+
+
+def test_hairpin_rows_part_prefixed_only_when_several_parts_contribute(
+    timeline, hairpins_two_parts_score, hairpin_score
+):
+    """D5: a hairpin row names its part only when more than one part has a
+    hairpin. The single-part score gets no prefix."""
+    md = timeline(
+        hairpins_two_parts_score,
+        parts_info=[
+            PartStructureInfo(part_id="P1", name="Guitar"),
+            PartStructureInfo(part_id="P2", name="Cello"),
+        ],
+    )
+    lines = md.get_performance_report_lines()
+    assert "Guitar: Diminuendo: Measure 1 to Measure 1 beat 3" in lines
+    assert "Cello: Crescendo: Measure 1 beat 3 to Measure 2 beat 2" in lines
+
+    r5 = [r.label for r in md.get_performance_region_rows(
+        md.slice_index_at_or_after_quarters(3.0))]
+    assert "Cello: Crescendo start: measure 1 beat 3, to measure 2 beat 2" in r5
+
+    solo = timeline(hairpin_score)
+    solo_lines = solo.get_performance_report_lines()
+    assert "Crescendo: Measure 1 beat 3 to Measure 2 beat 2" in solo_lines
+    solo_r5 = [r.label for r in solo.get_performance_region_rows(
+        solo.slice_index_at_or_after_quarters(2.0))]
+    assert solo_r5[0] == "Crescendo start: measure 1 beat 3, to measure 2 beat 2"
+
+
+def test_instruction_words_become_point_marks_findable_and_reported(
+    timeline, instruction_words_score
+):
+    """A plain-text "cresc."/"rall." <words> becomes a point mark in the
+    Dynamics / Tempo instruction lists (never a fabricated range); the
+    dashed line drawn under "cresc." is a SEPARATE reported line. Both are
+    Find targets."""
+    md = timeline(instruction_words_score)
+
+    lines = md.get_performance_report_lines()
+    assert 'Crescendo (marked "cresc."): Measure 1' in lines
+    assert "Tempo instructions: 1" in lines
+    assert 'Tempo instruction (marked "rall."): Measure 2' in lines
+    # The dashed line is its own thing, reported as written.
+    assert "Dashed lines: 1" in lines
+    assert "Dashed line (cresc.): Measure 1 to Measure 1 beat 3" in lines
+
+    keys = _marking_keys(md)
+    assert {"dynamics_instruction", "tempo_instruction"} <= keys
+
+    dyn = _find_target(md, "dynamics_instruction", "marking")
+    assert md.find_occurrence(dyn, from_index=0, direction=1) is not None
+    tempo = _find_target(md, "tempo_instruction", "marking")
+    assert md.find_occurrence(tempo, from_index=0, direction=1) is not None
+
+    m1_rows = [r.label for r in md.get_performance_region_rows(0)]
+    assert 'Crescendo (marked "cresc.")' in m1_rows
+    m2_rows = [r.label for r in md.get_performance_region_rows(
+        md.slice_index_at_or_after_quarters(4.0))]
+    assert "Tempo instruction: rall." in m2_rows
+
+
+def test_plain_score_offers_no_instruction_word_targets(
+    timeline, dynamics_articulation_fingering_score
+):
+    """Presence-filtered like every other marking - a score with no
+    instruction words does not grow the Find dialog."""
+    keys = _marking_keys(timeline(dynamics_articulation_fingering_score))
+    assert "dynamics_instruction" not in keys
+    assert "tempo_instruction" not in keys
 
 
 def test_p3_catch_all_direction_is_findable_and_shown(timeline, unknown_direction_score):
@@ -2663,6 +2806,24 @@ def test_p4_no_final_barline_target_on_any_real_file(real_score_path):
     last_measure = md.total_measures
     for mark in md.barline_marks:
         assert mark.measure != last_measure
+
+
+@pytest.mark.parametrize("real_score_path", _REAL_SCORES, ids=lambda p: p.name)
+def test_hairpin_spans_well_formed_on_every_real_score(real_score_path):
+    """Regression pin covering files/etude 2.mxl (overlapping wedges) and
+    examples/pachelbels-canon-in-d-string-quartet.mxl (154 wedges across 6
+    parts): every hairpin span resolves, its flags are consistent with its
+    kind, and its Region 5 rows render at every position without raising."""
+    from models.music_data import MusicData
+
+    md = MusicData(file_path=str(real_score_path))
+    for span in md.hairpin_spans:
+        assert span.start_quarters_from_start <= span.end_quarters_from_start
+        # A bare unmatched stop is the only case with no kind.
+        assert span.kind in ("crescendo", "diminuendo") or span.start_known is False
+        assert span.part_id != ""
+    for i in range(len(md.timeline_slices)):
+        md.get_performance_region_rows(i)
 
 
 def test_p4_plain_score_offers_no_barline_clef_or_measure_style_targets(

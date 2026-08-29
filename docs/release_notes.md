@@ -1,5 +1,22 @@
 # Recall Score Release Notes
 
+## 2026.1.39
+
+* Another go at improving the performance report and dynamics over extended regions but still unsatisfactory
+
+## 2026.1.38
+
+* Performance Report and Performance region now report crescendo/diminuendo hairpins accurately: collected from every part (not just the first), overlapping and nested hairpins each shown with their own range, and a hairpin with a missing start or end stated as such rather than dropped.
+* Plain-text "cresc.", "dim.", "rall." and similar instructions now appear in the Dynamics / Tempo instruction lists and are reachable with Find.
+
+## 2026.1.37
+
+* Added synonyms of left and right on voice control for back and forward / left arrow key and right arrow key.
+
+## 2026.1.36
+
+* Converted tuner to autodetect pitch and moved settings to a dialogue accessed from the tuner.
+
 ## 2026.1.36
 
 ** Tidied up user experience for reorder attributes and reorder parts dialogues so buttons have correct shortcuts announced and focus is generally more sticky.

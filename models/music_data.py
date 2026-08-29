@@ -914,25 +914,47 @@ class MusicData:
                     )
                 )
 
+        # Hairpins now carry a part_id (collected per part, not first-part-
+        # only) and completeness flags. A normal span still gets a start row
+        # and an end row, each stating the FULL range so one row read alone
+        # conveys it; an unmatched wedge gets a single row with the gap
+        # stated. D5: part-prefixed only when >1 part has a hairpin.
+        _hairpin_part_ids = [s.part_id for s in self.hairpin_spans]
         for span in self.hairpin_spans:
-            if span.start_quarters_from_start <= slice_.quarters_from_start <= span.end_quarters_from_start:
-                kind_label = span.kind.capitalize()
+            if not (span.start_quarters_from_start <= slice_.quarters_from_start
+                    <= span.end_quarters_from_start):
+                continue
+            prefix = self._marking_part_prefix(span.part_id, _hairpin_part_ids)
+            kind_label = span.kind.capitalize() if span.kind else "Hairpin"
+            start_bb = self._bar_beat_label(bar_word, span.start_measure, span.start_beat_position)
+            end_bb = self._bar_beat_label(bar_word, span.end_measure, span.end_beat_position)
+            if not span.start_known:
                 rows.append(
                     PerformanceRegionRow(
-                        label=(
-                            f"{kind_label} start: "
-                            f"{self._bar_beat_label(bar_word, span.start_measure, span.start_beat_position)}"
-                        ),
+                        label=f"{prefix}{kind_label} end: {end_bb}, no start marked in the file",
+                        jump_target_measure=span.end_measure,
+                        jump_target_quarters=span.end_quarters_from_start,
+                    )
+                )
+            elif not span.end_known:
+                rows.append(
+                    PerformanceRegionRow(
+                        label=f"{prefix}{kind_label} start: {start_bb}, no end marked in the file",
+                        jump_target_measure=span.start_measure,
+                        jump_target_quarters=span.start_quarters_from_start,
+                    )
+                )
+            else:
+                rows.append(
+                    PerformanceRegionRow(
+                        label=f"{prefix}{kind_label} start: {start_bb}, to {end_bb}",
                         jump_target_measure=span.start_measure,
                         jump_target_quarters=span.start_quarters_from_start,
                     )
                 )
                 rows.append(
                     PerformanceRegionRow(
-                        label=(
-                            f"{kind_label} end: "
-                            f"{self._bar_beat_label(bar_word, span.end_measure, span.end_beat_position)}"
-                        ),
+                        label=f"{prefix}{kind_label} end: {end_bb}, from {start_bb}",
                         jump_target_measure=span.end_measure,
                         jump_target_quarters=span.end_quarters_from_start,
                     )
@@ -945,15 +967,12 @@ class MusicData:
         # bar. D5: a kind's label is prefixed with the part name only when
         # more than one part contributes a span/mark of that kind.
         def _dir_prefix(kind: str, part_id: str) -> str:
-            pids = {
+            pids = [
                 x.part_id
                 for x in (self.direction_spans + self.direction_marks)
                 if x.kind == kind
-            }
-            if len(pids) <= 1:
-                return ""
-            name = next((p.name for p in self.parts_info if p.part_id == part_id), None)
-            return f"{name}: " if name else ""
+            ]
+            return self._marking_part_prefix(part_id, pids)
 
         _DIR_LINE_LABELS = {"dashes": "Dashed line", "bracket": "Bracket line"}
         for span in self.direction_spans:
@@ -964,6 +983,8 @@ class MusicData:
                 continue
             prefix = _dir_prefix(span.kind, span.part_id)
             line_label = _DIR_LINE_LABELS[span.kind]
+            if span.label:
+                line_label = f"{line_label} ({span.label})"
             rows.append(
                 PerformanceRegionRow(
                     label=(
@@ -992,6 +1013,40 @@ class MusicData:
             rows.append(
                 PerformanceRegionRow(
                     label=f"{prefix}Direction: {mark.label}",
+                    jump_target_measure=slice_.measure,
+                    jump_target_quarters=slice_.quarters_from_start,
+                )
+            )
+
+        # Plain-text dynamics / tempo instructions ("cresc.", "rall.") -
+        # one-shot point rows at their own position (never a fabricated
+        # range), after the direction-line rows and before the P4 rows.
+        _dynword_part_ids = [
+            m.part_id for m in self.direction_marks if m.kind == "dynamics_word"
+        ]
+        for mark in self.direction_marks:
+            if mark.kind != "dynamics_word" or mark.measure != slice_.measure:
+                continue
+            prefix = self._marking_part_prefix(mark.part_id, _dynword_part_ids)
+            sense = vocabulary.dynamics_instruction_kind(mark.label) or "dynamics"
+            rows.append(
+                PerformanceRegionRow(
+                    label=f'{prefix}{sense.capitalize()} (marked "{mark.label}")',
+                    jump_target_measure=slice_.measure,
+                    jump_target_quarters=slice_.quarters_from_start,
+                )
+            )
+
+        _tempword_part_ids = [
+            m.part_id for m in self.direction_marks if m.kind == "tempo_word"
+        ]
+        for mark in self.direction_marks:
+            if mark.kind != "tempo_word" or mark.measure != slice_.measure:
+                continue
+            prefix = self._marking_part_prefix(mark.part_id, _tempword_part_ids)
+            rows.append(
+                PerformanceRegionRow(
+                    label=f"{prefix}Tempo instruction: {mark.label}",
                     jump_target_measure=slice_.measure,
                     jump_target_quarters=slice_.quarters_from_start,
                 )
@@ -1193,6 +1248,16 @@ class MusicData:
         beat_str = str(int(beat_position)) if float(beat_position).is_integer() else str(beat_position)
         return f"{bar_word} {measure} beat {beat_str}"
 
+    def _marking_part_prefix(self, part_id: str, contributing_part_ids) -> str:
+        """D5: a Region 5 / Performance Report row for a per-part marking is
+        prefixed with the part name only when more than one part contributes
+        a marking of that kind. `contributing_part_ids` is any iterable of
+        the part_ids that do."""
+        if len(set(contributing_part_ids)) <= 1:
+            return ""
+        name = next((p.name for p in self.parts_info if p.part_id == part_id), None)
+        return f"{name}: " if name else ""
+
     # --- Find (widgets/find_dialog.py) --------------------------------
     #
     # S1: the scanner itself lives in models/find_index.py (FindIndex,
@@ -1226,8 +1291,15 @@ class MusicData:
         lines: List[str] = [f"{k}: {v}" for k, v in self.get_region_1_data().items()]
 
         bar_word = vocabulary.bar_word(self.uk_terms).capitalize()
-        anacrusis_present = any(s.measure == 0 for s in self.timeline_slices)
-        lines.append(f"Anacrusis: {'Present' if anacrusis_present else 'Not present'}")
+        anacrusis_slices = [s for s in self.timeline_slices if s.measure == 0]
+        if anacrusis_slices:
+            beat_position = anacrusis_slices[0].beat_position
+            beat_str = (
+                str(int(beat_position))
+                if float(beat_position).is_integer()
+                else str(beat_position)
+            )
+            lines.append(f"Anacrusis starts on beat {beat_str}")
         lines.append(f"Number of {bar_word.lower()}s: {self.total_measures}")
 
         note_counts: Dict[str, int] = {}
@@ -1251,16 +1323,78 @@ class MusicData:
                 f"Ending {span.number}: {bar_word} {span.start_measure} to {bar_word} {span.end_measure}"
             )
 
-        lines.append(f"Performance markers: {len(self.hairpin_spans)}")
-        for span in self.hairpin_spans:
-            lines.append(
-                f"{span.kind.capitalize()}: {bar_word} {span.start_measure} to {bar_word} {span.end_measure}"
-            )
-
         # P3: <direction> spans and points. Pedal/octave-shift appear here
-        # (and in Find) but never in Region 5 (D15).
+        # (and in Find) but never in Region 5 (D15). Beat-precise (not just
+        # measure-precise) throughout - reported: a span that starts/ends
+        # mid-bar read as "Measure N to Measure N" (looked contained within
+        # one bar) even when it actually crossed the barline.
         def _span_range(span) -> str:
-            return f"{bar_word} {span.start_measure} to {bar_word} {span.end_measure}"
+            start = self._bar_beat_label(bar_word, span.start_measure, span.start_beat_position)
+            end = self._bar_beat_label(bar_word, span.end_measure, span.end_beat_position)
+            return f"{start} to {end}"
+
+        # Dynamics (volume): one chronological list merging every way the
+        # file expresses a volume change - real <wedge> hairpins (collected
+        # per part now, so part-prefixed like everything else), plain-text
+        # swell instructions ("cresc."/"dim.", surfaced as point
+        # DirectionMarks), and point <dynamics> marks (mf, f, p, ...). A
+        # dashed/bracket line drawn under a "cresc." is a SEPARATE thing in
+        # the file and is reported under "Dashed lines:" / "Bracket lines:"
+        # as written - not merged in here. An unmatched wedge carries the
+        # same "no start/end marked in the file" wording as Region 5.
+        def _hairpin_report_text(span) -> str:
+            kind_label = span.kind.capitalize() if span.kind else "Hairpin"
+            start = self._bar_beat_label(bar_word, span.start_measure, span.start_beat_position)
+            end = self._bar_beat_label(bar_word, span.end_measure, span.end_beat_position)
+            if not span.start_known:
+                return f"{kind_label}: ends at {end}, no start marked in the file"
+            if not span.end_known:
+                return f"{kind_label}: starts at {start}, no end marked in the file"
+            return f"{kind_label}: {start} to {end}"
+
+        _dashes = [s for s in self.direction_spans if s.kind == "dashes"]
+        _brackets = [s for s in self.direction_spans if s.kind == "bracket"]
+
+        # (sort_key, line_text, part_id or None)
+        _dynamics_events: List[Tuple[float, str, Optional[str]]] = []
+        for span in self.hairpin_spans:
+            _dynamics_events.append((
+                span.start_quarters_from_start,
+                _hairpin_report_text(span),
+                span.part_id or None,
+            ))
+        for mark in self.direction_marks:
+            if mark.kind != "dynamics_word":
+                continue
+            sense = vocabulary.dynamics_instruction_kind(mark.label) or "dynamics"
+            position = self._bar_beat_label(bar_word, mark.measure, mark.beat_position)
+            _dynamics_events.append((
+                mark.quarters_from_start,
+                f'{sense.capitalize()} (marked "{mark.label}"): {position}',
+                mark.part_id or None,
+            ))
+        _seen_dynamic_marks = set()
+        for s in self._real_timeline_slices:
+            for n in s.notes:
+                if not n.dynamic:
+                    continue
+                key = (n.part_id, n.staff, s.measure, s.beat_position, n.dynamic)
+                if key in _seen_dynamic_marks:
+                    continue
+                _seen_dynamic_marks.add(key)
+                position = self._bar_beat_label(bar_word, s.measure, s.beat_position)
+                _dynamics_events.append((
+                    s.quarters_from_start, f"Dynamic {n.dynamic}: {position}", n.part_id
+                ))
+
+        _dynamics_part_ids = {pid for _, _, pid in _dynamics_events if pid}
+        lines.append(f"Dynamics: {len(_dynamics_events)}")
+        for _, event_line, part_id in sorted(_dynamics_events, key=lambda e: e[0]):
+            prefix = ""
+            if part_id and len(_dynamics_part_ids) > 1:
+                name = next((p.name for p in self.parts_info if p.part_id == part_id), None)
+                prefix = f"{name}: " if name else ""
+            lines.append(f"{prefix}{event_line}")
 
         _pedal_spans = [s for s in self.direction_spans if s.kind == "pedal"]
         _pedal_changes = [m for m in self.direction_marks if m.kind == "pedal_change"]
@@ -1277,19 +1411,34 @@ class MusicData:
             lines.append(f"Octave shift{label}: {_span_range(span)}")
 
         _rehearsals = [m for m in self.direction_marks if m.kind == "rehearsal"]
-        lines.append(f"Rehearsal marks: {len(_rehearsals)}")
-        for mark in _rehearsals:
-            label = f" {mark.label}" if mark.label else ""
-            lines.append(f"Rehearsal mark{label}: {bar_word} {mark.measure}")
+        if _rehearsals:
+            lines.append(f"Rehearsal marks: {len(_rehearsals)}")
+            for mark in _rehearsals:
+                label = f" {mark.label}" if mark.label else ""
+                lines.append(f"Rehearsal mark{label}: {bar_word} {mark.measure}")
 
-        _dashes = [s for s in self.direction_spans if s.kind == "dashes"]
-        _brackets = [s for s in self.direction_spans if s.kind == "bracket"]
+        # Plain-text tempo instructions ("rall.", "a tempo") - point marks,
+        # listed by bar/beat. Omitted entirely when zero, like Rehearsal
+        # marks above (accel./rit. spans are out of scope - nothing parses
+        # them yet).
+        _tempo_words = [m for m in self.direction_marks if m.kind == "tempo_word"]
+        if _tempo_words:
+            lines.append(f"Tempo instructions: {len(_tempo_words)}")
+            for mark in _tempo_words:
+                position = self._bar_beat_label(bar_word, mark.measure, mark.beat_position)
+                lines.append(f'Tempo instruction (marked "{mark.label}"): {position}')
+
+        # Every dashed / bracketed line, as written - a "cresc." word and the
+        # dashed line drawn under it are two things in the file (the word is
+        # a point mark in Dynamics above; the line is here).
         lines.append(f"Dashed lines: {len(_dashes)}")
         for span in _dashes:
-            lines.append(f"Dashed line: {_span_range(span)}")
+            label = f" ({span.label})" if span.label else ""
+            lines.append(f"Dashed line{label}: {_span_range(span)}")
         lines.append(f"Bracket lines: {len(_brackets)}")
         for span in _brackets:
-            lines.append(f"Bracket line: {_span_range(span)}")
+            label = f" ({span.label})" if span.label else ""
+            lines.append(f"Bracket line{label}: {_span_range(span)}")
 
         _other_dirs = [m for m in self.direction_marks if m.kind == "other_direction"]
         lines.append(f"Other directions: {len(_other_dirs)}")
@@ -1322,6 +1471,10 @@ class MusicData:
         lines.append(f"Coda marks: {len(self.coda_marks)}")
         for coda in self.coda_marks:
             lines.append(f"Coda{_label_suffix(coda.label)}: {bar_word} {coda.measure}")
+
+        lines.append(f"To coda marks: {len(self.to_coda_marks)}")
+        for tc in self.to_coda_marks:
+            lines.append(f"To coda{_label_suffix(tc.label)}: {bar_word} {tc.measure}")
 
         lines.append(f"Fine marks: {len(self.fine_marks)}")
         for fine in self.fine_marks:
