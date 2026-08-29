@@ -370,6 +370,7 @@ class MainWindow(QMainWindow):
         self.performance_report_action = actions.performance_report
         self.play_stop_action = actions.play_stop
         self.pause_resume_action = actions.pause_resume
+        self.play_metronome_action = actions.play_metronome
         self.commit_digits_action = actions.commit_digits
         self.play_settings_action = actions.play_settings
         self.loop_toggle_action = actions.loop_toggle
@@ -717,6 +718,9 @@ class MainWindow(QMainWindow):
 
     def toggle_pause_resume(self):
         self.playback.toggle_pause_resume()
+
+    def toggle_play_metronome(self):
+        self.playback.toggle_play_metronome()
 
     def audition_phrase(self):
         # Enter/Return now only commits a typed bar number (Preview is
@@ -1345,6 +1349,7 @@ class MainWindow(QMainWindow):
         # Sequencer is stopped directly below: no signals into regions that
         # are being torn down.
         self.playback.cancel_play_run()
+        self.playback.stop_play_metronome()
         if self.playback.sequencer is not None:
             self.playback.sequencer.stop()
         # Before synth.close(): needs self._fs still alive to send the real

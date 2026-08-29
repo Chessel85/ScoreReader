@@ -7,7 +7,7 @@ test_main_window.py (S10); reworked when Preview folded into one play model.
 import pytest
 from PySide6.QtCore import Qt
 
-from audio.metronome import METRONOME_OFFBEAT_NOTE
+from audio.metronome import METRONOME_ACCENT_NOTE, METRONOME_OFFBEAT_NOTE
 from models.play_settings import PlaySettings
 from persistence import app_settings
 from widgets import accessible_announcer
@@ -768,6 +768,91 @@ def test_metronome_starts_off_for_a_file_with_no_saved_config(window, qtbot, min
 
     assert window._music_data.metronome_enabled is False
     assert window.metronome_action.isChecked() is False
+
+
+# --- Play Metronome (Alt+Space): a free-running click track ------------
+
+def test_play_metronome_clicks_without_moving_the_timeline(
+    window, qtbot, null_synth, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    window._music_data.active_event_index = 1
+    null_synth.clicks.clear()
+
+    window.toggle_play_metronome()
+
+    assert window.playback.is_play_metronome_running is True
+    # A click sounded straight away, starting on the accent (beat 1)...
+    assert null_synth.clicks[0]["pitch"] == METRONOME_ACCENT_NOTE
+    # ...and nothing about the score's position or the transport changed.
+    assert window._music_data.active_event_index == 1
+    assert window.sequencer.is_playing is False
+
+    window.toggle_play_metronome()
+
+    assert window.playback.is_play_metronome_running is False
+
+
+def test_play_metronome_beat_interval_tracks_the_current_playback_tempo(
+    window, qtbot, null_synth, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    window.toggle_play_metronome()
+
+    def expected_interval_ms():
+        md = window._music_data
+        _, ts_den = md.get_current_slice().time_sig
+        return max(1, round((4.0 / ts_den) * 60000.0 / md.effective_tempo_bpm()))
+
+    assert window.playback._play_metronome_timer.interval() == expected_interval_ms()
+
+    window.tempo_faster()
+    window.playback._sound_play_metronome_beat()  # re-arms off the new tempo
+
+    assert window.playback._play_metronome_timer.interval() == expected_interval_ms()
+
+
+def test_space_stops_a_running_play_metronome_rather_than_starting_playback(
+    window, qtbot, null_synth, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    window.toggle_play_metronome()
+
+    window.toggle_play_stop()
+
+    assert window.playback.is_play_metronome_running is False
+    assert window.sequencer.is_playing is False
+
+
+def test_ctrl_alt_space_shortcut_toggles_the_play_metronome(window, qtbot, minimal_score):
+    load_and_wait(window, qtbot, minimal_score)
+    _show(window, qtbot)
+    _focus(window.region_1)
+
+    qtbot.keyClick(
+        window, Qt.Key.Key_Space,
+        Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier,
+    )
+
+    assert window.playback.is_play_metronome_running is True
+
+
+def test_play_metronome_is_a_no_op_before_a_score_is_loaded(window, qtbot):
+    window.toggle_play_metronome()
+
+    assert window.playback.is_play_metronome_running is False
+
+
+def test_loading_a_score_stops_a_running_play_metronome(
+    window, qtbot, minimal_score, chord_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    window.toggle_play_metronome()
+    assert window.playback.is_play_metronome_running is True
+
+    load_and_wait(window, qtbot, chord_score)
+
+    assert window.playback.is_play_metronome_running is False
 
 
 # --- Ref 28: position announcer -------------------------------------

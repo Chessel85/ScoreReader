@@ -597,6 +597,15 @@ their own become reachable, audible stops in the timeline too, so you
 can navigate through - and hear the pulse of - even entirely silent
 passages.
 
+Playback > Play Metronome, or `Ctrl+Alt+Space`, is a separate free-running
+click, for playing along by ear rather than following the score. It
+starts clicking straight away at the current playback tempo (the `F` /
+`S` / `D` tempo keys still adjust it while it runs) and in the time
+signature at your current position, with the accented click on beat 1,
+and it keeps going until you switch it off again. It never moves the
+timeline. `Ctrl+Alt+Space` toggles it off, and so does pressing `Space` or
+loading another score.
+
 ### 7.8 Using the Position Announcer
 
 Options > Toggle Position Announcer, or `Ctrl+P`, turns on a spoken
@@ -1215,6 +1224,7 @@ directly (see also section 16.3).
 | :--- | :--- | :--- |
 | Play/Stop | Space | Starts playback from the current position (looping when looping is on), resumes from pause, or stops it (sections 7.2, 7.3). |
 | Pause | Ctrl+Space | Pauses playback; resume with Space, not Ctrl+Space again (section 7.2). |
+| Play Metronome | Ctrl+Alt+Space | Starts or stops a free-running click track at the current tempo, without moving the timeline, for playing along by ear (section 7.7). |
 | Play Settings... | Ctrl+Shift+V (also Ctrl+T) | Sets the playback tempo, the lead-in count-in, and looping (sections 7.4, 7.6). |
 | Toggle Looping | Ctrl+L | Turns looping playback on or off (section 7.3). |
 | Toggle Lead-in | Ctrl+I | Turns the metronome count-in before playback on or off (section 7.3). |
@@ -1292,6 +1302,7 @@ directly (see also section 16.3).
 | Reset playback tempo to the score's own tempo *(works from any region or the status bar)* | D |
 | Open the Play Settings dialog | Ctrl+Shift+V (also Ctrl+T) |
 | Toggle the metronome on/off | Ctrl+M |
+| Start / stop a free-running click track at the current tempo, without moving the timeline | Ctrl+Alt+Space |
 | Toggle the position announcer on/off | Ctrl+P |
 | Toggle live MIDI input on/off | Ctrl+D |
 | Open the Live MIDI Input Settings dialog | Ctrl+Shift+L |

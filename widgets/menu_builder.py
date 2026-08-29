@@ -44,6 +44,7 @@ class Actions:
     move_to_performance: Optional[QAction] = None
     play_stop: Optional[QAction] = None
     pause_resume: Optional[QAction] = None
+    play_metronome: Optional[QAction] = None
     commit_digits: Optional[QAction] = None
     play_settings: Optional[QAction] = None
     loop_toggle: Optional[QAction] = None
@@ -342,6 +343,23 @@ class MenuBuilder:
             "Pa&use", self.slots.toggle_pause_resume, QKeySequence("Ctrl+Space"),
         )
         playback_menu.addAction(a.pause_resume)
+
+        # A free-running click track for playing along by ear - sounds at
+        # the current playback tempo, does not move the timeline, and is
+        # separate from Toggle Metronome (which only clicks as the cursor
+        # steps through real playback). Not checkable, matching Play/Stop
+        # above - it is a start/stop action, not a persistent state. No "&"
+        # mnemonic: it carries a real shortcut, and an Alt-only mnemonic
+        # would just be one more thing NVDA announces as a pseudo-shortcut
+        # (same reasoning as Reorder Attributes/Parts). Ctrl+Alt+Space, not
+        # a bare Alt+Space - the Windows window menu grabs Alt+Space before
+        # Qt sees it.
+        a.play_metronome = self._action(
+            "Play Metronome", self.slots.toggle_play_metronome,
+            QKeySequence("Ctrl+Alt+Space"),
+            status_tip="Play a free-running metronome click at the current tempo, without moving the timeline",
+        )
+        playback_menu.addAction(a.play_metronome)
 
         # Enter/Return only ever commits a typed bar number now (Preview is
         # gone - Space is the single play control). Kept as a hidden

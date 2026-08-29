@@ -120,6 +120,18 @@ class PlaybackController(QObject):
         self._play_timer.setSingleShot(True)
         self._play_timer.timeout.connect(self._on_play_timer)
 
+        # Play Metronome (Ctrl+Alt+Space): a free-running click track at the
+        # current playback tempo that never moves the timeline - for playing
+        # along by ear. Independent of the Ctrl+M score metronome (which
+        # only clicks as the cursor steps over a beat during real playback)
+        # and of the transport. One chained single-shot timer, re-armed each
+        # beat so an F/S/D tempo change takes effect on the very next click.
+        self._play_metronome_timer = QTimer(self)
+        self._play_metronome_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._play_metronome_timer.setSingleShot(True)
+        self._play_metronome_timer.timeout.connect(self._sound_play_metronome_beat)
+        self._play_metronome_beat = 1
+
     @property
     def music_data(self):
         return self.session.music_data
@@ -145,6 +157,7 @@ class PlaybackController(QObject):
         mixer state (music_data.mixer - already populated by apply_config()
         before this runs, see main_window.py's _on_score_loaded)."""
         self.cancel_play_run()
+        self.stop_play_metronome()
         if self.sequencer is not None:
             self.sequencer.stop()
         self.sequencer = Sequencer(music_data, self.synth, parent=self)
@@ -159,6 +172,7 @@ class PlaybackController(QObject):
         (it is a process-long singleton), so an explicit stop_all_notes()
         is needed here where closeEvent can rely on synth.close()."""
         self.cancel_play_run()
+        self.stop_play_metronome()
         if self.sequencer is not None:
             self.sequencer.stop()
         self.sequencer = None
@@ -351,6 +365,12 @@ class PlaybackController(QObject):
         Left/Right give."""
         if not self.music_data or self.sequencer is None:
             return
+        if self.is_play_metronome_running:
+            # Space is the "stop everything sounding" key - a running
+            # free-metronome click track is what it stops here, the same as
+            # it would stop real playback.
+            self.stop_play_metronome()
+            return
         if self._play_run is not None:
             # A play run may be mid-count-in with nothing sounding yet, which
             # is_playing cannot see - without this, Space would start a
@@ -389,6 +409,7 @@ class PlaybackController(QObject):
         deliberately does."""
         if not self.music_data or self.sequencer is None:
             return
+        self.stop_play_metronome()
         if self._play_run is not None:
             self.stop()
         if self.sequencer.is_paused:
@@ -433,6 +454,7 @@ class PlaybackController(QObject):
         Cancelling the play session first is what makes Space stop a
         count-in that has not sounded a note yet."""
         self.cancel_play_run()
+        self.stop_play_metronome()
         if self.sequencer is None:
             return
         was_tracking_cursor = self.sequencer.update_cursor
@@ -894,6 +916,52 @@ class PlaybackController(QObject):
         self.music_data.toggle_position_announcer()
         self.status_text_changed.emit()
         return self.music_data.position_announcer_enabled
+
+    # --- play metronome (Alt+Space) --------------------------------------
+
+    @property
+    def is_play_metronome_running(self) -> bool:
+        return self._play_metronome_timer.isActive()
+
+    def toggle_play_metronome(self) -> bool:
+        """Ctrl+Alt+Space: start/stop a free-running metronome click. It
+        sounds at the current playback tempo (F/S/D adjustments included)
+        and the time signature at the cursor, never moves the timeline, and
+        is separate from the Ctrl+M score metronome. Returns the new on/off
+        state."""
+        if self.is_play_metronome_running:
+            self.stop_play_metronome()
+            return False
+        if not self.music_data:
+            return False
+        self._play_metronome_beat = 1
+        self._sound_play_metronome_beat()
+        return True
+
+    def stop_play_metronome(self) -> None:
+        self._play_metronome_timer.stop()
+
+    def _sound_play_metronome_beat(self) -> None:
+        """Sound the current beat's click and arm the timer for the next.
+        Tempo and time signature are re-read every beat, so a tempo change
+        or a cursor move to a differently-metred bar is picked up on the
+        next click rather than needing a restart."""
+        if not self.music_data:
+            self._play_metronome_timer.stop()
+            return
+        ts_num, ts_den = 4, 4
+        current = self.music_data.get_current_slice()
+        if current is not None and current.time_sig:
+            ts_num, ts_den = current.time_sig
+        beat = self._play_metronome_beat
+        if not self._muted:
+            click = click_event_for_beat(float(beat))
+            if click is not None:
+                self.synth.play_click(*click)
+        self._play_metronome_beat = beat + 1 if beat < max(1, ts_num) else 1
+        quarter_bpm = self.music_data.effective_tempo_bpm()
+        beat_ms = (4.0 / float(ts_den or 4)) * 60000.0 / float(quarter_bpm)
+        self._play_metronome_timer.start(max(1, int(round(beat_ms))))
 
     # --- sounding ----------------------------------------------------
 

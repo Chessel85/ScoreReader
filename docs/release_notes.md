@@ -1,5 +1,13 @@
 # Recall Score Release Notes
 
+## 2026.1.41
+
+* Ability to play just the metronome
+
+## 2026.1.40
+
+* Significant rework to move preview functionality into just playback and playback settings
+
 ## 2026.1.39
 
 * Another go at improving the performance report and dynamics over extended regions but still unsatisfactory

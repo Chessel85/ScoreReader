@@ -1,4 +1,4 @@
-The tempo menu item should move to playback. And it should just set the absolute value. Should have a button for default spped. Default score tempo. change range limits to 5 to 300.
+Need a parts menu, containing the instruments per part, the mute/solo options, and rearrange parts.
 want to be able to play just the metronome so can practice against a click 
 The performance summary report should not list something if there are zero occurances.
 Possible ducking of midi when speech recognition is on.
@@ -11,3 +11,4 @@ Need to understand so many of the entries in the performance report and those th
 Should play respect speed ups, slows down, louder, softer, trills. want option to play it straight 
 * Notes need to account for staff symbol e.g. a piano bass stave (without a treble) seems to play too high
 * Want an audio indicator of crossing a barline. Or does the metronome already do that?
+
