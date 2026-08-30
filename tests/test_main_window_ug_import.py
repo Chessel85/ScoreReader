@@ -76,7 +76,7 @@ def test_save_ultimate_guitar_import_writes_a_file_and_updates_file_path(
     import os
     assert os.path.exists(save_path)
     assert window._music_data.file_path == save_path
-    assert window.windowTitle() == "Recall Score - Test Song.ug"
+    assert window.windowTitle() == "Recall Score - Test Song - Test Artist (1)"
 
 
 def test_save_ultimate_guitar_import_does_nothing_with_no_score_loaded(window, qtbot):
@@ -123,35 +123,15 @@ def test_opening_a_saved_ug_file_reproduces_the_original_import(
     assert row_texts == ["G", "world"]
 
 
-def test_auditioning_a_ug_bar_with_strumming_data_plays_a_strummed_bar(
+def test_auditioning_a_ug_bar_plays_a_plain_chord_even_with_strumming_data(
     window, qtbot, monkeypatch, null_synth
 ):
-    """End-to-end: a UG import that has real strummings data must audition
-    through synth.play_strummed_bar (a real arpeggiated pattern), not the
-    flat synth.play_chord every other format still uses."""
+    """Per-chord strummed audition was removed (P3): a UG import auditions
+    as a flat chord through the unchanged play_chord path, whether or not
+    it carries strummings data - the pattern is now only in the Strumming
+    Patterns dialog."""
     content = "[Verse 1]\n\n[tab][ch]C[/ch]     [ch]G[/ch]\nHello world[/tab]\n"
     _load_ug_import(window, qtbot, monkeypatch, content, strum_codes=[1, 202, 101])
-
-    null_synth.played.clear()
-    null_synth.strummed_bars.clear()
-    window._audition_current_selection()
-
-    assert null_synth.strummed_bars, "must route through the strummed-bar path"
-    assert null_synth.played == [], "must NOT also play a flat chord"
-    call = null_synth.strummed_bars[-1]
-    assert call["pattern"] == ["down", "mute", "up"]
-    from music21 import harmony
-    assert set(call["midi_pitches"]) == {p.midi for p in harmony.ChordSymbol("C").pitches}
-
-
-def test_auditioning_a_ug_bar_with_no_strumming_data_still_plays_a_flat_chord(
-    window, qtbot, monkeypatch, null_synth
-):
-    """A UG tab with no strummings block at all must fall straight through
-    to the unchanged play_chord path - no regression for a tab lacking
-    that data."""
-    content = "[Verse 1]\n\n[tab][ch]C[/ch]     [ch]G[/ch]\nHello world[/tab]\n"
-    _load_ug_import(window, qtbot, monkeypatch, content, strum_codes=[])
 
     null_synth.played.clear()
     null_synth.strummed_bars.clear()
@@ -161,13 +141,61 @@ def test_auditioning_a_ug_bar_with_no_strumming_data_still_plays_a_flat_chord(
     assert null_synth.strummed_bars == []
 
 
-def test_auditioning_a_non_ug_score_never_uses_the_strummed_bar_path(
-    window, qtbot, null_synth, minimal_score
+def test_strumming_dialog_demo_routes_through_play_strum_pattern(
+    window, qtbot, monkeypatch, null_synth
 ):
-    load_and_wait(window, qtbot, minimal_score)
+    """Edit > Strumming Patterns... demo playback goes through
+    synth.play_strum_pattern with the decoded slots of the chosen pattern."""
+    content = "[Verse 1]\n\n[tab][ch]C[/ch]     [ch]G[/ch]\nHello world[/tab]\n"
+    _load_ug_import(window, qtbot, monkeypatch, content, strum_codes=[1, 202, 101])
 
-    null_synth.played.clear()
     null_synth.strummed_bars.clear()
-    window._audition_current_selection()
+    window._demo_strum_pattern(0)
 
-    assert null_synth.strummed_bars == []
+    assert null_synth.strummed_bars, "demo must route through play_strum_pattern"
+    slots = null_synth.strummed_bars[-1]["slots"]
+    assert [s.stroke for s in slots] == ["down", "pause", "up"]
+
+
+def test_strumming_action_is_enabled_only_for_a_ug_import_with_patterns(
+    window, qtbot, monkeypatch, minimal_score
+):
+    assert not window.strumming_action.isEnabled()
+
+    load_and_wait(window, qtbot, minimal_score)
+    assert not window.strumming_action.isEnabled()
+
+    content = "[Verse 1]\n\n[tab][ch]C[/ch]\nHi[/tab]\n"
+    _load_ug_import(window, qtbot, monkeypatch, content, strum_codes=[1, 202, 101])
+    assert window.strumming_action.isEnabled()
+
+
+def test_strumming_demo_click_option_plays_a_metronome_click(
+    window, qtbot, monkeypatch, null_synth
+):
+    """The dialog's "Include metronome click" box makes the looped demo
+    fire a click on each beat (the downbeat sounds synchronously)."""
+    content = "[Verse 1]\n\n[tab][ch]C[/ch]     [ch]G[/ch]\nHello world[/tab]\n"
+    _load_ug_import(window, qtbot, monkeypatch, content, strum_codes=[1, 202, 101])
+
+    null_synth.clicks.clear()
+    window._demo_strum_pattern(0, with_click=False)
+    assert null_synth.clicks == [], "no click unless the box is ticked"
+
+    window._demo_strum_pattern(0, with_click=True)
+    assert null_synth.clicks, "ticked box must route a click through play_click"
+    window._stop_strum_demo()
+
+
+def test_strumming_dialog_tempo_edits_the_score_playback_tempo(
+    window, qtbot, monkeypatch
+):
+    """The Tempo spin box opens on the score's current playback tempo and
+    writes changes straight back to it (same value the main-window S/F/D
+    keys change)."""
+    content = "[Verse 1]\n\n[tab][ch]C[/ch]\nHi[/tab]\n"
+    _load_ug_import(window, qtbot, monkeypatch, content, strum_codes=[1, 202, 101])
+    window.playback.set_playback_tempo(150)
+
+    window._on_strum_tempo_changed(200)
+    assert round(window._music_data.playback_tempo_display_bpm()) == 200

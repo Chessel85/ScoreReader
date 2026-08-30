@@ -30,6 +30,7 @@ class Actions:
     performance_report: Optional[QAction] = None
     instruments: Optional[QAction] = None
     key_signature: Optional[QAction] = None
+    strumming: Optional[QAction] = None
     select_all: Optional[QAction] = None
     first_measure: Optional[QAction] = None
     last_measure: Optional[QAction] = None
@@ -37,6 +38,8 @@ class Actions:
     find: Optional[QAction] = None
     find_next: Optional[QAction] = None
     find_previous: Optional[QAction] = None
+    next_section: Optional[QAction] = None
+    previous_section: Optional[QAction] = None
     move_to_metadata: Optional[QAction] = None
     move_to_parts: Optional[QAction] = None
     move_to_notes: Optional[QAction] = None
@@ -126,23 +129,28 @@ class MenuBuilder:
         # not file_menu.addMenu(title) - that inserts immediately, which
         # would place it before &Open below); actually added to file_menu
         # in the addAction block, in the position it belongs.
-        a.recent_files_menu = QMenu("&Recent Files", self.window)
+        # No "&" access key: NVDA announces a menu mnemonic as a pseudo-
+        # global "Alt+R" shortcut, which misleads (it only works with this
+        # menu open) - same reasoning as the Close action below.
+        a.recent_files_menu = QMenu("Recent Files", self.window)
         # Experimental (feature/ug-import): chords + lyrics from an
-        # Ultimate Guitar chord-tab page - no natural OS-standard/single-
-        # letter binding and infrequent, so no shortcut, just a status tip.
+        # Ultimate Guitar chord-tab page - infrequent, and no "&" access key
+        # for the same NVDA-pseudo-shortcut reason as Recent Files above.
         a.import_from_ultimate_guitar = self._action(
-            "Import from &Ultimate Guitar...", self.slots.open_ultimate_guitar_import_dialog,
+            "Import from Ultimate Guitar...", self.slots.open_ultimate_guitar_import_dialog,
             status_tip="Import chords and lyrics from an Ultimate Guitar tab page",
         )
-        # Same "infrequent, no natural OS-standard/single-letter binding"
-        # reasoning as Import above - no shortcut, just a status tip. Only
-        # meaningful for a currently-loaded UG import; silently no-ops
+        # Only meaningful for a currently-loaded UG import; silently no-ops
         # otherwise, same guard style every other MusicData-dependent
         # dialog already uses (main_window.py's save_ultimate_guitar_import_as).
+        # No "&" access key, same reason as the two items above.
         a.save_ug_import = self._action(
-            "Save Ultimate Guitar Import &As...", self.slots.save_ultimate_guitar_import_as,
+            "Save Ultimate Guitar Import As...", self.slots.save_ultimate_guitar_import_as,
             status_tip="Save the current Ultimate Guitar import to a file",
         )
+        # Disabled until a UG import is actually loaded (main_window.py keeps
+        # it in sync in _on_score_loaded/close_score, like Close above).
+        a.save_ug_import.setEnabled(False)
         # Close the loaded score (commit its .rsc, blank the window back to
         # first-run) without quitting the app. No mnemonic - it carries the
         # OS-standard Ctrl+W, so an Alt-only access key would only be one
@@ -321,6 +329,22 @@ class MenuBuilder:
         a.find_previous = self._action(
             "Find Previo&us", self.slots.find_previous, QKeySequence("Alt+Left"),
         )
+        # P2: jump between song sections (Intro/Verse/Chorus/...) - Ctrl+Alt+
+        # Left/Right, global like Find Next/Previous. Always enabled; a
+        # no-op on a score with no sections (UG imports are the only source
+        # so far). Ctrl+Alt+Space (Play Metronome) is the only other
+        # Ctrl+Alt binding, so these are free. No mnemonic - they carry a
+        # real shortcut and act from anywhere.
+        a.previous_section = self._action(
+            "Previous Section", self.slots.previous_section,
+            QKeySequence("Ctrl+Alt+Left"),
+            status_tip="Jump to the start of the previous song section",
+        )
+        a.next_section = self._action(
+            "Next Section", self.slots.next_section,
+            QKeySequence("Ctrl+Alt+Right"),
+            status_tip="Jump to the start of the next song section",
+        )
         # A direct-jump shortcut per region. Z/X/C/V/B (user-requested
         # 2026-08-22, replacing the old scattered I/V/N/A/P): the five keys
         # sit together on the keyboard's bottom row, left-to-right in the
@@ -355,6 +379,9 @@ class MenuBuilder:
         navigation_menu.addAction(a.find)
         navigation_menu.addAction(a.find_next)
         navigation_menu.addAction(a.find_previous)
+        navigation_menu.addSeparator()
+        navigation_menu.addAction(a.previous_section)
+        navigation_menu.addAction(a.next_section)
         navigation_menu.addSeparator()
         navigation_menu.addAction(a.move_to_metadata)
         navigation_menu.addAction(a.move_to_parts)
@@ -618,6 +645,18 @@ class MenuBuilder:
             QKeySequence("Ctrl+Shift+P"),
         )
         tools_menu.addAction(a.performance_report)
+
+        # P2/P3: a read-only view of an Ultimate Guitar import's decoded
+        # strumming pattern(s), with looped demo playback plus a tempo /
+        # metronome-click control. Ctrl+Shift+U (free), disabled unless the
+        # loaded score has at least one pattern (main_window.py keeps it in
+        # sync, like Close). Moved here from Edit (user-requested).
+        a.strumming = self._action(
+            "&Strumming Patterns...", self.slots._show_strumming_dialog, "Ctrl+Shift+U",
+            status_tip="View the strumming pattern of an Ultimate Guitar import",
+        )
+        a.strumming.setEnabled(False)
+        tools_menu.addAction(a.strumming)
 
     def _help_menu(self, menu_bar, a: Actions) -> None:
         # No mnemonics on either item (user-requested 2026-08-26: "false

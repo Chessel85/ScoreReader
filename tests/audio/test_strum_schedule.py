@@ -1,67 +1,70 @@
 # tests/audio/test_strum_schedule.py
-from audio.strum_schedule import build_strum_schedule, sound_events
-from models.strum_codes import strum_directions
+from audio.strum_schedule import build_strum_schedule, slots_from_codes, sound_events
+from models.strum_codes import StrumSlot
+
+
+def _slots(*specs):
+    return [StrumSlot(stroke, effect) for stroke, effect in specs]
 
 
 def test_downstroke_fires_pitches_ascending_with_note_delay_gaps():
-    schedule = build_strum_schedule(["down"], [55, 48, 52], total_duration_ms=1000.0, note_delay_ms=20.0)
+    schedule = build_strum_schedule(_slots(("down", "none")), [55, 48, 52], slot_ms=1000.0, note_delay_ms=20.0)
     starts_and_pitches = [(s, p) for s, p, v, d in schedule]
     assert starts_and_pitches == [(0.0, 48), (20.0, 52), (40.0, 55)]
 
 
 def test_upstroke_fires_pitches_descending_with_note_delay_gaps():
-    schedule = build_strum_schedule(["up"], [48, 55, 52], total_duration_ms=1000.0, note_delay_ms=20.0)
+    schedule = build_strum_schedule(_slots(("up", "none")), [48, 55, 52], slot_ms=1000.0, note_delay_ms=20.0)
     starts_and_pitches = [(s, p) for s, p, v, d in schedule]
     assert starts_and_pitches == [(0.0, 55), (20.0, 52), (40.0, 48)]
 
 
-def test_mute_produces_no_events():
-    """A first attempt played a mute as a short, quiet chunk - live-tested
-    and reported as audible stuttering rather than a mute, so a muted slot
-    is silent instead."""
-    schedule = build_strum_schedule(["mute"], [48, 52, 55], total_duration_ms=1000.0)
-    assert schedule == []
+def test_pause_produces_no_events():
+    assert build_strum_schedule(_slots(("pause", "none")), [48, 52, 55], slot_ms=1000.0) == []
+    assert build_strum_schedule(_slots(("real pause", "none")), [48, 52, 55], slot_ms=1000.0) == []
 
 
-def test_slots_are_spaced_evenly_across_total_duration():
-    schedule = build_strum_schedule(["down", "down", "down", "down"], [60], total_duration_ms=400.0)
+def test_slots_are_spaced_evenly_across_slot_ms():
+    schedule = build_strum_schedule(_slots(*[("down", "none")] * 4), [60], slot_ms=100.0)
     starts = [s for s, p, v, d in schedule]
     assert starts == [0.0, 100.0, 200.0, 300.0]
 
 
 def test_empty_pattern_or_pitches_returns_nothing():
     assert build_strum_schedule([], [60], 1000.0) == []
-    assert build_strum_schedule(["down"], [], 1000.0) == []
+    assert build_strum_schedule(_slots(("down", "none")), [], 1000.0) == []
 
 
-def test_mixed_pattern_preserves_stroke_order_and_skips_mute():
-    schedule = build_strum_schedule(["down", "mute", "up"], [48, 55], total_duration_ms=300.0)
-    pitches_in_order = [p for s, p, v, d in schedule]
-    # down: 48, 55 (ascending) ; mute: silent, contributes nothing ; up: 55, 48 (descending)
-    assert pitches_in_order == [48, 55, 55, 48]
+def test_accent_raises_velocity_mute_lowers_it():
+    plain = build_strum_schedule(_slots(("down", "none")), [60], slot_ms=200.0)
+    accent = build_strum_schedule(_slots(("down", "accent")), [60], slot_ms=200.0)
+    muted = build_strum_schedule(_slots(("down", "mute")), [60], slot_ms=200.0)
+    assert accent[0][2] > plain[0][2] > muted[0][2]
 
 
-def test_mute_slot_still_occupies_its_place_in_the_timing():
-    """A muted slot is silent but not absent - the stroke after it must
-    still land at its own slot's real offset, not shift earlier to fill
-    the gap."""
-    schedule = build_strum_schedule(["down", "mute", "down"], [60], total_duration_ms=300.0)
+def test_muted_slot_still_occupies_its_place_in_the_timing():
+    schedule = build_strum_schedule(
+        _slots(("down", "none"), ("pause", "none"), ("down", "none")), [60], slot_ms=100.0
+    )
     starts = [s for s, p, v, d in schedule]
     assert starts == [0.0, 200.0]
 
 
-def test_strum_directions_decodes_known_codes():
-    assert strum_directions([1, 101, 202]) == ["down", "up", "mute"]
+def test_palm_mute_reads_as_a_damped_downstroke():
+    schedule = build_strum_schedule(_slots(("p.m.", "none")), [48, 55], slot_ms=200.0)
+    pitches = [p for s, p, v, d in schedule]
+    assert pitches == [48, 55]  # low-to-high, like a downstroke
+    assert all(v < 90 for s, p, v, d in schedule)  # quieter than a plain stroke
 
 
-def test_strum_directions_defaults_unknown_code_to_mute():
-    assert strum_directions([1, 999]) == ["down", "mute"]
+def test_slots_from_codes_decodes_known_and_unknown():
+    slots = slots_from_codes([1, 101, 202, 999])
+    assert (slots[0].stroke, slots[1].stroke) == ("down", "up")
+    assert slots[2].stroke == "pause"
+    assert slots[3].stroke == "pause"  # unknown -> silent pause fallback
 
 
 def test_sound_events_routes_grace_events_through_play_chord_with_grace(null_synth, timeline, grace_note_score):
-    """MusicXML <grace> support: when the selection carries a grace note,
-    sound_events must route through play_chord_with_grace so it sounds
-    separately from (and before) the main chord, not stacked into it."""
     music_data = timeline(grace_note_score)
     events = music_data.get_playback_events_for_indices([0])
     grace_events = music_data.get_grace_note_events_for_indices([0])
@@ -75,8 +78,6 @@ def test_sound_events_routes_grace_events_through_play_chord_with_grace(null_syn
 
 
 def test_sound_events_falls_through_to_play_chord_with_no_grace_events(null_synth, timeline, minimal_score):
-    """The common case (no grace note anywhere in the selection) must not
-    take the grace path at all."""
     music_data = timeline(minimal_score)
     events = music_data.get_playback_events_for_indices([0])
 

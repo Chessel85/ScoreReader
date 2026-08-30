@@ -1,5 +1,10 @@
 # Recall Score Release Notes
 
+
+## 2026.1.46
+
+* Revised Ultimate Guitar imports, and revaped the strumming tool.
+
 ## 2026.1.43
 
 * Created Parts menu and moved entries into it from other menus as a tidy up 

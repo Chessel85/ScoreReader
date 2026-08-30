@@ -133,17 +133,17 @@ class NullSynth:
             )
         self.play_chord(main_events, retrigger=False)
 
-    def play_strummed_bar(
+    def play_strum_pattern(
         self,
         channel: int,
         program: Optional[int],
         midi_pitches: List[int],
-        pattern: List[str],
-        total_duration_ms: float,
+        slots: list,
+        slot_ms: float,
         note_delay_ms: float = 20.0,
         retrigger: bool = True,
     ) -> None:
-        """Mirrors SynthEngine.play_strummed_bar - records the call args
+        """Mirrors SynthEngine.play_strum_pattern - records the call args
         plus the computed schedule (via the same pure build_strum_schedule
         every real engine call goes through), so a test can assert on
         either without needing to wait out real QTimer delays."""
@@ -156,10 +156,10 @@ class NullSynth:
                 "channel": channel,
                 "program": program,
                 "midi_pitches": list(midi_pitches),
-                "pattern": list(pattern),
-                "total_duration_ms": total_duration_ms,
+                "slots": list(slots),
+                "slot_ms": slot_ms,
                 "note_delay_ms": note_delay_ms,
-                "schedule": build_strum_schedule(pattern, midi_pitches, total_duration_ms, note_delay_ms),
+                "schedule": build_strum_schedule(slots, midi_pitches, slot_ms, note_delay_ms),
             }
         )
 

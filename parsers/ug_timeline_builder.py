@@ -10,8 +10,8 @@ relative to lyric text and [Section] labels - so:
   bar"). No per-line or strumming-grid heuristics.
 - time_sig stays the EventSlice default (4, 4) on every slice - not
   inferred from the strumming grid size, to avoid unverified meter-guessing.
-- Tempo is a single, whole-piece value (source.bpm when present, else the
-  same 120 default MIDI/GP use) - UG's strummings block has no per-position
+- Tempo is a single, whole-piece value (strum_patterns[0].bpm when present,
+  else the same 120 default MIDI/GP use) - the strummings block has no per-position
   tempo-change data, only one pattern for the whole tab, so there is nothing
   here that plays the role of MIDI/GP's tempo_changes list. UgReader passes
   this bpm straight to MusicData's constructor (mirroring GpReader, which
@@ -33,6 +33,7 @@ from music21 import harmony
 from models.event_slice import EventSlice
 from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
+from models.section_span import SectionSpan
 from models.synthetic_parts import CHORDS_PART_ID, LYRICS_PART_ID
 from models.vocabulary import spell_out_minor_chord
 from parsers.ug_source import UgSource
@@ -42,6 +43,14 @@ from parsers.ug_source import UgSource
 
 _CH_TAG_RE = re.compile(r"\[ch\](.*?)\[/ch\]")
 _SECTION_LINE_RE = re.compile(r"^\[([^\[\]/][^\[\]]*)\]$")
+# A line that is a fragment of ASCII guitar tablature: a leading string-name
+# letter followed by a bar, or a line made up almost entirely of the
+# characters tab diagrams use. UG chord tabs occasionally paste a riff as
+# raw tablature inside a [tab] block (Summer of '69 opens with two); the
+# chord/lyric aligner has no meaningful reading of one, so such a block is
+# skipped and counted rather than aligned as if the frets were lyrics.
+_TAB_STRING_PREFIX_RE = re.compile(r"^[A-Ga-g][#b]?\s*\|")
+_TAB_LINE_CHARS = set("-|0123456789 .()/\\hpb~*")
 
 
 @dataclass
@@ -49,6 +58,19 @@ class _ChordEvent:
     section: str
     symbol: str
     lyric_fragment: Optional[str]
+
+
+def is_ascii_tablature_line(line: str) -> bool:
+    """True when `line` looks like a row of ASCII guitar tablature rather
+    than a chord line or a lyric line."""
+    s = line.replace("[tab]", "").replace("[/tab]", "").strip()
+    if not s or "[ch]" in s:
+        return False
+    if _TAB_STRING_PREFIX_RE.match(s):
+        return True
+    if len(s) < 6 or "-" not in s:
+        return False
+    return sum(c in _TAB_LINE_CHARS for c in s) / len(s) >= 0.8
 
 
 def _strip_chord_tags(chord_line: str) -> Tuple[str, List[Tuple[int, str]]]:
@@ -95,14 +117,27 @@ def _snap_to_word_boundary(text: str, col: int) -> int:
     return start if after >= before else end
 
 
-def _parse_content(content: str) -> List[_ChordEvent]:
+def count_tablature_blocks(content: str) -> int:
+    """How many [tab] blocks in `content` are raw ASCII tablature (skipped
+    from the import) - for the Region 1 "Tablature blocks: N (not imported)"
+    credit, so "there was nothing there" and "we didn't import it" stay
+    distinguishable."""
+    return _parse_content(content)[1]
+
+
+def _parse_content(content: str) -> Tuple[List[_ChordEvent], int]:
     """Walks source.content top-to-bottom, tracking the current [Section]
     label, and emits one _ChordEvent per chord occurrence in performance
     order - inside a [tab]...[/tab] block (chord line + lyric line pair,
     lyric fragment = the slice of the lyric line from this chord's column up
     to the next chord's column) or bare (intro/instrumental/outro chord-only
-    lines, which produce a chord event with no lyric fragment at all)."""
+    lines, which produce a chord event with no lyric fragment at all).
+
+    Returns (events, tablature_block_count) - a [tab] block whose chord or
+    lyric row is ASCII tablature contributes nothing to `events` but is
+    counted, so the reader can report it."""
     events: List[_ChordEvent] = []
+    tab_block_count = 0
     section = ""
     raw_lines = content.replace("\r\n", "\n").split("\n")
     i = 0
@@ -129,6 +164,11 @@ def _parse_content(content: str) -> List[_ChordEvent]:
                 lyric_line = raw_lines[i + 1][: -len("[/tab]")]
                 i += 1
 
+            if is_ascii_tablature_line(chord_line) or is_ascii_tablature_line(lyric_line):
+                tab_block_count += 1
+                i += 1
+                continue
+
             _stripped_chords, chord_cols = _strip_chord_tags(chord_line)
             # Boundary 0 is always the very start of the lyric line (the
             # first chord owns any lead-in text before its own column too -
@@ -153,7 +193,7 @@ def _parse_content(content: str) -> List[_ChordEvent]:
             events.append(_ChordEvent(section=section, symbol=symbol, lyric_fragment=None))
         i += 1
 
-    return events
+    return events, tab_block_count
 
 
 def _chord_symbol_to_pitches(symbol: str) -> List[int]:
@@ -214,6 +254,10 @@ class UgTimelineBuilder:
         self.to_coda_marks: List = []
         self.fine_marks: List = []
         self.navigation_jumps: List = []
+        # P2: [Intro]/[Verse 1]/[Chorus]/... labels, as spans of the
+        # fabricated bars. The only builder that populates this today; the
+        # other three stub it empty, like every span list above.
+        self.section_spans: List[SectionSpan] = []
         self.total_measures: int = 0
 
     def build(self) -> List[EventSlice]:
@@ -225,7 +269,7 @@ class UgTimelineBuilder:
                 "nothing fetchable at it to re-parse."
             )
 
-        chord_events = _parse_content(source.content)
+        chord_events, _tab_blocks = _parse_content(source.content)
         if not chord_events:
             return []
 
@@ -295,4 +339,27 @@ class UgTimelineBuilder:
             )
 
         self.total_measures = len(chord_events)
+        self.section_spans = _section_spans(chord_events, self.total_measures)
         return slices
+
+
+def _section_spans(chord_events: List[_ChordEvent], total_measures: int) -> List[SectionSpan]:
+    """One SectionSpan per run of consecutive chord events sharing a
+    [Section] label. end_measure is the bar before the next section starts
+    (or total_measures for the last one). Events before the first [Section]
+    label carry section="" and are not given a span."""
+    spans: List[SectionSpan] = []
+    current = None
+    for idx, event in enumerate(chord_events):
+        measure = idx + 1
+        if not event.section:
+            continue
+        if current is not None and event.section == current[0]:
+            continue
+        if spans:
+            spans[-1].end_measure = measure - 1
+        spans.append(SectionSpan(label=event.section, start_measure=measure, end_measure=measure))
+        current = (event.section, measure)
+    if spans:
+        spans[-1].end_measure = max(spans[-1].start_measure, total_measures)
+    return spans

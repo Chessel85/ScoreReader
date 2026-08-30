@@ -153,6 +153,44 @@ class NavigationController(QObject):
         self.music_data.active_event_index = index
         self.position_changed.emit(True, False)
 
+    def next_section(self) -> None:
+        """Ctrl+Alt+Right (P2): jump to the first bar of the next song
+        section after the cursor. A positional jump like Home/End, so it
+        cues the boundary at the last section rather than wrapping (unlike
+        Find). A no-op boundary cue on a score with no sections."""
+        self._step_section(direction=1)
+
+    def previous_section(self) -> None:
+        """Ctrl+Alt+Left counterpart of next_section."""
+        self._step_section(direction=-1)
+
+    def _step_section(self, direction: int) -> None:
+        self.clear_pending_digits()
+        data = self.music_data
+        if not data or not data.section_spans:
+            self.boundary_hit.emit()
+            return
+        starts = sorted(
+            i for i in (
+                data.first_visible_event_index_of_measure(s.start_measure)
+                for s in data.section_spans
+            )
+            if i is not None
+        )
+        if not starts:
+            self.boundary_hit.emit()
+            return
+        current = data.active_event_index
+        if direction > 0:
+            target = next((i for i in starts if i > current), None)
+        else:
+            target = next((i for i in reversed(starts) if i < current), None)
+        if target is None:
+            self.boundary_hit.emit()
+            return
+        data.active_event_index = target
+        self.position_changed.emit(True, False)
+
     def arm_find_target(self, target: FindTarget) -> None:
         """Called by MainWindow on the Find dialog's OK, before the initial
         jump - stores what Alt+Right/Alt+Left will cycle through next."""

@@ -1,10 +1,11 @@
 # main_window.py
 import os
+import re
 import sys
 from contextlib import contextmanager
 from typing import Optional
 
-from PySide6.QtCore import QLocale, QUrl, Qt
+from PySide6.QtCore import QLocale, QTimer, QUrl, Qt
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from audio.metronome import click_event_for_beat
 from audio.synth_engine import SynthEngine
 from controllers.attribute_controller import AttributeController
 from controllers.focus_controller import FocusController
@@ -49,6 +51,7 @@ from widgets.region2_manager import node_breadcrumb
 from widgets.region4_list_widget import Region4ListWidget
 from widgets.region5_list_widget import Region5ListWidget
 from widgets.status_bar_widget import StatusBarWidget
+from widgets.strumming_dialog import StrummingDialog
 from widgets.timeline_list_widget import TimelineListWidget
 from widgets.tuner_dialog import TunerDialog
 from widgets.tuner_settings_dialog import TunerSettingsDialog
@@ -143,6 +146,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Recall Score")
         self.resize(800, 600)
+        # Beat-click timer for the Strumming Patterns dialog's demo; created
+        # lazily on first use, kept so _stop_strum_demo can cancel it.
+        self._strum_click_timer = None
+        self._strum_click_state = {"beat": 0, "total": 0}
 
         if uk_terms is None:
             saved_uk_terms = app_settings.load().uk_terms
@@ -386,6 +393,8 @@ class MainWindow(QMainWindow):
         self.mixer_action = actions.mixer
         self.instruments_action = actions.instruments
         self.key_signature_action = actions.key_signature
+        self.strumming_action = actions.strumming
+        self.save_ug_import_action = actions.save_ug_import
         self.select_all_action = actions.select_all
         self.first_measure_action = actions.first_measure
         self.last_measure_action = actions.last_measure
@@ -393,6 +402,8 @@ class MainWindow(QMainWindow):
         self.find_action = actions.find
         self.find_next_action = actions.find_next
         self.find_previous_action = actions.find_previous
+        self.next_section_action = actions.next_section
+        self.previous_section_action = actions.previous_section
         self.move_to_notes_action = actions.move_to_notes
         self.move_to_metadata_action = actions.move_to_metadata
         self.move_to_parts_action = actions.move_to_parts
@@ -535,6 +546,8 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("Recall Score")
         self.close_action.setEnabled(False)
+        self.strumming_action.setEnabled(False)
+        self.save_ug_import_action.setEnabled(False)
         # Reverts "go to bar N"'s vocabulary to nothing score-specific -
         # go_to_bar_phrases(0) is []. Safe whether or not voice control is
         # currently listening (see _on_score_loaded's own call).
@@ -580,13 +593,15 @@ class MainWindow(QMainWindow):
         if not self._music_data or not self._music_data.is_ug:
             return
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Ultimate Guitar Import", "", "Recall Score UG Import Files (*.ug)"
+            self, "Save Ultimate Guitar Import",
+            self._suggested_ug_filename(self._music_data),
+            "Recall Score UG Import Files (*.ug)",
         )
         if not file_path:
             return
         write_ug_source(self._music_data.ug_source, file_path)
         self._music_data.file_path = file_path
-        self.setWindowTitle(f"Recall Score - {os.path.basename(file_path)}")
+        self.setWindowTitle(self._window_title_for(self._music_data))
         self.persistence.refresh_clear_action()
         self._save_current_score_config()
         app_settings.add_recent_file(file_path)
@@ -608,9 +623,34 @@ class MainWindow(QMainWindow):
             menu.addAction(placeholder)
             return
         for file_path in recent_files:
-            action = QAction(file_path, self)
+            # Filename first, then its folder in brackets (P5) - the name is
+            # what the user recognises. "&" -> "&&" so a real filename
+            # containing one isn't eaten as a QAction mnemonic.
+            base = os.path.basename(file_path)
+            folder = os.path.dirname(file_path)
+            label = (f"{base} ({folder})" if folder else base).replace("&", "&&")
+            action = QAction(label, self)
             action.triggered.connect(lambda checked=False, p=file_path: self.load_score_from_file(p))
             menu.addAction(action)
+
+    @staticmethod
+    def _window_title_for(music_data) -> str:
+        """A UG import shows its song / artist / Ultimate Guitar ID rather
+        than a filename (a live URL import's file_path is only a synthetic
+        slug); every other format shows its real filename."""
+        if music_data.is_ug and music_data.ug_source is not None:
+            s = music_data.ug_source
+            return f"Recall Score - {s.song_name} - {s.artist_name} ({s.tab_id})"
+        return f"Recall Score - {os.path.basename(music_data.file_path)}"
+
+    @staticmethod
+    def _suggested_ug_filename(music_data) -> str:
+        """Prefill for File > Save Ultimate Guitar Import As... - song,
+        artist and ID, with characters illegal in a Windows filename
+        stripped."""
+        s = music_data.ug_source
+        raw = f"{s.song_name} - {s.artist_name} - {s.tab_id}.ug"
+        return re.sub(r'[<>:"/\\|?*]', "", raw).strip()
 
     def _on_score_loaded(self, music_data):
         """Orchestration only - which is why it stays in the shell. The order
@@ -618,8 +658,10 @@ class MainWindow(QMainWindow):
         regions render, and Region 2's own per-node toggles have to be in
         effect before the first audition, or the opening chord includes
         voices the user had switched off."""
-        self.setWindowTitle(f"Recall Score - {os.path.basename(music_data.file_path)}")
+        self.setWindowTitle(self._window_title_for(music_data))
         self.close_action.setEnabled(True)
+        self.strumming_action.setEnabled(bool(music_data.ug_strum_patterns))
+        self.save_ug_import_action.setEnabled(bool(music_data.is_ug))
 
         # Ref 19: "go to bar N"'s numeric vocabulary is bounded to this
         # score's own real measure numbers - see audio/voice_commands.
@@ -707,6 +749,12 @@ class MainWindow(QMainWindow):
 
     def find_previous(self):
         self.navigation.find_previous()
+
+    def next_section(self):
+        self.navigation.next_section()
+
+    def previous_section(self):
+        self.navigation.previous_section()
 
     def announce_region_4_attribute(self, number: int):
         self.presenter.announce_attribute_by_number(number)
@@ -938,6 +986,105 @@ class MainWindow(QMainWindow):
                 self.score_edit.reorder_parts(dialog.part_order())
             if selected_node_id is not None:
                 self.region_2.select_node(selected_node_id)
+
+    def _show_strumming_dialog(self):
+        """Tools > Strumming Patterns... (P2/P3) - a read-only view of a UG
+        import's decoded pattern(s). Pure view: it emits
+        play_pattern_requested / stop_requested / tempo_changed and this
+        method drives the synth (demo playback, looped by the dialog's own
+        timer) and the score's playback tempo. Anything currently sounding
+        is stopped on close."""
+        if not self._music_data or not self._music_data.ug_strum_patterns:
+            return
+        data = self._music_data
+        default_display = data.tempo_bpm / data.tempo_beat_unit_quarter_length
+        with self._preserving_focus():
+            dialog = StrummingDialog(
+                self,
+                patterns=data.ug_strum_patterns,
+                current_tempo_bpm=data.playback_tempo_display_bpm(),
+                default_tempo_bpm=default_display,
+            )
+            dialog.play_pattern_requested.connect(
+                lambda index: self._demo_strum_pattern(index, dialog.include_click())
+            )
+            dialog.stop_requested.connect(self._stop_strum_demo)
+            dialog.tempo_changed.connect(self._on_strum_tempo_changed)
+            dialog.exec()
+            self._stop_strum_demo()
+
+    def _on_strum_tempo_changed(self, bpm: int):
+        """The Strumming dialog's Tempo spin box (and its S/F/D keys) edit
+        the score's own playback tempo, so the value the dialog opens on is
+        the one the user has already dialled in with the main-window keys."""
+        self.playback.set_playback_tempo(float(bpm))
+        self.presenter.announce_tempo()
+
+    def _stop_strum_demo(self):
+        if self._strum_click_timer is not None:
+            self._strum_click_timer.stop()
+        self.synth.stop_all_notes()
+
+    def _demo_strum_pattern(self, index: int, with_click: bool = False):
+        """Demo-play one strum pattern on the currently selected chord if
+        there is one, else a fixed C major - see StrummingDialog. Plays at
+        the score's current playback tempo, with an optional metronome
+        click on each beat."""
+        from audio.strum_schedule import slots_from_codes
+
+        data = self._music_data
+        if not data:
+            return
+        patterns = data.ug_strum_patterns
+        if not (0 <= index < len(patterns)):
+            return
+        pattern = patterns[index]
+
+        channel, program, pitches = 0, 24, [48, 52, 55, 60]
+        events = data.get_playback_events_for_indices(
+            self.presenter.selected_region_3_indices()
+        )
+        for event in events:
+            if event[2]:
+                channel, program, pitches = event[0], event[1], list(event[2])
+                break
+
+        slot_ms = pattern.slot_ms_at_bpm(data.effective_tempo_bpm())
+        self.synth.play_strum_pattern(
+            channel, program, pitches, slots_from_codes(pattern.codes), slot_ms
+        )
+        self._schedule_strum_clicks(pattern, slot_ms if with_click else None)
+
+    def _schedule_strum_clicks(self, pattern, slot_ms):
+        """Fire a metronome click on each beat of the pattern, re-armed each
+        loop. Modelled on PlaybackController._sound_play_metronome_beat - a
+        re-armed QTimer rather than merging clicks into the strum schedule,
+        which is a different synth path (play_click, its own channel and
+        soundfont). Not merged with the loop timer either: that fires once
+        per whole pattern, this once per beat."""
+        if self._strum_click_timer is None:
+            self._strum_click_timer = QTimer(self)
+            self._strum_click_timer.timeout.connect(self._strum_click_tick)
+        self._strum_click_timer.stop()
+        if not slot_ms:
+            return
+
+        slots_per_beat = max(1, round(pattern.slots_per_bar() / 4))  # 4/4 assumed
+        self._strum_click_state = {
+            "beat": 0,
+            "total": max(1, round(len(pattern.codes) / slots_per_beat)),
+        }
+        self._strum_click_tick()  # downbeat now, aligned with the first attack
+        self._strum_click_timer.start(int(slot_ms * slots_per_beat))
+
+    def _strum_click_tick(self):
+        state = self._strum_click_state
+        click = click_event_for_beat(float(state["beat"] % 4 + 1))
+        if click:
+            self.synth.play_click(*click)
+        state["beat"] += 1
+        if state["beat"] >= state["total"]:
+            self._strum_click_timer.stop()
 
     # --- presentation (delegators) ------------------------------------
 

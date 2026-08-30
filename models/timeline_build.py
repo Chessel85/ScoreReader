@@ -49,6 +49,9 @@ class TimelineBuild:
     to_coda_marks: List[Any] = field(default_factory=list)
     fine_marks: List[Any] = field(default_factory=list)
     navigation_jumps: List[Any] = field(default_factory=list)
+    # P2: named song sections (Intro/Verse/Chorus/...). UG-only so far;
+    # the other builders stub this empty.
+    section_spans: List[Any] = field(default_factory=list)
     # The whole-score bar count - deliberately NOT derived from
     # timeline_slices, which would undercount a trailing all-rest measure
     # (rests never get a slice of their own).
@@ -77,6 +80,7 @@ class TimelineBuild:
             to_coda_marks=builder.to_coda_marks,
             fine_marks=builder.fine_marks,
             navigation_jumps=builder.navigation_jumps,
+            section_spans=builder.section_spans,
             total_measures=builder.total_measures,
         )
 
@@ -98,4 +102,5 @@ class TimelineBuild:
         music_data.to_coda_marks = self.to_coda_marks
         music_data.fine_marks = self.fine_marks
         music_data.navigation_jumps = self.navigation_jumps
+        music_data.section_spans = self.section_spans
         music_data.total_measures = self.total_measures

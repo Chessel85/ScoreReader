@@ -2145,6 +2145,47 @@ PHASE CF - COMPREHENSIVE FIND (2026-08-28)                (7 phases)
 
 
 ###
+UG RETHINK - getting the most out of an Ultimate Guitar page (2026-08-30)
+Plan: UGRethink.txt. Investigated the 18 example URLs; no time signature is
+ever present, sections are always present, 6 of 17 tabs carry 2-3 strum
+patterns, and the app knew only 3 of UG's 9 strum codes (mislabelling 202,
+the commonest, as "muted strum" - it is a pause).
+
+[x] UG-P1  models/strum_codes.py: full 9-code STRUM_CODES table + slot_words
+           (from UG's own bundle). models/strum_pattern.py (new): one parsed
+           pattern + slot_ms/bar_count/slot_labels/slot_rows.
+           models/beat_position_words.py (new): the beat-position word
+           vocabulary, extracted from audio/position_announcer.py (re-exports).
+           ug_source.py: read ALL of tab_view.strummings into
+           UgSource.strum_patterns; add capo; FORMAT_VERSION 2 with v1 migrate.
+           > DONE 2026-08-30.
+[x] UG-P2  models/section_span.py (new) + section_spans through
+           timeline_build.py. UgTimelineBuilder populates it from [Section]
+           labels. Region 5 row pair, Find "section" marking kind,
+           Ctrl+Alt+Left/Right (NavigationController.next/previous_section),
+           Performance Report block.
+           > DONE 2026-08-30.
+[x] UG-P3  widgets/strumming_dialog.py (new): Edit > Strumming Patterns...
+           (Ctrl+Shift+U) - flat one-row-per-slot list + Alt+P looped demo
+           via SynthEngine.play_strum_pattern. build_strum_schedule
+           generalised to per-slot ms + effects. Per-chord strummed audition
+           removed (ug_strum_pattern, play_strummed_bar, sound_events is_ug
+           branch).
+           > DONE 2026-08-30.
+[x] UG-P4  ASCII tablature blocks skipped from chord/lyric alignment and
+           counted ("Tablature blocks: N (not imported)" credit); capo and
+           multi-pattern summary credits.
+           > DONE 2026-08-30.
+[x] UG-P5  File > Recent Files: "<filename> (<folder>)", & escaped.
+           > DONE 2026-08-30.
+[x] UG-P6  Docs: user_guide.md 10.2/10.3/10.7/10.8 + shortcut tables,
+           user_guide.html regenerated, CLAUDE.md UG architecture entry,
+           this block. version.txt 2026.1.43 -> 2026.1.44. 1178 tests pass;
+           both fingerprint harnesses MATCH.
+           > DONE 2026-08-30.
+
+
+###
 COVERAGE CHECK - every requirement appears at least once
   Ref  1 D2        Ref  8 A8,B4     Ref 15 F1,F2     Ref 22 H3,H4
   Ref  2 C5        Ref  9 A8,E10    Ref 16 A5,F3     Ref 23 K1

@@ -1,0 +1,73 @@
+I want to revisit what we can safely extract from Ultimate guitar pages and how it should be presented to the user.
+The obvious info are the chords, the lyrics, and how these are linked.
+If time signature is present on the page we cannot use it to split up the lyrics. we can only display this info in region 1.
+The only thing we can say for sure are the lyrics that are sung for any given chord.
+If chords are given without lyrics we can only say there are no lyrics.
+There is info about intro's, verses, choruses, bridges, outros and possibly others.  This is useful and could be put together into a virtual "voice" called "sections". 
+Do we have any existing mechanisms to allow quick navigation between sections? It is a little clumsy to have the user solo sections and navigate back in the note region, and then unsolo sections again.  Could we navigate with alt left and right arrows?  Or introduce a brand new keystroke specific to UG scores to navigate by section?  Might translate to guitar pro files also, or music XML which contains lyrics and also denoates sections.
+What strumming info is there?  There surely must be more than one strumming pattern per song very frequently.  I would guess that many songs have more than one strumming pattern. Is this born out in the examples listed below?
+If there is, is there any indication of when one pattern or another is played?
+Currently the strumming is played, but in practice, it is almost impossible to work out the strumming pattern from this audio.
+Can we have a dialogue that displays the strumming pattern which the user can navigate? e.g. a table with two rows. top row is time position, second row is up, down, nothing.
+With all this in mind, take a look at the examples and draw up a plan for how best to get the most out of a UG page, and how the info should be surfaced, navigated, and saved.
+BTW, if someone saves a UG page, does this come up in the recents list?
+And minor point, can you make the recents list show the filename first, followed by the path in brackets.
+
+
+
+Examples list
++++
+
+You Aint Seen Nothing Yet Chords by Bachman-Turner Overdrive
+https://tabs.ultimate-guitar.com/tab/bachman-turner-overdrive/you-aint-seen-nothing-yet-chords-145067
+
+For My Lover Chords by Tracy Chapman
+https://tabs.ultimate-guitar.com/tab/tracy-chapman/for-my-lover-chords-856569
+
+Hotel California Chords by Eagles
+https://tabs.ultimate-guitar.com/tab/eagles/hotel-california-chords-46190
+
+Help Chords by The Beatles
+https://tabs.ultimate-guitar.com/tab/the-beatles/help-chords-17269
+
+Where The Streets Have No Name Chords by U2
+https://tabs.ultimate-guitar.com/tab/u2/where-the-streets-have-no-name-chords-704016
+
+Sultans Of Swing Chords by Dire Straits
+https://tabs.ultimate-guitar.com/tab/dire-straits/sultans-of-swing-chords-267976
+
+Dancing In The Dark Chords by Bruce Springsteen
+https://tabs.ultimate-guitar.com/tab/bruce-springsteen/dancing-in-the-dark-chords-1087212
+
+Summer Of 69 Chords by Bryan Adams
+https://tabs.ultimate-guitar.com/tab/bryan-adams/summer-of-69-chords-843137
+
+The Road To Hell Chords by Chris Rea
+https://tabs.ultimate-guitar.com/tab/chris-rea/the-road-to-hell-chords-81802
+
+American Pie Chords by Don McLean
+https://tabs.ultimate-guitar.com/tab/don-mclean/american-pie-chords-187946
+
+Im Still Standing Chords by Elton John
+https://tabs.ultimate-guitar.com/tab/elton-john/im-still-standing-chords-10737
+
+Jailhouse Rock Chords by Elvis Presley
+https://tabs.ultimate-guitar.com/tab/elvis-presley/jailhouse-rock-chords-79693
+
+Mama Chords by Genesis
+https://tabs.ultimate-guitar.com/tab/genesis/mama-chords-1714375
+
+Faith Chords by George Michael
+https://tabs.ultimate-guitar.com/tab/george-michael/faith-chords-745882
+
+Moonlight Shadow Chords by Mike Oldfield
+https://tabs.ultimate-guitar.com/tab/mike-oldfield/moonlight-shadow-chords-969267
+
+Galaxy Song Chords by Monty Python
+https://tabs.ultimate-guitar.com/tab/monty-python/galaxy-song-chords-1229208
+
+Another Brick In The Wall Part 2 Chords by Pink Floyd
+https://tabs.ultimate-guitar.com/tab/pink-floyd/another-brick-in-the-wall-part-2-chords-554491
+
+Everybody Wants To Rule The World Tab by Tears For Fears
+https://tabs.ultimate-guitar.com/tab/tears-for-fears/everybody-wants-to-rule-the-world-tabs-132608

@@ -84,21 +84,26 @@ def test_expiring_group_releases_notes_no_other_group_holds():
     assert engine._active_notes == []
 
 
-def test_play_strummed_bar_schedules_one_pending_timer_per_stroke_event(qtbot):
+def _demo_slots(*specs):
+    from models.strum_codes import StrumSlot
+
+    return [StrumSlot(stroke, effect) for stroke, effect in specs]
+
+
+def test_play_strum_pattern_schedules_one_pending_timer_per_stroke_event(qtbot):
     """Setup/wiring only, mirroring this file's own convention of testing
     bookkeeping without letting a real QTimer actually fire: confirms
-    play_strummed_bar creates exactly as many _pending_strum_timers as
+    play_strum_pattern creates exactly as many _pending_strum_timers as
     build_strum_schedule would return events for the same inputs, and that
-    nothing sounds synchronously (every note-on is genuinely scheduled for
-    later, not fired immediately)."""
+    nothing sounds synchronously."""
     from audio.strum_schedule import build_strum_schedule
 
     engine = _engine()
-    pattern = ["down", "mute", "up"]
+    slots = _demo_slots(("down", "none"), ("pause", "none"), ("up", "none"))
     pitches = [48, 55]
-    expected = build_strum_schedule(pattern, pitches, total_duration_ms=300.0)
+    expected = build_strum_schedule(slots, pitches, slot_ms=100.0)
 
-    engine.play_strummed_bar(0, None, pitches, pattern, total_duration_ms=300.0)
+    engine.play_strum_pattern(0, None, pitches, slots, slot_ms=100.0)
 
     assert len(engine._pending_strum_timers) == len(expected)
     assert engine._fs.note_ons == [], "nothing should sound synchronously - every stroke is scheduled"
@@ -108,9 +113,9 @@ def test_play_strummed_bar_schedules_one_pending_timer_per_stroke_event(qtbot):
         timer.stop()  # tidy up so no timer outlives the test
 
 
-def test_play_strummed_bar_pins_the_program_before_scheduling(qtbot):
+def test_play_strum_pattern_pins_the_program_before_scheduling(qtbot):
     engine = _engine()
-    engine.play_strummed_bar(2, 24, [48], ["down"], total_duration_ms=100.0)
+    engine.play_strum_pattern(2, 24, [48], _demo_slots(("down", "none")), slot_ms=100.0)
 
     assert engine._fs.program_selects == [(2, 1, 0, 24)]
     for timer in engine._pending_strum_timers:
@@ -119,10 +124,12 @@ def test_play_strummed_bar_pins_the_program_before_scheduling(qtbot):
 
 def test_stop_all_notes_cancels_pending_strum_timers(qtbot):
     """The class of bug _group_off_timers already exists to prevent, one
-    level earlier: a previous audition's still-pending future strokes must
+    level earlier: a previous demo's still-pending future strokes must
     not fire midway through a new one."""
     engine = _engine()
-    engine.play_strummed_bar(0, None, [48, 55], ["down", "up", "mute"], total_duration_ms=300.0)
+    engine.play_strum_pattern(
+        0, None, [48, 55], _demo_slots(("down", "none"), ("up", "none")), slot_ms=100.0
+    )
     pending = list(engine._pending_strum_timers)
     assert pending, "should have scheduled something to cancel"
 

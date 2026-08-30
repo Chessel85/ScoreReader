@@ -4,8 +4,14 @@ fixtures (no real network call - the same "build the model layer directly"
 fast-test pattern the other timeline-builder tests use). Content strings
 below mirror the real markup shape confirmed against a live Ultimate Guitar
 page during the import feature's discovery/planning phase."""
+from models.strum_pattern import StrumPattern
 from parsers.ug_source import UgSource
-from parsers.ug_timeline_builder import CHORDS_PART_ID, LYRICS_PART_ID, UgTimelineBuilder
+from parsers.ug_timeline_builder import (
+    CHORDS_PART_ID,
+    LYRICS_PART_ID,
+    UgTimelineBuilder,
+    count_tablature_blocks,
+)
 
 
 def _source(content: str, **overrides) -> UgSource:
@@ -16,10 +22,12 @@ def _source(content: str, **overrides) -> UgSource:
         tuning="E A D G B E",
         difficulty="novice",
         content=content,
-        bpm=115,
-        is_triplet=True,
         tab_id=1,
         source_url="https://tabs.ultimate-guitar.com/tab/test/test-chords-1",
+        strum_patterns=[
+            StrumPattern(name="", bpm=115, denominator=16, is_triplet=True, codes=[])
+        ],
+        capo=None,
     )
     defaults.update(overrides)
     return UgSource(**defaults)
@@ -125,3 +133,33 @@ def test_bar_counter_increments_once_per_chord_event():
 
     assert [s.measure for s in slices] == [1, 2, 3, 4]
     assert builder.total_measures == 4
+
+
+def test_section_spans_are_built_from_section_labels():
+    content = (
+        "[Intro]\n\n[ch]C[/ch]  [ch]G[/ch]\n"
+        "[Verse 1]\n\n[tab][ch]Am[/ch]  [ch]F[/ch]\nHi there[/tab]\n"
+        "[ch]C[/ch]\n"
+    )
+    builder = UgTimelineBuilder("ultimate-guitar-1.ug", [], source=_source(content))
+    builder.build()
+
+    spans = builder.section_spans
+    assert [(s.label, s.start_measure, s.end_measure) for s in spans] == [
+        ("Intro", 1, 2),
+        ("Verse 1", 3, 5),
+    ]
+
+
+def test_ascii_tablature_blocks_are_skipped_and_counted():
+    content = (
+        "[Intro]\n\n"
+        "[tab]e|--0--2--3--|\nB|--1--1--0--|[/tab]\n"
+        "[tab][ch]C[/ch]  [ch]G[/ch]\nreal lyric[/tab]\n"
+    )
+    builder = UgTimelineBuilder("ultimate-guitar-1.ug", [], source=_source(content))
+    slices = builder.build()
+
+    # only the real chord/lyric block contributes slices
+    assert [n.step_name for s in slices for n in s.notes if n.part_id == CHORDS_PART_ID] == ["C", "G"]
+    assert count_tablature_blocks(content) == 1

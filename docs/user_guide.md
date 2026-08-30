@@ -957,9 +957,19 @@ same way opening a file does, so the rest of the app stays responsive
 while it fetches the page.
 
 Once imported, Region 1 shows the song's title, artist, key, tuning,
-difficulty and tempo the same way any other score does, plus (when the
-page provides one) a Strumming Pattern field describing the song's strum
-rhythm as a sequence of downstrokes, upstrokes and muted strums.
+difficulty and tempo the same way any other score does. When the page
+carries the extra information, Region 1 also shows:
+
+- **Capo** - the fret a capo is placed at, for example "2nd fret".
+- **Strumming Pattern** - for a single pattern, the sequence of strokes
+  (down, up, muted, palm mute, pause) as written; for a song with more
+  than one pattern, the names of the patterns. See Tools > Strumming
+  Patterns... (section 10.7) for the full slot-by-slot detail.
+- **Tablature blocks** - a count of any raw guitar-tablature riffs on the
+  page that were left out of the import, so "there was nothing there" and
+  "we didn't import that part" stay distinguishable.
+- **Ultimate Guitar ID** - the numeric ID of the tab on ultimate-guitar.com,
+  shown as the last row.
 
 ### 10.3 Chords and Lyrics as Two Parts
 
@@ -971,11 +981,15 @@ part.
 
 Moving through the Note region works the same as any other score: each
 step forward is one chord change. The Chords row names the chord (for
-example "Fmaj7") and plays it - as a real strummed pattern when the song
-has strumming data, arpeggiated up or down per the pattern rather than
-every note firing at once, otherwise as a plain chord. The Lyrics row
-shows the words sung during that chord, or "No lyrics" for instrumental
-passages such as an intro with nothing sung yet.
+example "Fmaj7") and plays it as a plain chord. The Lyrics row shows the
+words sung during that chord, or "No lyrics" for instrumental passages
+such as an intro with nothing sung yet.
+
+(Earlier versions played the chords as an arpeggiated strum. That is
+gone: the strum audio was almost impossible to follow by ear, and a song
+with more than one pattern had no way to know which one applied to a
+given bar. The pattern is now shown as readable text in a dialog
+instead - section 10.7.)
 
 Most chord names are shown exactly as written ("Fmaj7", "C7", "Dsus4", a
 bare "G" for G major) since a screen reader already reads those clearly.
@@ -1049,6 +1063,53 @@ the chord accompaniment does, not something the notated melody note does.
 A bar can show more than one Chords row when it has more than one marked
 stroke in it, one per stroke, each still following the score's own real
 timing.
+
+### 10.7 The Strumming Patterns Dialog
+
+Tools > Strumming Patterns... (`Ctrl+Shift+U`) opens a read-only view of
+an Ultimate Guitar import's strum pattern (or patterns). It is disabled
+unless the loaded song actually has one.
+
+If the song has more than one pattern, a Pattern list at the top lets you
+choose which to view; each entry names the pattern ("Verse", "Chorus"),
+its tempo, its note subdivision and how many bars it spans. Below that, a
+list has one row per slot of the pattern, each row giving the slot's time
+position and its stroke - for example "Bar 1, 1: down", "Bar 1, 1 e:
+pause", "Bar 1, 1 and: up muted". Time positions use the same "1", "1 e",
+"1 and", "1 a" wording as the position announcer (section 7.9).
+
+A Tempo box sets the speed of the demo playback. It starts at the tempo
+you have already chosen for the score, and the same `S`, `F` and `D` keys
+that change tempo in the main window (slower, faster, reset) work here
+too; changing it here changes the score's playback tempo. Tick **Include
+metronome click** to hear a click on each beat under the demo.
+
+A Play pattern button (`Alt+P`) plays the pattern as audio, looping until
+you press it again (it then reads Stop) or close the dialog. It plays on
+whichever chord is currently selected in the Note region, or a plain C
+major chord if none is. The dialog does not let you edit the pattern -
+it is there to be read.
+
+### 10.8 Jumping Between Song Sections
+
+An Ultimate Guitar page marks its structure with section labels -
+`[Intro]`, `[Verse 1]`, `[Chorus]`, `[Bridge]`, `[Outro]` and so on.
+Recall Score records these as spans of bars. Two shortcuts jump straight
+to a section boundary, from anywhere in the window:
+
+- **`Ctrl+Alt+Right`** - jump to the start of the next section.
+- **`Ctrl+Alt+Left`** - jump to the start of the previous section.
+
+At the last section, `Ctrl+Alt+Right` plays the boundary sound (section
+5.6) and stays put rather than wrapping. On a score with no section
+information (anything that is not an Ultimate Guitar import, so far),
+both shortcuts just play the boundary sound.
+
+While the cursor is inside a section, the Performance region (Region 5,
+section 8) shows a "Section start" and a "Section end" row naming the
+section and its bar range; `Ctrl+Home` / `Ctrl+End` on those rows jump to
+the section's first or last bar. The section is also a Find target
+(section 5.7) - "Section" in the Find list steps between section starts.
 
 ## 11. Tuning Your Instrument (the Tuner)
 
@@ -1212,6 +1273,8 @@ directly (see also section 16.3).
 | Find... | Ctrl+F | Opens the Find dialog (section 5.7). |
 | Find Next | Alt+Right Arrow | Jumps to the next occurrence of whatever Find last armed (section 5.7). |
 | Find Previous | Alt+Left Arrow | Jumps to the previous occurrence of whatever Find last armed (section 5.7). |
+| Next Section | Ctrl+Alt+Right Arrow | Jumps to the start of the next song section (section 10.8). |
+| Previous Section | Ctrl+Alt+Left Arrow | Jumps to the start of the previous song section (section 10.8). |
 | Move to Info | Z | Jumps focus to the Score Info (metadata) region from anywhere. |
 | Move to Parts List | X | Jumps focus to the Parts List region from anywhere. |
 | Move to Notes | C | Jumps focus to the Note region from anywhere, without moving your timeline position. |
@@ -1254,6 +1317,7 @@ directly (see also section 16.3).
 | :--- | :--- | :--- |
 | Tuner... | Ctrl+Shift+T | Opens the microphone-based chromatic tuner (section 11). |
 | Performance Report... | Ctrl+Shift+P | Opens a read-only summary of the whole piece (section 8.4). |
+| Strumming Patterns... | Ctrl+Shift+U | Opens a read-only view of an Ultimate Guitar import's strum pattern(s), with a tempo / metronome-click control and looped demo playback (section 10.7). Disabled unless such an import is loaded. |
 
 ### 14.7 Help Menu
 
@@ -1285,6 +1349,7 @@ directly (see also section 16.3).
 | Open the Go to Measure dialog | Ctrl+G |
 | Open the Find dialog | Ctrl+F |
 | Jump to the next / previous occurrence of the current Find target | Alt+Right Arrow / Alt+Left Arrow |
+| Jump to the start of the next / previous song section | Ctrl+Alt+Right Arrow / Ctrl+Alt+Left Arrow |
 | Expand / collapse the focused row *(Parts List region only)* | Right Arrow / Left Arrow |
 | Mute / unmute the focused row *(Parts List region only)* | F8 |
 | Solo / unsolo the focused row *(Parts List region only)* | F9 |
@@ -1312,6 +1377,9 @@ directly (see also section 16.3).
 | Start / stop playback from the Mixer dialog *(Mixer dialog only)* | Alt+W |
 | Open the Instruments dialog | Ctrl+Shift+I |
 | Open the Key Signature dialog | Ctrl+Shift+K |
+| Open the Strumming Patterns dialog | Ctrl+Shift+U |
+| Play / stop the strum pattern demo *(Strumming Patterns dialog only)* | Alt+P |
+| Tempo slower / faster / reset *(Strumming Patterns dialog only)* | S / F / D |
 | Open the Tuner dialog | Ctrl+Shift+T |
 | Open the Reorder Attributes dialog | Ctrl+Shift+A |
 | Move the selected attribute up / down *(Reorder Attributes dialog only)* | Alt+U / Alt+D |

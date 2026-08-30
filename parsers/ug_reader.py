@@ -9,6 +9,27 @@ from models.synthetic_parts import (
 )
 from models.strum_codes import strumming_pattern_text
 from parsers.ug_source import UgSource, read_ug_source, read_ug_source_file
+from parsers.ug_timeline_builder import count_tablature_blocks
+
+
+def _capo_text(capo: int) -> str:
+    """"2nd fret" / "1st fret" / ..."""
+    suffix = "th"
+    if capo % 100 not in (11, 12, 13):
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(capo % 10, "th")
+    return f"{capo}{suffix} fret"
+
+
+def _strumming_credit(patterns) -> str:
+    """The Region 1 "Strumming Pattern" credit. A single unnamed pattern
+    shows the decoded stroke-word list it always showed; anything else lists
+    the pattern names (the full slot detail is in Tools > Strumming
+    Patterns, which can't be read comfortably from one status-bar line)."""
+    if not patterns:
+        return ""
+    if len(patterns) == 1 and not patterns[0].name:
+        return strumming_pattern_text(patterns[0].codes) or ""
+    return ", ".join(p.name or "Unnamed" for p in patterns)
 
 
 
@@ -19,9 +40,11 @@ def _build_music_data(source: UgSource, file_path: str) -> MusicData:
     never drift from how the original live import looked."""
     parts_info = _build_parts_info()
 
-    tempo_bpm = source.bpm or 120
+    patterns = source.strum_patterns
+    first = patterns[0] if patterns else None
+    tempo_bpm = (first.bpm if first and first.bpm else None) or 120
     tempo_display = f"{tempo_bpm} quarter notes per minute"
-    if source.is_triplet:
+    if first and first.is_triplet:
         tempo_display += " (shuffle feel)"
 
     credits = {
@@ -32,12 +55,19 @@ def _build_music_data(source: UgSource, file_path: str) -> MusicData:
         credits["Key Signature"] = source.tonality
     if source.tuning:
         credits["Tuning"] = source.tuning
+    if source.capo:
+        credits["Capo"] = _capo_text(source.capo)
     if source.difficulty:
         credits["Difficulty"] = source.difficulty
-    strumming_text = strumming_pattern_text(source.strum_codes)
+    strumming_text = _strumming_credit(patterns)
     if strumming_text:
         credits["Strumming Pattern"] = strumming_text
+    tab_blocks = count_tablature_blocks(source.content)
+    if tab_blocks:
+        credits["Tablature blocks"] = f"{tab_blocks} (not imported)"
     credits["Tempo"] = tempo_display
+    if source.tab_id:
+        credits["Ultimate Guitar ID"] = str(source.tab_id)
 
     return MusicData(
         credits=credits,

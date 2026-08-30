@@ -8,6 +8,16 @@ announcement_event_for_beat(), so the two contexts speak off one definition.
 """
 from typing import Optional, Tuple
 
+# Ref 28 AC3/AC4: the ts-relative beat-position word ("one", "e", "and",
+# "a") now lives in models/beat_position_words.py so models/strum_pattern.py
+# can share it without importing audio/. Re-exported here for callers/tests
+# that import these names from this module.
+from models.beat_position_words import (  # noqa: F401
+    FRACTIONAL_BEAT_WORDS,
+    NUMBER_WORDS,
+    spoken_word_for_beat_position,
+)
+
 # A dedicated channel is REQUIRED, not just tidy. click_default and
 # talking_metronome_default both start their note layout at 60
 # (tools/config.ini), so a click and a spoken word on the same beat (AC2
@@ -34,44 +44,6 @@ WORD_NOTES = {
     "and": 68,
     "a": 69,
 }
-
-NUMBER_WORDS = {
-    1: "one",
-    2: "two",
-    3: "three",
-    4: "four",
-    5: "five",
-    6: "six",
-    7: "seven",
-}
-
-# Ref 28 AC4: a beat split into four (simple-time semiquavers) speaks
-# e/and/a at 25/50/75%; split into three (a triplet) speaks and/a at 33/66%.
-# 50% and 33% sharing "and", and 75% and 66% sharing "a", is per the AC and
-# not a collision - a given remainder only ever matches one family.
-FRACTIONAL_BEAT_WORDS = {
-    0.25: "e",
-    0.33: "and",
-    0.5: "and",
-    0.67: "a",
-    0.75: "a",
-}
-
-
-def spoken_word_for_beat_position(beat_position: float) -> Optional[str]:
-    """The word for this ts-relative beat position (Ref 18), or None if
-    nothing in Ref 28 AC3/AC4 covers it - whole beat 8+ (AC3 defines 1-7),
-    or a fraction outside the AC4 set (a demisemiquaver's 12.5%, say). None
-    means stay silent; the announcer never invents a word to fill a gap.
-
-    beat_position arrives already rounded to 2dp (TimelineBuilder), so exact
-    float-key lookups are safe without a tolerance check.
-    """
-    whole = int(beat_position)
-    fraction = round(beat_position - whole, 2)
-    if fraction == 0:
-        return NUMBER_WORDS.get(whole)
-    return FRACTIONAL_BEAT_WORDS.get(fraction)
 
 
 def announcement_event_for_beat(beat_position: float) -> Optional[Tuple[int, int, int, int, int]]:

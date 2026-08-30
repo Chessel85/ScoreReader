@@ -76,6 +76,7 @@ class GpTimelineBuilder:
         self.to_coda_marks: List = []
         self.fine_marks: List = []
         self.navigation_jumps: List = []
+        self.section_spans: List = []  # P2: UG-only so far
         self.total_measures: int = 0
 
     def build(self) -> List[EventSlice]:

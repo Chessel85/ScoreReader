@@ -516,7 +516,7 @@ class SynthEngine:
         grace_note_schedule.py) derives a brief, tempo-aware ring time from
         main_events' own durations, the one piece of real timing math,
         split out as a pure function for the same testability reason
-        build_strum_schedule is. Deliberately flat, like play_strummed_bar:
+        build_strum_schedule is. Deliberately flat, like play_strum_pattern:
         one QTimer schedules the whole delayed main chord via the ordinary
         play_chord (retrigger=False, since retrigger for the WHOLE call
         already happened above if requested) rather than nesting further
@@ -564,30 +564,22 @@ class SynthEngine:
             return
         self.play_chord(main_events, retrigger=False)
 
-    def play_strummed_bar(
+    def play_strum_pattern(
         self,
         channel: int,
         program: Optional[int],
         midi_pitches: List[int],
-        pattern: List[str],
-        total_duration_ms: float,
+        slots: list,
+        slot_ms: float,
         note_delay_ms: float = 20.0,
         retrigger: bool = True,
     ):
-        """Plays one bar as a real strummed sequence instead of one flat
-        chord-stab - a UG import's counterpart of play_chord, used only
-        when MusicData.ug_strum_pattern is non-empty (see
-        audio/strum_schedule.py's sound_events, the dispatcher that decides
-        which of the two this call site should use).
-
-        build_strum_schedule (audio/strum_schedule.py) does the actual
-        arpeggio math as a pure function; this method is just the QTimer
-        wrapper around it. Deliberately flat, not nested (no timer
-        scheduling further timers) - every note-on across the whole bar is
-        scheduled up front from the single list build_strum_schedule
-        returns, which is both simpler to reason about and simpler to
-        cancel (stop_all_notes() only has one list, _pending_strum_timers,
-        to clear) than a two-level stroke-then-note nesting would be.
+        """Demo-plays a whole strum pattern (used by the Strumming Patterns
+        dialog). build_strum_schedule (audio/strum_schedule.py) does the
+        arpeggio + effect math as a pure function; this is just the flat
+        QTimer wrapper - every note-on across the pattern is scheduled up
+        front from the one list it returns, tracked in _pending_strum_timers
+        so stop_all_notes() cancels a still-running demo.
         """
         if self._fs is None:
             return
@@ -598,7 +590,7 @@ class SynthEngine:
         if program is not None:
             self.set_program(channel & 0x0F, program)
 
-        schedule = build_strum_schedule(pattern, midi_pitches, total_duration_ms, note_delay_ms)
+        schedule = build_strum_schedule(slots, midi_pitches, slot_ms, note_delay_ms)
         ch = channel & 0x0F
         for start_ms, pitch, velocity, note_duration_ms in schedule:
             timer = QTimer()

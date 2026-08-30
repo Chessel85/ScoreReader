@@ -28,6 +28,8 @@ from dataclasses import asdict, dataclass, field
 from typing import List, Optional
 from urllib.parse import urlparse
 
+from models.strum_pattern import StrumPattern
+
 # The saved-file format tag/version (parsers/ug_reader.py's UgFileReader,
 # main_window.py's Save Ultimate Guitar Import As...). A future format
 # change bumps FORMAT_VERSION and read_ug_source_file rejects an older/
@@ -35,7 +37,11 @@ from urllib.parse import urlparse
 # reasoning packaging/version_info.txt's versioning already uses elsewhere
 # in this repo.
 FORMAT_TAG = "recall_score_ug_import"
-FORMAT_VERSION = 1
+# v2 (2026-08-30): stores the FULL strummings list as `strum_patterns`
+# (was one flat `strum_codes` list + top-level `bpm`/`is_triplet`) plus
+# `capo`. read_ug_source_file still accepts a v1 file and migrates it.
+FORMAT_VERSION = 2
+_SUPPORTED_VERSIONS = (1, 2)
 
 # A real desktop-browser UA - confirmed necessary during discovery (UG's
 # response body was ~193KB with this header vs. a near-empty shell without
@@ -47,10 +53,8 @@ _USER_AGENT = (
 
 _JS_STORE_RE = re.compile(r'class="js-store" data-content="(.*?)"></div>', re.S)
 
-# S2: the strum-code tables and both decodes now live in
-# models/strum_codes.py (a pure lookup table, like models/gm_instruments.py),
-# so models/ need not import from parsers/ just to read them. Import them
-# from there, not from here.
+# The strum-code decode table lives in models/strum_codes.py; one parsed
+# pattern is models/strum_pattern.StrumPattern.
 
 
 @dataclass
@@ -65,16 +69,17 @@ class UgSource:
     # only fetches and validates, mirroring gp_source.py's raw-parse-only
     # scope.
     content: str
-    bpm: Optional[int]
-    is_triplet: bool
     tab_id: int
     source_url: str
-    # Raw tab_view.strummings[0].measures[] codes, unresolved - see
-    # strumming_pattern_text/strum_directions below for the two ways this
-    # gets interpreted. Empty for a tab with no strumming block, same
-    # "absence isn't an error" convention as tonality/tuning above when UG
-    # doesn't supply one.
-    strum_codes: List[int] = field(default_factory=list)
+    # The FULL tab_view.strummings list (6 of the 18 example tabs carry
+    # 2-3 patterns), each with its own name/bpm/denominator/is_triplet.
+    # Empty for a tab with no strumming block - "absence isn't an error",
+    # same convention as tonality/tuning. The score tempo is
+    # strum_patterns[0].bpm when present (see parsers/ug_reader.py).
+    strum_patterns: List[StrumPattern] = field(default_factory=list)
+    # tab_view.meta.capo - the fret a capo is placed at, or None. Reported
+    # in Region 1 as e.g. "2nd fret".
+    capo: Optional[int] = None
 
 
 def validate_url_shape(url: str) -> None:
@@ -146,20 +151,10 @@ def read_ug_source(url: str) -> UgSource:
     tuning = (tuning_info.get("value") or tuning_info.get("name") or "").strip()
     difficulty = (tab.get("difficulty") or meta.get("difficulty") or "").strip()
 
-    bpm: Optional[int] = None
-    is_triplet = False
-    strum_codes: List[int] = []
-    strummings = tab_view.get("strummings") or []
-    if strummings:
-        first = strummings[0] or {}
-        bpm_val = first.get("bpm")
-        if isinstance(bpm_val, (int, float)) and bpm_val > 0:
-            bpm = int(round(bpm_val))
-        is_triplet = bool(first.get("is_triplet"))
-        for entry in first.get("measures") or []:
-            code = (entry or {}).get("measure")
-            if isinstance(code, int):
-                strum_codes.append(code)
+    capo_val = meta.get("capo")
+    capo = int(capo_val) if isinstance(capo_val, (int, float)) and capo_val else None
+
+    strum_patterns = _parse_strummings(tab_view.get("strummings") or [])
 
     tab_id_val = tab.get("id")
     tab_id = int(tab_id_val) if isinstance(tab_id_val, (int, float)) else 0
@@ -171,12 +166,39 @@ def read_ug_source(url: str) -> UgSource:
         tuning=tuning,
         difficulty=difficulty,
         content=content,
-        bpm=bpm,
-        is_triplet=is_triplet,
         tab_id=tab_id,
         source_url=url,
-        strum_codes=strum_codes,
+        strum_patterns=strum_patterns,
+        capo=capo,
     )
+
+
+def _parse_strummings(strummings: list) -> List[StrumPattern]:
+    """Every entry of tab_view.strummings (not just [0]), each a
+    {part, denuminator, bpm, is_triplet, measures[]} object. `measures` is
+    misnamed - it is the flat list of slot codes."""
+    patterns: List[StrumPattern] = []
+    for entry in strummings:
+        entry = entry or {}
+        bpm_val = entry.get("bpm")
+        bpm = int(round(bpm_val)) if isinstance(bpm_val, (int, float)) and bpm_val > 0 else None
+        denom_val = entry.get("denuminator")
+        denominator = int(denom_val) if isinstance(denom_val, (int, float)) and denom_val else None
+        codes = [
+            (slot or {}).get("measure")
+            for slot in entry.get("measures") or []
+            if isinstance((slot or {}).get("measure"), int)
+        ]
+        patterns.append(
+            StrumPattern(
+                name=(entry.get("part") or "").strip(),
+                bpm=bpm,
+                denominator=denominator,
+                is_triplet=bool(entry.get("is_triplet")),
+                codes=codes,
+            )
+        )
+    return patterns
 
 
 def write_ug_source(source: UgSource, file_path: str) -> None:
@@ -200,13 +222,47 @@ def read_ug_source_file(file_path: str) -> UgSource:
 
     if payload.get("format") != FORMAT_TAG:
         raise ValueError(f"'{file_path}' is not a Recall Score Ultimate Guitar import file.")
-    if payload.get("version") != FORMAT_VERSION:
+    version = payload.get("version")
+    if version not in _SUPPORTED_VERSIONS:
         raise ValueError(
-            f"'{file_path}' was saved with a different format version "
-            f"({payload.get('version')!r}) than this app supports ({FORMAT_VERSION})."
+            f"'{file_path}' was saved with a format version ({version!r}) this "
+            f"app does not support (expected one of {_SUPPORTED_VERSIONS})."
         )
 
     try:
+        if version == 1:
+            # v1 stored one flat code list + top-level bpm/is_triplet and no
+            # denominator. Migrate to a single unnamed pattern; the dialog
+            # degrades to "slot N" labels for it (denominator is honestly
+            # unknown, not guessed).
+            codes = payload.get("strum_codes") or []
+            strum_patterns = (
+                [
+                    StrumPattern(
+                        name="",
+                        bpm=payload.get("bpm"),
+                        denominator=None,
+                        is_triplet=bool(payload.get("is_triplet")),
+                        codes=codes,
+                    )
+                ]
+                if (codes or payload.get("bpm"))
+                else []
+            )
+            capo = None
+        else:
+            strum_patterns = [
+                StrumPattern(
+                    name=p.get("name", ""),
+                    bpm=p.get("bpm"),
+                    denominator=p.get("denominator"),
+                    is_triplet=bool(p.get("is_triplet")),
+                    codes=p.get("codes") or [],
+                )
+                for p in payload.get("strum_patterns") or []
+            ]
+            capo = payload.get("capo")
+
         return UgSource(
             song_name=payload["song_name"],
             artist_name=payload["artist_name"],
@@ -214,11 +270,10 @@ def read_ug_source_file(file_path: str) -> UgSource:
             tuning=payload["tuning"],
             difficulty=payload["difficulty"],
             content=payload["content"],
-            bpm=payload["bpm"],
-            is_triplet=payload["is_triplet"],
             tab_id=payload["tab_id"],
             source_url=payload["source_url"],
-            strum_codes=payload.get("strum_codes", []),
+            strum_patterns=strum_patterns,
+            capo=capo,
         )
     except KeyError as e:
         raise ValueError(f"'{file_path}' is missing expected data ({e}).") from e

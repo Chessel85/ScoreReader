@@ -1,59 +1,78 @@
 # audio/strum_schedule.py
-"""Turns a UG import's decoded strum pattern into an actual note-on
-schedule, and dispatches playback events to the right synth call. Split
-from audio/synth_engine.py deliberately: build_strum_schedule is a pure
-function (no Qt, no timers), so the arpeggio math - the part most worth
-getting right and easiest to get wrong - is directly unit-testable without
-a real event loop. SynthEngine.play_strummed_bar (audio/synth_engine.py)
-is the thin QTimer-driven wrapper around this.
+"""Turns a decoded strum pattern into an actual note-on schedule, and
+dispatches playback events to the right synth call.
+
+build_strum_schedule is a pure function (no Qt, no timers) so the arpeggio
+math is directly unit-testable without a real event loop.
+SynthEngine.play_strum_pattern (audio/synth_engine.py) is the thin
+QTimer-driven wrapper around it, used only by the Strumming Patterns dialog
+for demo playback - per-chord strummed audition was removed (a
+multi-pattern song's per-bar choice was arbitrary, and the audio was
+unreadable anyway), so ordinary UG chord navigation now auditions as a
+plain chord through the unchanged play_chord path.
 """
 from typing import List, Optional, Tuple
 
+from models.strum_codes import STRUM_CODES, StrumSlot
+
+_BASE_VELOCITY = 90
+_ACCENT_VELOCITY = 116
+_MUTED_VELOCITY = 42
+
 
 def build_strum_schedule(
-    pattern: List[str],
+    slots: List[StrumSlot],
     midi_pitches: List[int],
-    total_duration_ms: float,
+    slot_ms: float,
     note_delay_ms: float = 20.0,
 ) -> List[Tuple[float, int, int, float]]:
     """Returns (start_offset_ms, pitch, velocity, note_duration_ms) for
-    every individual note-on across one bar's strum pattern.
+    every individual note-on across a strum pattern.
 
-    Strokes are spaced evenly across total_duration_ms - UG's own
-    strummings block is "part": "whole", one fixed pattern for the entire
-    song, with no further per-bar timing info, so even spacing is the only
-    thing there's a basis for. "down" fires the chord low-to-high, "up"
-    high-to-low, each note_delay_ms after the previous string (your own
-    steer on the timing). "mute" produces no events at all - a first
-    attempt played it as a short, quiet chunk (the closest FluidSynth
-    approximation to a palm mute without a dedicated sample), but live-
-    tested that read as audible stuttering rather than a mute, so a muted
-    slot is silent instead: it still occupies its place in the pattern
-    (so surrounding strokes keep their real timing), it just sounds
-    nothing.
+    Each slot occupies `slot_ms` (derived by the caller from the pattern's
+    own bpm/denominator/is_triplet - see models/strum_pattern.slot_ms), so
+    a 32-slot two-bar sixteenth pattern plays across two bars, not squeezed
+    into one chord. A "down" stroke fires the chord low-to-high, "up"
+    high-to-low, each `note_delay_ms` after the previous string.
+
+    Effects:
+    - "pause" / "real pause": nothing sounds, but the slot still takes up
+      its `slot_ms` so surrounding strokes keep their real timing.
+    - "mute" and "p.m." (palm mute): a short, quiet damped stroke.
+    - "accent": the same stroke at a higher velocity.
     """
-    if not pattern or not midi_pitches:
+    if not slots or not midi_pitches:
         return []
 
-    slot_ms = max(1.0, total_duration_ms / len(pattern))
     events: List[Tuple[float, int, int, float]] = []
-
-    for slot_index, direction in enumerate(pattern):
+    for slot_index, slot in enumerate(slots):
         slot_start = slot_index * slot_ms
-
-        if direction == "mute":
+        if slot.stroke in ("pause", "real pause"):
             continue
 
-        ordered = sorted(midi_pitches) if direction == "down" else sorted(midi_pitches, reverse=True)
+        damped = slot.effect == "mute" or slot.stroke == "p.m."
+        if slot.effect == "accent":
+            velocity = _ACCENT_VELOCITY
+        elif damped:
+            velocity = _MUTED_VELOCITY
+        else:
+            velocity = _BASE_VELOCITY
+
+        # p.m. reads as a downstroke in practice; otherwise honour the mark.
+        low_to_high = slot.stroke in ("down", "p.m.")
+        ordered = sorted(midi_pitches) if low_to_high else sorted(midi_pitches, reverse=True)
         for i, pitch in enumerate(ordered):
             start = slot_start + i * note_delay_ms
-            # Later strings in the arpeggio get a shorter ring so they stay
-            # inside their own slot rather than bleeding into the next
-            # stroke's timing.
-            duration = max(20.0, slot_ms - i * note_delay_ms)
-            events.append((start, pitch, 90, duration))
-
+            full = max(20.0, slot_ms - i * note_delay_ms)
+            duration = min(full, slot_ms * 0.35) if damped else full
+            events.append((start, pitch, velocity, duration))
     return events
+
+
+def slots_from_codes(codes: List[int]) -> List[StrumSlot]:
+    """Decode raw UG codes to StrumSlots, unknown codes as a silent pause
+    (the safest fallback - see models/strum_codes)."""
+    return [STRUM_CODES.get(code, StrumSlot("pause", "none")) for code in codes]
 
 
 def sound_events(
@@ -61,26 +80,15 @@ def sound_events(
 ) -> None:
     """The single dispatch point discrete audition (PlaybackController) and
     continuous playback (Sequencer) both route through instead of calling
-    synth.play_chord directly. A UG score's Chords part is the only part
-    that ever contributes real pitches to `events` (Lyrics never does - see
-    parsers/ug_timeline_builder.py), so get_playback_events_for_indices/
-    get_playback_events_at_index always return exactly one group for a UG
-    score - events[0] is always the right (and only) group to reroute.
+    synth.play_chord directly.
 
     grace_events (from MusicData.get_grace_note_events_for_indices/
     get_grace_note_events_at_index) routes through play_chord_with_grace
-    instead when non-empty - a UG score never has any (UG's synthetic
-    Chords/Lyrics parts carry no MusicXML <grace> concept), so the two
-    routes never need to combine. Every other case falls straight through
-    to the unchanged play_chord path."""
+    when non-empty; every other case falls straight through to play_chord.
+    """
     if not events:
         return
-    if music_data.is_ug and music_data.ug_strum_pattern:
-        channel, program, pitches, duration_ms = events[0]
-        synth.play_strummed_bar(
-            channel, program, pitches, music_data.ug_strum_pattern, duration_ms, retrigger=retrigger
-        )
-    elif grace_events:
+    if grace_events:
         synth.play_chord_with_grace(events, grace_events, retrigger=retrigger)
     else:
         synth.play_chord(events, retrigger=retrigger)

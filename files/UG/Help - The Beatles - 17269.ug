@@ -1,0 +1,35 @@
+{
+  "format": "recall_score_ug_import",
+  "version": 2,
+  "song_name": "Help",
+  "artist_name": "The Beatles",
+  "tonality": "A",
+  "tuning": "E A D G B E",
+  "difficulty": "",
+  "content": "Help!\r\n(Lennon/McCartney)\r\nThe Beatles\r\nHelp! (1965)\r\n\r\n[ch]A6[/ch]  x02222\r\n\r\n\r\n[Intro]\r\n\r\n[tab][ch]Bm[/ch]                [ch]Bm/A[/ch]\r\nHelp! I need somebody [/tab]\r\n[tab][ch]G[/ch]                 [ch]G/F#[/ch]\r\nHelp! Not just anybody[/tab]\r\n[tab][ch]E[/ch]\r\nHelp! You know I need someone,[/tab]\r\n[tab][ch]A[/ch]\r\nHelp![/tab]\r\n\r\n\r\n[Verse]\r\n\r\n[tab][ch]A[/ch]                            [ch]C#m[/ch]               [ch]F#m[/ch]\r\nWhen I was younger, so much younger than today,[/tab]\r\n[tab]                          [ch]D[/ch]       [ch]G[/ch]   [ch]A[/ch]\r\nI never needed anybody's help in any way.[/tab]\r\n[tab]                                [ch]C#m[/ch]                 [ch]F#m[/ch]\r\nBut now those days are gone I'm not so self-assured,[/tab]\r\n[tab]                                        [ch]D[/ch]    [ch]G[/ch]       [ch]A[/ch]\r\nNow I find I've changed my mind, I've opened up the doors.[/tab]\r\n\r\n\r\n[Chorus]\r\n\r\n[tab] [ch]Bm[/ch]                                 [ch]Bm/A[/ch]    [ch]G[/ch]                            [ch]G/F#[/ch]\r\nHelp me if you can I'm feeling down, and I do appreciate you being 'round.[/tab]\r\n[tab] [ch]E[/ch]                                                  [ch]A[/ch]\r\nHelp me get my feet back on the ground, won't you please please help me.[/tab]\r\n\r\n\r\n[Verse]\r\n\r\n[tab]                              [ch]C#m[/ch]                   [ch]F#m[/ch]\r\nAnd now my life has changed in oh so many ways,[/tab]\r\n[tab]                           [ch]D[/ch]     [ch]G[/ch]       [ch]A[/ch]\r\nMy independence seemed to vanish in the haze.[/tab]\r\n[tab]                         [ch]C#m[/ch]                 [ch]F#m[/ch]\r\nBut every now and then I feel so insecure,[/tab]\r\n[tab]                                        [ch]D[/ch]    [ch]G[/ch]     [ch]A[/ch]\r\nI know that I just need you like I've never done before.[/tab]\r\n\r\n\r\n[Chorus]\r\n\r\n[tab] [ch]Bm[/ch]                                 [ch]Bm/A[/ch]    [ch]G[/ch]                            [ch]G/F#[/ch]\r\nHelp me if you can I'm feeling down, and I do appreciate you being 'round.[/tab]\r\n[tab] [ch]E[/ch]                                                 [ch]A[/ch]\r\nHelp me get my feet back on the ground, won't you please please help me.[/tab]\r\n\r\n\r\n[Verse]\r\n\r\n[tab][ch]A[/ch]                            [ch]C#m[/ch]               [ch]F#m[/ch]\r\nWhen I was younger, so much younger than today,[/tab]\r\n[tab]                          [ch]D[/ch]       [ch]G[/ch]   [ch]A[/ch]\r\nI never needed anybody's help in any way.[/tab]\r\n[tab]                                [ch]C#m[/ch]                 [ch]F#m[/ch]\r\nBut now those days are gone I'm not so self-assured,[/tab]\r\n[tab]                                        [ch]D[/ch]    [ch]G[/ch]       [ch]A[/ch]\r\nNow I find I've changed my mind, I've opened up the doors.[/tab]\r\n\r\n\r\n[Chorus]\r\n\r\n[tab] [ch]Bm[/ch]                                 [ch]Bm/A[/ch]    [ch]G[/ch]                            [ch]G/F#[/ch]\r\nHelp me if you can I'm feeling down, and I do appreciate you being 'round.[/tab]\r\n[tab] [ch]E[/ch]                                                  [ch]A[/ch]               [ch]F#m[/ch]\r\nHelp me get my feet back on the ground, won't you please please help me.[/tab]\r\n[tab]             [ch]A[/ch]  [ [ch]A6[/ch] ]\r\nHelp me, help me, ooo.[/tab]",
+  "tab_id": 17269,
+  "source_url": "https://tabs.ultimate-guitar.com/tab/the-beatles/help-chords-17269",
+  "strum_patterns": [
+    {
+      "name": "Main Pattern",
+      "bpm": 191,
+      "denominator": 8,
+      "is_triplet": true,
+      "codes": [
+        1,
+        202,
+        202,
+        1,
+        202,
+        202,
+        1,
+        202,
+        101,
+        1,
+        202,
+        101
+      ]
+    }
+  ],
+  "capo": null
+}

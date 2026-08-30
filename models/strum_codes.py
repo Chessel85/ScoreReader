@@ -1,45 +1,72 @@
 # models/strum_codes.py
-"""S2: Ultimate Guitar's undocumented strumming-pattern code vocabulary,
-and the two ways this app reads it.
+"""Ultimate Guitar's undocumented strumming-pattern code vocabulary.
 
 A pure lookup table over a fixed numeric vocabulary - the same category as
 models/gm_instruments.py and models/gm_percussion_map.py, which already
-live here - so models/ can read it without importing parsers/. It was
-previously in parsers/ug_source.py, which made MusicData.ug_strum_pattern a
-models -> parsers dependency for what is really just a decode table.
+live here - so models/ can read it without importing parsers/.
 
-parsers/ug_source.py re-exports all four names, so its own callers (and the
-tests that import them from there) are unchanged.
+The full 9-code table below is taken verbatim from UG's own front-end
+bundle (webpack module 78736, each numeric code -> {stroke, effect}); the
+app previously knew only 3 of them and mislabelled 202 (a pause - the
+single most common code in every real pattern) as a "muted strum".
 
-The codes themselves were confirmed by the user against a real UG page; no
-public documentation exists for them. The two decodes are two different
-interpretations of the same tab_view.strummings[0].measures[] field:
-words for Region 1's display text (parsers/ug_reader.py), directions for
-actual playback (audio/strum_schedule.py, via MusicData.ug_strum_pattern).
+parsers/ug_source.py re-exports the names its own callers already import
+from there, so those import sites are unchanged.
 """
-from typing import List, Optional
+from dataclasses import dataclass
+from typing import Dict, List, Optional
 
-STRUM_CODE_WORDS = {1: "downstroke", 101: "upstroke", 202: "muted strum"}
-STRUM_CODE_DIRECTIONS = {1: "down", 101: "up", 202: "mute"}
+
+@dataclass(frozen=True)
+class StrumSlot:
+    """One slot of a decoded strum pattern. `stroke` is one of
+    "down"/"up"/"p.m."/"pause"/"real pause"; `effect` is one of
+    "none"/"mute"/"accent"."""
+
+    stroke: str
+    effect: str
+
+
+# code -> (stroke, effect), from UG's own bundle. 201 is a palm mute,
+# 202/203 are pauses (silent slots that still take up their place in the
+# bar's timing).
+STRUM_CODES: Dict[int, StrumSlot] = {
+    1: StrumSlot("down", "none"),
+    2: StrumSlot("down", "mute"),
+    3: StrumSlot("down", "accent"),
+    101: StrumSlot("up", "none"),
+    102: StrumSlot("up", "mute"),
+    103: StrumSlot("up", "accent"),
+    201: StrumSlot("p.m.", "none"),
+    202: StrumSlot("pause", "none"),
+    203: StrumSlot("real pause", "none"),
+}
+
+
+def slot_words(code: int) -> str:
+    """The spoken form of one code: "down", "down muted", "down accented",
+    "up", "up muted", "up accented", "palm mute", "pause", "real pause". An
+    unknown code (should one turn up on a different tab) renders as
+    "code N" rather than being silently coerced to a stroke."""
+    slot = STRUM_CODES.get(code)
+    if slot is None:
+        return f"code {code}"
+    if slot.stroke == "p.m.":
+        return "palm mute"
+    if slot.stroke in ("pause", "real pause"):
+        return slot.stroke
+    if slot.effect == "mute":
+        return f"{slot.stroke} muted"
+    if slot.effect == "accent":
+        return f"{slot.stroke} accented"
+    return slot.stroke
 
 
 def strumming_pattern_text(strum_codes: List[int]) -> Optional[str]:
-    """Region 1 credits text for a whole-song strum pattern (UG's own
-    strummings block is "part": "whole" - one fixed pattern for the entire
-    song, not per-bar/per-section - so this is a score-wide fact like
-    Tempo/Key/Tuning, shown once, never repeated per chord note). An
-    unrecognised code (should one turn up on a different tab) renders as
-    its own raw number rather than raising."""
+    """Region 1 credits text for a whole-song strum pattern - one fixed
+    pattern for the entire song (a score-wide fact like Tempo/Key/Tuning,
+    shown once, never repeated per chord note). None when there is no
+    pattern. An unrecognised code renders as "code N" via slot_words."""
     if not strum_codes:
         return None
-    words = [STRUM_CODE_WORDS.get(code, str(code)) for code in strum_codes]
-    return ", ".join(words)
-
-
-def strum_directions(strum_codes: List[int]) -> List[str]:
-    """The same codes, decoded into audio/strum_schedule.py's compact
-    direction vocabulary ("down"/"up"/"mute") instead of display words. An
-    unrecognised code defaults to "mute" - the quietest, safest fallback
-    for a code outside the three the user confirmed, rather than guessing a
-    stroke direction."""
-    return [STRUM_CODE_DIRECTIONS.get(code, "mute") for code in strum_codes]
+    return ", ".join(slot_words(code) for code in strum_codes)

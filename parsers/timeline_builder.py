@@ -761,6 +761,9 @@ class TimelineBuilder:
         self.to_coda_marks: List[ToCodaMark] = []
         self.fine_marks: List[FineMark] = []
         self.navigation_jumps: List[NavigationJump] = []
+        # P2: song sections. Only UgTimelineBuilder populates this so far
+        # (MusicXML rehearsal marks could feed it later); stubbed empty here.
+        self.section_spans: List = []
         # From measure_start_quarters, which exists regardless of note
         # content - deriving it from timeline_slices would undercount a
         # trailing all-rest measure, since rests are skipped from there.

@@ -76,9 +76,17 @@ def _fake_ug_import_dialog(monkeypatch, window, *, url: str, accept: bool = True
     return dialog
 
 
-def _fake_ug_source(content: str, strum_codes=None):
+def _fake_ug_source(content: str, strum_codes=None, *, capo=None):
     from parsers.ug_source import UgSource
+    from models.strum_pattern import StrumPattern
 
+    patterns = []
+    if strum_codes:
+        patterns.append(
+            StrumPattern(
+                name="", bpm=115, denominator=16, is_triplet=True, codes=list(strum_codes)
+            )
+        )
     return UgSource(
         song_name="Test Song",
         artist_name="Test Artist",
@@ -86,17 +94,17 @@ def _fake_ug_source(content: str, strum_codes=None):
         tuning="E A D G B E",
         difficulty="novice",
         content=content,
-        bpm=115,
-        is_triplet=True,
         tab_id=1,
         source_url="https://tabs.ultimate-guitar.com/tab/test/test-chords-1",
-        strum_codes=strum_codes or [],
+        strum_patterns=patterns,
+        capo=capo,
     )
 
 
-def _load_ug_import(window, qtbot, monkeypatch, content: str, strum_codes=None):
+def _load_ug_import(window, qtbot, monkeypatch, content: str, strum_codes=None, *, capo=None):
     monkeypatch.setattr(
-        "parsers.ug_reader.read_ug_source", lambda url: _fake_ug_source(content, strum_codes)
+        "parsers.ug_reader.read_ug_source",
+        lambda url: _fake_ug_source(content, strum_codes, capo=capo),
     )
     _fake_ug_import_dialog(
         monkeypatch, window, url="https://tabs.ultimate-guitar.com/tab/test/test-chords-1"

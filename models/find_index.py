@@ -124,6 +124,8 @@ class FindIndex:
         last_of = data.last_visible_event_index_of_measure
         at_quarters = data.slice_index_at_or_after_quarters
 
+        if kind == "section":
+            return [first_of(s.start_measure) for s in data.section_spans]
         if kind == "repeat_start":
             return [first_of(s.start_measure) for s in data.repeat_spans]
         if kind == "repeat_end":

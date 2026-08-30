@@ -4,8 +4,21 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog
 
+from models.find_target import FindTarget
 from widgets.find_dialog import FindDialog
 from tests.support.main_window_helpers import _focus, _show, load_and_wait
+
+
+def test_section_marking_row_drops_the_marking_prefix(qtbot):
+    """A song section is the one marking kind users name directly, so its
+    row reads "Section", not "Marking: Section" like every other kind."""
+    section = FindTarget("marking", "section", "Section")
+    repeat = FindTarget("marking", "repeat_start", "Repeat start")
+    dialog = FindDialog(targets=[section, repeat], counts={section: 3, repeat: 1})
+    qtbot.addWidget(dialog)
+
+    labels = [dialog.target_list.item(i).text() for i in range(dialog.target_list.count())]
+    assert labels == ["Section, 3 occurrences", "Marking: Repeat start, 1 occurrence"]
 
 
 # --- Find (Ctrl+F / Alt+Right / Alt+Left) -------------------------------

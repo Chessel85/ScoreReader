@@ -361,9 +361,14 @@ def test_recent_files_menu_shows_a_placeholder_when_empty(window):
 def test_opening_a_file_adds_it_to_recent_files_menu(window, qtbot, minimal_score):
     load_and_wait(window, qtbot, minimal_score)
 
+    import os
+
     actions = window.recent_files_menu.actions()
     assert len(actions) == 1
-    assert actions[0].text() == minimal_score
+    # P5: filename first, folder in brackets.
+    assert actions[0].text() == (
+        f"{os.path.basename(minimal_score)} ({os.path.dirname(minimal_score)})"
+    )
 
 
 def test_triggering_a_recent_file_action_reopens_it(window, qtbot, minimal_score):
@@ -402,5 +407,7 @@ def test_saving_a_ug_import_adds_the_real_path_to_recent_files(
     )
     window.save_ultimate_guitar_import_as()
 
+    import os
+
     actions = [a.text() for a in window.recent_files_menu.actions()]
-    assert actions == [save_path]
+    assert actions == [f"{os.path.basename(save_path)} ({os.path.dirname(save_path)})"]

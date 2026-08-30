@@ -28,11 +28,12 @@ from models.playback_event_builder import PlaybackEventBuilder
 from models.playback_jump_state import PlaybackJumpState
 from models.repeat_span import RepeatSpan
 from models.score_config_data import ScoreConfig
+from models.section_span import SectionSpan
 from models.segno_mark import SegnoMark
+from models.strum_pattern import StrumPattern
 from models.tempo_change import TempoChange
 from models.timeline_navigator import TimelineNavigator
 from models.to_coda_mark import ToCodaMark
-from models.strum_codes import strum_directions
 from models.synthetic_parts import CHORDS_PART_ID, LYRICS_PART_ID
 
 
@@ -207,6 +208,10 @@ class MusicData:
     to_coda_marks: List[ToCodaMark] = field(default_factory=list)
     fine_marks: List[FineMark] = field(default_factory=list)
     navigation_jumps: List[NavigationJump] = field(default_factory=list)
+    # P2: named song sections (Intro/Verse/Chorus/...). Populated by
+    # UgTimelineBuilder today; other builders stub it empty. Drives a
+    # Region 5 row, a Find target, and Ctrl+Alt+Left/Right section stepping.
+    section_spans: List[SectionSpan] = field(default_factory=list)
 
     @property
     def is_midi(self) -> bool:
@@ -261,17 +266,14 @@ class MusicData:
         return {p.part_id for p in self.parts_info if p.part_id in (CHORDS_PART_ID, LYRICS_PART_ID)}
 
     @property
-    def ug_strum_pattern(self) -> List[str]:
-        """The whole-song strum pattern ("down"/"up"/"mute" per stroke),
-        decoded from ug_source.strum_codes - empty for a UG tab with no
-        strumming block, or any non-UG score. Computed on read rather than
-        cached: cheap (a handful of dict lookups over a short list), so
-        there's no invalidation concern to manage. Consumed by
-        audio/strum_schedule.py's sound_events() to decide whether a UG
-        Chords bar plays as a real strummed pattern or a flat chord."""
+    def ug_strum_patterns(self) -> List[StrumPattern]:
+        """The UG import's parsed strumming patterns (0..3), or []. Consumed
+        by the Strumming Patterns dialog (Edit menu). Per-chord strummed
+        audition was removed - the pattern is legible in the dialog and,
+        with a multi-pattern song, was arbitrary per bar anyway."""
         if self.ug_source is None:
             return []
-        return strum_directions(self.ug_source.strum_codes)
+        return list(self.ug_source.strum_patterns)
 
     def __post_init__(self):
         # S1 collaborators. Each holds a reference back to this MusicData
@@ -901,6 +903,28 @@ class MusicData:
         bar_word = vocabulary.bar_word(self.uk_terms)
         rows: List[PerformanceRegionRow] = []
 
+        # P2: the song section containing the cursor, first - a start row
+        # (Ctrl+Home -> the section's first bar) and an end row (Ctrl+End ->
+        # its last bar), both stating the full range so one row read alone
+        # conveys it. The label only changes when the cursor crosses a
+        # section boundary, so _refresh_region_5's diff means one change cue
+        # per section and no per-step rebuild.
+        for span in self.section_spans:
+            if span.start_measure <= slice_.measure <= span.end_measure:
+                span_range = f"{bar_word} {span.start_measure} to {bar_word} {span.end_measure}"
+                rows.append(
+                    PerformanceRegionRow(
+                        label=f"Section start: {span.label}: {span_range}",
+                        jump_target_measure=span.start_measure,
+                    )
+                )
+                rows.append(
+                    PerformanceRegionRow(
+                        label=f"Section end: {span.label}: {span_range}",
+                        jump_target_measure=span.end_measure,
+                    )
+                )
+
         for span in self.repeat_spans:
             if span.start_measure <= slice_.measure <= span.end_measure:
                 rows.append(
@@ -1318,6 +1342,13 @@ class MusicData:
             )
             lines.append(f"Anacrusis starts on beat {beat_str}")
         lines.append(f"Number of {bar_word.lower()}s: {self.total_measures}")
+
+        if self.section_spans:
+            lines.append(f"Sections: {len(self.section_spans)}")
+            for span in self.section_spans:
+                lines.append(
+                    f"{span.label}: {bar_word} {span.start_measure} to {bar_word} {span.end_measure}"
+                )
 
         note_counts: Dict[str, int] = {}
         for s in self._real_timeline_slices:

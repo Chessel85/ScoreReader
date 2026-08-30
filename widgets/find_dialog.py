@@ -66,8 +66,15 @@ class FindDialog(QDialog):
         # trailing occurrence count.
         self._filter_index: List[tuple] = []
         for target in self._targets:
-            prefix = _CATEGORY_PREFIX.get(target.category, target.category.capitalize())
-            label_text = f"{prefix}: {target.label}"
+            # "marking" is a shared umbrella over ~46 structural kinds, so it
+            # normally prefixes the row ("Marking: Repeat start"). A song
+            # section is the one kind users think of by name, not as a
+            # "marking", so it drops the prefix and reads just "Section".
+            if target.category == "marking" and target.key == "section":
+                label_text = target.label
+            else:
+                prefix = _CATEGORY_PREFIX.get(target.category, target.category.capitalize())
+                label_text = f"{prefix}: {target.label}"
             if target.value is not None:
                 label_text = f"{label_text}: {target.value}"
             row_text = label_text
