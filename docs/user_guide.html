@@ -367,9 +367,9 @@ and Lyrics</a>
 id="toc-what-this-feature-is-for">10.1 What This Feature Is For</a></li>
 <li><a href="#importing-a-song" id="toc-importing-a-song">10.2 Importing
 a Song</a></li>
-<li><a href="#chords-and-lyrics-as-two-parts"
-id="toc-chords-and-lyrics-as-two-parts">10.3 Chords and Lyrics as Two
-Parts</a></li>
+<li><a href="#chords-lyrics-and-tablature-as-parts"
+id="toc-chords-lyrics-and-tablature-as-parts">10.3 Chords, Lyrics and
+Tablature as Parts</a></li>
 <li><a href="#saving-and-reopening-an-import"
 id="toc-saving-and-reopening-an-import">10.4 Saving and Reopening an
 Import</a></li>
@@ -527,12 +527,13 @@ shows one row per track rather than the usual part/stave/voice detail,
 since a MIDI track has no real staff or voice concept), and often no -
 or wrong - key signature. Edit &gt; Instruments… and Edit &gt; Key
 Signature… (section 14.2) correct either.</p>
-<p>Recall Score can also import chords and lyrics directly from an
-Ultimate Guitar tab page - see section 10. If a MusicXML file already
-carries its own chord symbols and/or lyrics (for example a
-lead-sheet-style score exported from MuseScore), those are picked up
-automatically as extra Chords and Lyrics parts too - see section
-10.6.</p>
+<p>Recall Score can also import a song directly from an Ultimate Guitar
+tab page - its chords and lyrics from a chords page, or its guitar
+tablature (with real string and fret numbers) from an ASCII-tablature
+“Tab” page - see section 10. If a MusicXML file already carries its own
+chord symbols and/or lyrics (for example a lead-sheet-style score
+exported from MuseScore), those are picked up automatically as extra
+Chords and Lyrics parts too - see section 10.6.</p>
 <h3 id="a-five-minute-first-walkthrough">2.4 A Five-Minute First
 Walkthrough</h3>
 <p>A short first run-through, once you have a MusicXML file to open:</p>
@@ -618,10 +619,11 @@ guitar’s left-hand position marks, or a tempo/technique instruction some
 notation programs write as plain text - gains an extra Stave Text voice,
 listed first among that stave’s voices; section 9.7 covers what it looks
 and sounds like.</p>
-<p>For a MIDI file, or an imported song’s Chords/Lyrics rows (section
-10), the tree stops at the part level: MIDI has no real stave or voice
-concept, and a Chords or Lyrics row has no notated structure underneath
-it either, so there’s nothing further to expand.</p>
+<p>For a MIDI file, or an imported song’s Chords, Lyrics or Tablature
+rows (section 10), the tree stops at the part level: MIDI has no real
+stave or voice concept, and an imported Chords, Lyrics or Tablature row
+has no notated structure underneath it either, so there’s nothing
+further to expand.</p>
 <h3 id="region-3-note-timeline">3.4 Region 3: Note Timeline</h3>
 <p>The region you’ll spend the most time in. It lists the note or notes
 sounding at your current position in the score.
@@ -1197,6 +1199,16 @@ soon as you move to the next note - it’s a “something changed here” flag
 for that one position, not a range you’re inside. The score’s opening
 time signature and tempo are never flagged this way, since Region 1 and
 the status bar already show those the moment a file loads.</p>
+<p>For an imported Ultimate Guitar song (section 10), Region 5 also
+carries up to three “what’s in effect here” rows at the top -
+<code>Section:</code>, <code>Chord:</code> and <code>Lyric:</code> -
+naming the current song section, the chord sounding now, and the lyric
+being sung. These update quietly as you move through the song: stepping
+to a new chord within the same section relabels the <code>Chord:</code>
+row without re-sounding the change cue, while crossing into a new
+section (or a new repeat/ending/hairpin) still sounds it.
+<code>Ctrl+Home</code> / <code>Ctrl+End</code> on one of these rows
+jumps to where that section, chord or lyric began.</p>
 <h3 id="the-something-changed-cue">8.2 The “Something Changed” Cue</h3>
 <p>A short, distinct sound plays whenever the set of entries showing in
 Region 5 changes as you navigate - for example the moment you step into
@@ -1330,12 +1342,20 @@ setting to turn it on or off.</p>
 <h2 id="chords-and-lyrics">10. Chords and Lyrics</h2>
 <h3 id="what-this-feature-is-for">10.1 What This Feature Is For</h3>
 <p>Alongside notated scores (section 2.3), Recall Score can import a
-song’s chords and lyrics directly from a chord-tab page on Ultimate
-Guitar (ultimate-guitar.com) - the kind of page that shows chord names
-positioned above the lyric words they go with, rather than full sheet
-music. This is a different, simpler kind of material than a MusicXML or
-MIDI score: there’s no notated rhythm or real bar structure, just chord
-changes and the words that go with them.</p>
+song directly from Ultimate Guitar (ultimate-guitar.com). Two kinds of
+page are supported:</p>
+<ul>
+<li>A <strong>chords page</strong> - chord names positioned above the
+lyric words they go with, rather than full sheet music. This is a
+different, simpler kind of material than a MusicXML or MIDI score:
+there’s no notated rhythm or real bar structure, just chord changes and
+the words that go with them.</li>
+<li>An <strong>ASCII-tablature “Tab” page</strong> - the rows of dashes
+and fret numbers that spell out exactly which string and fret to play.
+Recall Score reads these into a Tablature part whose notes carry real
+string and fret numbers and play back (section 10.3), plus any
+plain-text chords and lyrics printed alongside the tab.</li>
+</ul>
 <p>A MusicXML file can carry the same kind of information too - chord
 symbols and/or lyric text written directly into the score alongside its
 real notated notes. Recall Score picks these up automatically, with no
@@ -1345,15 +1365,18 @@ importing step needed - see section 10.6.</p>
 page’s web address - paste the full URL of an Ultimate Guitar chords
 page (for example
 <code>https://tabs.ultimate-guitar.com/tab/&lt;artist&gt;/&lt;song&gt;-chords-&lt;id&gt;</code>)
-and select OK. Only “Chords”-type tab pages are supported - a Guitar Pro
-tab, plain tab, bass tab or ukulele-chords page on the same site will be
-rejected with an explanation. The import runs in the background, the
-same way opening a file does, so the rest of the app stays responsive
-while it fetches the page.</p>
+or ASCII-tablature “Tab” page and select OK. Only “Chords” and “Tab”
+pages are supported - a Guitar Pro tab, bass tab or ukulele-chords page
+on the same site will be rejected with an explanation. The import runs
+in the background, the same way opening a file does, so the rest of the
+app stays responsive while it fetches the page.</p>
 <p>Once imported, Region 1 shows the song’s title, artist, key, tuning,
 difficulty and tempo the same way any other score does. When the page
 carries the extra information, Region 1 also shows:</p>
 <ul>
+<li><strong>Source</strong> - shown for a “Tab” page, noting that the
+material came from an Ultimate Guitar tablature page rather than a plain
+chords page.</li>
 <li><strong>Capo</strong> - the fret a capo is placed at, for example
 “2nd fret”.</li>
 <li><strong>Strumming Pattern</strong> - for a single pattern, the
@@ -1361,25 +1384,36 @@ sequence of strokes (down, up, muted, palm mute, pause) as written; for
 a song with more than one pattern, the names of the patterns. See Tools
 &gt; Strumming Patterns… (section 10.7) for the full slot-by-slot
 detail.</li>
-<li><strong>Tablature blocks</strong> - a count of any raw
-guitar-tablature riffs on the page that were left out of the import, so
-“there was nothing there” and “we didn’t import that part” stay
-distinguishable.</li>
+<li><strong>Tablature</strong> - for a “Tab” page, the number of
+tablature bars that were read in. (On a chords page this instead reads
+“Tablature blocks” with a count of any raw tablature riffs that were
+left out, so “there was nothing there” and “we didn’t import that part”
+stay distinguishable.)</li>
 <li><strong>Ultimate Guitar ID</strong> - the numeric ID of the tab on
 ultimate-guitar.com, shown as the last row.</li>
 </ul>
-<h3 id="chords-and-lyrics-as-two-parts">10.3 Chords and Lyrics as Two
-Parts</h3>
-<p>An imported song shows up in Region 2 as two parts, Chords and
-Lyrics, each a single flat row with nothing further to expand underneath
-- the same simplified display a MIDI track gets (section 3.3), since
-neither has real staves or voices. Mute either with <code>F8</code>
-exactly like any other part.</p>
+<h3 id="chords-lyrics-and-tablature-as-parts">10.3 Chords, Lyrics and
+Tablature as Parts</h3>
+<p>An imported song shows up in Region 2 as two parts, Chords and Lyrics
+- or three, when the page is an ASCII-tablature “Tab” page, which adds a
+Tablature part. Each is a single flat row with nothing further to expand
+underneath - the same simplified display a MIDI track gets (section
+3.3), since none has real staves or voices. Mute any of them with
+<code>F8</code> exactly like any other part.</p>
 <p>Moving through the Note region works the same as any other score:
 each step forward is one chord change. The Chords row names the chord
 (for example “Fmaj7”) and plays it as a plain chord. The Lyrics row
 shows the words sung during that chord, or “No lyrics” for instrumental
 passages such as an intro with nothing sung yet.</p>
+<p>The Tablature row, when present, carries the actual notes read from
+the tab: each shows its note name, the string and fret it’s played on,
+and a duration, and plays back on a steel-string guitar sound. Because
+an ASCII tab has no written rhythm, the notes are laid out on a plain
+even-eighth-note grid - a reading aid for stepping through the riff, not
+a claim about how it’s actually timed. String and fret numbers are shown
+by default for this part without your having to add them (section 9.2).
+Where a tab page also prints chord names and lyric lines, those still
+feed the Chords and Lyrics parts as usual.</p>
 <p>(Earlier versions played the chords as an arpeggiated strum. That is
 gone: the strum audio was almost impossible to follow by ear, and a song
 with more than one pattern had no way to know which one applied to a
@@ -1418,6 +1452,15 @@ rhythm. Occasionally a lyric line’s timing in the source page is
 imprecise (the original contributor’s own spacing), which can very
 occasionally show a lyric fragment split slightly oddly - this reflects
 the source page, not a fault in the import.</p>
+<p>For a “Tab” page, the same caveats apply to the Tablature part. An
+ASCII tab names only the string letters and fret numbers, never octaves,
+so which octave each string sounds in is inferred from a standard
+low-string-up layout - right for standard tuning and the common “drop”
+and step-down variants, but not for unusual tunings. Rhythm is the even
+grid described in section 10.3, and any lead-in text, technique markers
+(hammer-ons, slides and the like) or spacing quirks in the original tab
+are read as faithfully as possible but can occasionally group a note
+slightly oddly.</p>
 <h3 id="chords-and-lyrics-embedded-in-an-ordinary-musicxml-score">10.6
 Chords and Lyrics Embedded in an Ordinary MusicXML Score</h3>
 <p>Some MusicXML files carry chord symbols and/or lyric text written
@@ -1494,11 +1537,12 @@ sound (section 5.6) and stays put rather than wrapping. On a score with
 no section information (anything that is not an Ultimate Guitar import,
 so far), both shortcuts just play the boundary sound.</p>
 <p>While the cursor is inside a section, the Performance region (Region
-5, section 8) shows a “Section start” and a “Section end” row naming the
-section and its bar range; <code>Ctrl+Home</code> /
-<code>Ctrl+End</code> on those rows jump to the section’s first or last
-bar. The section is also a Find target (section 5.7) - “Section” in the
-Find list steps between section starts.</p>
+5, section 8) shows it: a <code>Section:</code> context row at the top
+naming the current section, plus a “Section start” and a “Section end”
+row giving its bar range. <code>Ctrl+Home</code> / <code>Ctrl+End</code>
+on any of them jumps to the section’s first or last bar. The section is
+also a Find target (section 5.7) - “Section” in the Find list steps
+between section starts.</p>
 <h2 id="tuning-your-instrument-the-tuner">11. Tuning Your Instrument
 (the Tuner)</h2>
 <h3 id="opening-the-tuner">11.1 Opening the Tuner</h3>
@@ -1648,8 +1692,9 @@ opened, most recent first, for quick reopening.</td>
 <tr>
 <td style="text-align: left;">Import from Ultimate Guitar…</td>
 <td style="text-align: left;">-</td>
-<td style="text-align: left;">Imports chords and lyrics from an Ultimate
-Guitar tab page URL (section 10).</td>
+<td style="text-align: left;">Imports a song from an Ultimate Guitar tab
+page URL - chords and lyrics from a chords page, or guitar tablature
+from an ASCII “Tab” page (section 10).</td>
 </tr>
 <tr>
 <td style="text-align: left;">Save Ultimate Guitar Import As…</td>
