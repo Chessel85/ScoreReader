@@ -1,5 +1,8 @@
 # Recall Score Release Notes
 
+## 2026.1.47
+
+* Attempts to permit importing of Ultimate Guitar pages when viewing tablature 
 
 ## 2026.1.46
 
