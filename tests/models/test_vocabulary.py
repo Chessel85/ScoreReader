@@ -6,6 +6,7 @@ from models.vocabulary import (
     bar_word,
     dynamic_name,
     duration_name,
+    looks_like_chord_token,
     spell_out_minor_chord,
 )
 
@@ -124,3 +125,17 @@ def test_spell_out_minor_chord_leaves_other_labels_untouched():
     # Already fine on a screen reader, or the "m" isn't a bare minor marker.
     for label in ("Cmaj7", "Dsus4", "C7", "G", "Adim", "A+", "Strum"):
         assert spell_out_minor_chord(label) == label
+
+
+def test_looks_like_chord_token_accepts_real_chords():
+    """P2: the conservative recogniser for a bare (un-[ch]-marked) chord
+    token above a UG "Tab" page's lyric line."""
+    for token in ("D", "F#m", "Bm", "Cmaj7", "G7", "Dsus4", "A/C#", "N.C.",
+                  "Em", "Bb", "C#m7", "Gadd9", "F#7", "Asus2"):
+        assert looks_like_chord_token(token), token
+
+
+def test_looks_like_chord_token_rejects_ordinary_words():
+    for token in ("the", "And", "nail", "by", "Bridge", "Solo", "I", "Ma'am",
+                  "home", "yard."):
+        assert not looks_like_chord_token(token), token

@@ -1,0 +1,15 @@
+{
+  "format": "recall_score_ug_import",
+  "version": 3,
+  "song_name": "Tab Riff Sample",
+  "artist_name": "Test Artist",
+  "tonality": "E",
+  "tuning": "E A D G B E",
+  "difficulty": "intermediate",
+  "content": "[Intro]\n\n[tab]e|-----------------|-----------------|\nB|-----------------|-----------------|\nG|-----------------|--------------9~-|\nD|--7--7--9--7--5--|--7--9--7--------|\nA|--7--7--9--7--5--|--7--9--7--------|\nE|--5--5--7--5--3--|--5--7--5--------|[/tab]\n\n[Verse]\n\n[tab]e|--0--3/5--x--|\nB|--1--1----0--|\nG|--0--0----0--|[/tab]\n",
+  "tab_id": 999001,
+  "source_url": "https://tabs.ultimate-guitar.com/tab/test-artist/tab-riff-sample-tabs-999001",
+  "strum_patterns": [],
+  "capo": null,
+  "tab_type": "Tab"
+}

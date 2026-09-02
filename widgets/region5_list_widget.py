@@ -30,27 +30,54 @@ class Region5ListWidget(RegionFocusCycleMixin, QListWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        # P2: how many of the leading items are live "context" rows (Section
+        # / Chord / Lyric), so update_context_rows knows which ones it may
+        # relabel in place.
+        self._context_row_count = 0
 
     def _main_window(self) -> "MainWindow":
         # Only ever created by MainWindow.setup_ui, so window() is always it.
         return self.window()  # type: ignore[return-value]
 
-    def refresh_list(self, rows: List[PerformanceRegionRow]) -> None:
-        """Clears and repopulates. An empty set shows a single "None"
-        placeholder (UserRole None, so Ctrl+Home/End no-ops on it), matching
+    def refresh_list(
+        self,
+        context_rows: List[PerformanceRegionRow],
+        structural_rows: List[PerformanceRegionRow],
+    ) -> None:
+        """Clears and repopulates: the P2 context rows first, then the Ref
+        29 structural rows. Both empty shows a single "None" placeholder
+        (UserRole None, so Ctrl+Home/End no-ops on it), matching
         get_region_3_data()'s own ["None"] convention."""
         self.clear()
-        if not rows:
+        self._context_row_count = len(context_rows)
+        all_rows = list(context_rows) + list(structural_rows)
+        if not all_rows:
             item = QListWidgetItem("None")
             item.setData(Qt.ItemDataRole.UserRole, None)
             self.addItem(item)
         else:
-            for row in rows:
+            for row in all_rows:
                 item = QListWidgetItem(row.label)
                 item.setData(Qt.ItemDataRole.UserRole, row)
                 self.addItem(item)
         if self.count() > 0:
             self.setCurrentRow(0)
+
+    def update_context_rows(self, context_rows: List[PerformanceRegionRow]) -> bool:
+        """Relabels the leading context rows in place (text + UserRole),
+        never clearing or moving focus - mirrors
+        RegionPresenter.refresh_region_3_labels. Returns False (caller falls
+        back to a full refresh_list) when the row count changed, so a
+        Section/Chord/Lyric row appearing or disappearing still rebuilds."""
+        if len(context_rows) != self._context_row_count:
+            return False
+        for i, row in enumerate(context_rows):
+            item = self.item(i)
+            if item is None:
+                return False
+            item.setText(row.label)
+            item.setData(Qt.ItemDataRole.UserRole, row)
+        return True
 
     def current_row_data(self) -> Optional[PerformanceRegionRow]:
         """The row behind the focused item, or None (empty list or the

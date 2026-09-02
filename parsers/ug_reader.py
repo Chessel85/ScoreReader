@@ -6,10 +6,12 @@ from models.synthetic_parts import (
     CHORDS_PART_NAME,
     LYRICS_PART_ID,
     LYRICS_PART_NAME,
+    TAB_PART_ID,
+    TAB_PART_NAME,
 )
 from models.strum_codes import strumming_pattern_text
 from parsers.ug_source import UgSource, read_ug_source, read_ug_source_file
-from parsers.ug_timeline_builder import count_tablature_blocks
+from parsers.ug_timeline_builder import content_part_summary, count_tablature_blocks
 
 
 def _capo_text(capo: int) -> str:
@@ -38,7 +40,8 @@ def _build_music_data(source: UgSource, file_path: str) -> MusicData:
     .ug file) - both just need to get hold of a UgSource by whatever means,
     then build MusicData identically, so a saved-and-reopened import can
     never drift from how the original live import looked."""
-    parts_info = _build_parts_info()
+    has_chords, has_tab = content_part_summary(source.content)
+    parts_info = _build_parts_info(has_chords, has_tab)
 
     patterns = source.strum_patterns
     first = patterns[0] if patterns else None
@@ -51,6 +54,8 @@ def _build_music_data(source: UgSource, file_path: str) -> MusicData:
         "Title": source.song_name,
         "Artist": source.artist_name,
     }
+    if source.tab_type and source.tab_type != "Chords":
+        credits["Source"] = f"Ultimate Guitar {source.tab_type} tab"
     if source.tonality:
         credits["Key Signature"] = source.tonality
     if source.tuning:
@@ -62,14 +67,14 @@ def _build_music_data(source: UgSource, file_path: str) -> MusicData:
     strumming_text = _strumming_credit(patterns)
     if strumming_text:
         credits["Strumming Pattern"] = strumming_text
-    tab_blocks = count_tablature_blocks(source.content)
-    if tab_blocks:
-        credits["Tablature blocks"] = f"{tab_blocks} (not imported)"
+    tab_bars = count_tablature_blocks(source.content)
+    if has_tab and tab_bars:
+        credits["Tablature"] = f"{tab_bars} bars imported"
     credits["Tempo"] = tempo_display
     if source.tab_id:
         credits["Ultimate Guitar ID"] = str(source.tab_id)
 
-    return MusicData(
+    music_data = MusicData(
         credits=credits,
         parts_info=parts_info,
         file_path=file_path,
@@ -80,24 +85,44 @@ def _build_music_data(source: UgSource, file_path: str) -> MusicData:
         ug_source=source,
     )
 
+    if has_tab:
+        # Ref 15 AC4-style default: the Tablature voice should speak its
+        # note, string, fret and duration immediately, without the user
+        # reaching for the F1 attribute menu first (mirrors GpReader's
+        # synthetic Chords voice seeding).
+        music_data.voice_display_attributes[(TAB_PART_ID, 1, 1)] = {
+            "step", "string", "fret", "duration",
+        }
 
-def _build_parts_info() -> list:
-    return [
-        PartStructureInfo(
+    return music_data
+
+
+def _build_parts_info(has_chords: bool, has_tab: bool) -> list:
+    parts = []
+    if has_chords or not has_tab:
+        parts.append(PartStructureInfo(
             part_id=CHORDS_PART_ID,
             name=CHORDS_PART_NAME,
             gmidi_program=25,  # Acoustic Guitar (nylon) - same default PartStructureInfo itself uses
             staves_clefs={1: "Chord chart"},
             staves_voices={1: [1]},
-        ),
-        PartStructureInfo(
+        ))
+        parts.append(PartStructureInfo(
             part_id=LYRICS_PART_ID,
             name=LYRICS_PART_NAME,
             gmidi_program=25,  # unused - the Lyrics part never carries a real midi_pitch/chord_pitches
             staves_clefs={1: "Lyrics"},
             staves_voices={1: [1]},
-        ),
-    ]
+        ))
+    if has_tab:
+        parts.append(PartStructureInfo(
+            part_id=TAB_PART_ID,
+            name=TAB_PART_NAME,
+            gmidi_program=26,  # Acoustic Guitar (steel)
+            staves_clefs={1: "Tab stave"},
+            staves_voices={1: [1]},
+        ))
+    return parts
 
 
 class UgReader:

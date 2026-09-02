@@ -271,6 +271,28 @@ def spell_out_minor_chord(label: str) -> str:
     return " ".join(words) + bass
 
 
+# A conservative recogniser for a bare (un-marked-up) chord token, used to
+# parse the plain-text chord-over-lyric section of an Ultimate Guitar "Tab"
+# page - the words above the lyric lines that have no [ch] markup around
+# them. Deliberately narrow: a token that isn't obviously a chord leaves the
+# whole line classified as lyrics. Same "presentational text shared across
+# chord sources" placement as spell_out_minor_chord.
+_CHORD_TOKEN_RE = re.compile(
+    r"^(N\.?C\.?|"
+    r"[A-G](#{1,2}|b{1,2})?"
+    r"(m|min|maj|M|dim|aug|sus|add|\+|°)?"
+    r"\d{0,2}"
+    r"(sus[24]|add\d{1,2}|maj\d{1,2}|dim\d|[b#]\d{1,2}|no\d)?"
+    r"(/[A-G](#|b)?)?)$"
+)
+
+
+def looks_like_chord_token(token: str) -> bool:
+    """True for D, F#m, Cmaj7, G7, Dsus4, A/C#, N.C. - false for ordinary
+    words. Deliberately conservative: a doubtful line stays lyrics."""
+    return bool(_CHORD_TOKEN_RE.match(token))
+
+
 def attribute_label(attribute_key: str, uk_terms: bool) -> str:
     """Region 3/4's optional-attribute display label for `attribute_key`
     (Ref 15 AC4) - only "measure" differs by dialect (D-15 excludes

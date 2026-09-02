@@ -2856,3 +2856,87 @@ def test_p4_offered_targets_never_read_zero_occurrences(
         md = timeline(score)
         for target, count in md.available_find_targets_with_counts():
             assert count >= 1
+
+
+# --- P2: Region 5 live "what's in effect" context rows (UG "Tab" import) ----
+
+def _ug_context_music_data() -> MusicData:
+    """A chord onset (bar 1), two fingerpicking-only slices (bar 2), then a
+    new chord onset (bar 3) - the coarse/fine granularity the context rows
+    reconcile."""
+    from models.section_span import SectionSpan
+    from models.synthetic_parts import CHORDS_PART_ID, LYRICS_PART_ID, TAB_PART_ID
+
+    def chord_slice(measure, quarters, sym, words):
+        return EventSlice(
+            measure=measure, beat_position=1.0, quarter_length=4.0,
+            quarters_from_start=quarters, time_sig=(4, 4),
+            notes=[
+                NoteData(step_name=sym, measure=measure, beat_position=1.0,
+                         ts_duration=4.0, quarter_length=4.0, part_id=CHORDS_PART_ID,
+                         part_name="Chords", staff=1, voice=1, midi_pitch=60,
+                         chord_symbol=sym),
+                NoteData(step_name=words, measure=measure, beat_position=1.0,
+                         ts_duration=4.0, quarter_length=4.0, part_id=LYRICS_PART_ID,
+                         part_name="Lyrics", staff=1, voice=1, midi_pitch=None),
+            ],
+        )
+
+    def tab_slice(quarters, beat):
+        return EventSlice(
+            measure=2, beat_position=beat, quarter_length=0.5,
+            quarters_from_start=quarters, time_sig=(4, 4),
+            notes=[NoteData(step_name="E", measure=2, beat_position=beat,
+                            ts_duration=0.5, quarter_length=0.5, part_id=TAB_PART_ID,
+                            part_name="Tablature", staff=1, voice=1, midi_pitch=52)],
+        )
+
+    return MusicData(
+        parts_info=[
+            PartStructureInfo(part_id=CHORDS_PART_ID, name="Chords"),
+            PartStructureInfo(part_id=LYRICS_PART_ID, name="Lyrics"),
+            PartStructureInfo(part_id=TAB_PART_ID, name="Tablature"),
+        ],
+        timeline_slices=[
+            chord_slice(1, 0.0, "D", "I know they say"),
+            tab_slice(4.0, 1.0),
+            tab_slice(4.5, 1.5),
+            chord_slice(3, 8.0, "G", "Out here it's like"),
+        ],
+        section_spans=[SectionSpan(label="Verse 1", start_measure=1, end_measure=3)],
+    )
+
+
+def test_context_rows_forward_fill_the_earlier_chord_through_a_fingerpicking_run():
+    md = _ug_context_music_data()
+
+    mid_run = [r.label for r in md.get_performance_context_rows(2)]
+    assert mid_run == ["Section: Verse 1", "Chord: D", "Lyric: I know they say"]
+
+
+def test_context_rows_flip_to_the_new_chord_at_its_onset():
+    md = _ug_context_music_data()
+
+    at_onset = [r.label for r in md.get_performance_context_rows(3)]
+    assert at_onset == ["Section: Verse 1", "Chord: G", "Lyric: Out here it's like"]
+
+
+def test_context_rows_have_no_chord_or_lyric_before_the_first_onset():
+    md = _ug_context_music_data()
+    # slice 0 IS the first onset, so it already has them; a score that opens
+    # on a tab bar would not. Assert the jump targets instead.
+    rows = md.get_performance_context_rows(0)
+    assert [r.label for r in rows] == ["Section: Verse 1", "Chord: D", "Lyric: I know they say"]
+    assert rows[0].jump_target_measure == 1  # section start bar
+
+
+def test_context_rows_empty_without_sections_chords_or_lyrics():
+    note = NoteData(step_name="C", measure=1, beat_position=1.0, ts_duration=1.0,
+                    quarter_length=1.0, part_id="P1", part_name="Piano", staff=1,
+                    voice=1, midi_pitch=60)
+    md = MusicData(
+        parts_info=[PartStructureInfo(part_id="P1", name="Piano", gmidi_program=1)],
+        timeline_slices=[EventSlice(measure=1, beat_position=1.0, quarter_length=1.0,
+                                    quarters_from_start=0.0, notes=[note])],
+    )
+    assert md.get_performance_context_rows(0) == []

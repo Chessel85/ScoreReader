@@ -32,6 +32,14 @@ CHORDS_PART_NAME = "Chords"
 LYRICS_PART_ID = "lyrics"
 LYRICS_PART_NAME = "Lyrics"
 
+# Tablature: a real top-level synthetic PART, created by
+# parsers/ug_timeline_builder.py for an Ultimate Guitar *Tab* import (an
+# ASCII-tablature page). Holds one note per struck fret with string/fret
+# data; sits alongside Chords/Lyrics when the same page also has [ch]/lyric
+# sections.
+TAB_PART_ID = "tablature"
+TAB_PART_NAME = "Tablature"
+
 # Fabricated VOICE ids, as opposed to the fabricated parts above: each
 # attaches to a REAL part/staff and drops into Region 2's existing
 # part->staff->voice tree for free, needing no changes to mute/solo,

@@ -1,5 +1,6 @@
 # parsers/ug_source.py
-"""Raw Ultimate Guitar chord-tab fetch + parse: the UG counterpart of
+"""Raw Ultimate Guitar tab fetch + parse (Chords pages and ASCII-tablature
+Tab pages): the UG counterpart of
 xml_source.py/midi_source.py/gp_source.py. UgReader and UgTimelineBuilder
 both read this SAME parse so they can't independently re-fetch/re-walk the
 page and drift (the bug class CLAUDE.md documents MusicXMLReader's two-pass
@@ -40,8 +41,10 @@ FORMAT_TAG = "recall_score_ug_import"
 # v2 (2026-08-30): stores the FULL strummings list as `strum_patterns`
 # (was one flat `strum_codes` list + top-level `bpm`/`is_triplet`) plus
 # `capo`. read_ug_source_file still accepts a v1 file and migrates it.
-FORMAT_VERSION = 2
-_SUPPORTED_VERSIONS = (1, 2)
+# v3 (2026-08-31): adds `tab_type` ("Chords" / "Tab"). A v1/v2 payload has
+# no such key and is read as "Chords".
+FORMAT_VERSION = 3
+_SUPPORTED_VERSIONS = (1, 2, 3)
 
 # A real desktop-browser UA - confirmed necessary during discovery (UG's
 # response body was ~193KB with this header vs. a near-empty shell without
@@ -80,6 +83,11 @@ class UgSource:
     # tab_view.meta.capo - the fret a capo is placed at, or None. Reported
     # in Region 1 as e.g. "2nd fret".
     capo: Optional[int] = None
+    # tab.type - "Chords" or "Tab". Informational: ug_timeline_builder.py
+    # decides tab-vs-chord per [tab] block from `content`, not from this;
+    # it drives a Region 1 "Source" credit and is round-tripped by the .ug
+    # save format (v3+).
+    tab_type: str = "Chords"
 
 
 def validate_url_shape(url: str) -> None:
@@ -129,10 +137,17 @@ def read_ug_source(url: str) -> UgSource:
     except (json.JSONDecodeError, KeyError, TypeError) as e:
         raise ValueError(f"Could not parse Ultimate Guitar page data: {e}") from e
 
-    tab_type = tab.get("type")
-    if tab_type != "Chords":
+    # UG's own `tab.type` vocabulary: "Chords" for a chord/lyric page,
+    # "Tab"/"Tabs" for an ASCII-tablature page (both spellings seen in the
+    # wild), plus "Pro"/"Bass Tabs"/"Ukulele Chords"/"Guitar Pro"/... which
+    # use notation models this import doesn't handle. Normalise the ASCII
+    # variants to "Tab" so the stored value and Region 1 "Source" credit are
+    # consistent regardless of which spelling the page used.
+    raw_tab_type = tab.get("type")
+    tab_type = "Tab" if raw_tab_type in ("Tab", "Tabs") else raw_tab_type
+    if tab_type not in ("Chords", "Tab"):
         raise ValueError(
-            f"This page is a '{tab_type}' tab; only Chords tabs are supported."
+            f"This page is a '{raw_tab_type}' tab; only Chords and Tab pages are supported."
         )
 
     song_name = (tab.get("song_name") or "").strip()
@@ -170,6 +185,7 @@ def read_ug_source(url: str) -> UgSource:
         source_url=url,
         strum_patterns=strum_patterns,
         capo=capo,
+        tab_type=tab_type,
     )
 
 
@@ -274,6 +290,7 @@ def read_ug_source_file(file_path: str) -> UgSource:
             source_url=payload["source_url"],
             strum_patterns=strum_patterns,
             capo=capo,
+            tab_type=payload.get("tab_type", "Chords"),
         )
     except KeyError as e:
         raise ValueError(f"'{file_path}' is missing expected data ({e}).") from e

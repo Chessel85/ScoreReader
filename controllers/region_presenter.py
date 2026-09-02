@@ -47,6 +47,10 @@ class RegionPresenter(QObject):
         # Region 5 empty instead of showing its "None" placeholder. Reset to
         # None per load so a new file isn't diffed against the old one's.
         self.last_performance_row_labels: Optional[List[str]] = None
+        # P2: the live Section/Chord/Lyric context-row labels, diffed
+        # separately so an intra-section chord/lyric change relabels in
+        # place with no cue, while a structural change still rebuilds.
+        self.last_context_labels: Optional[List[str]] = None
 
     @property
     def music_data(self):
@@ -61,6 +65,7 @@ class RegionPresenter(QObject):
         """A new score's Region 5 must not be diffed against the old one's
         leftover labels."""
         self.last_performance_row_labels = None
+        self.last_context_labels = None
 
     def clear_all(self) -> None:
         """File > Close: blank every region and the status bar back to the
@@ -74,6 +79,7 @@ class RegionPresenter(QObject):
         self.region_5.clear()
         self.status_bar.reset()
         self.last_performance_row_labels = None
+        self.last_context_labels = None
 
     def refresh_all(self, play_all: bool = True) -> None:
         if not self.music_data:
@@ -268,13 +274,25 @@ class RegionPresenter(QObject):
         otherwise stay silent under the ordinary dedup above."""
         if not self.music_data:
             return
-        rows = self.music_data.get_performance_region_rows()
-        labels = [r.label for r in rows]
-        if labels != self.last_performance_row_labels:
-            self.region_5.refresh_list(rows)
+        md = self.music_data
+        structural = md.get_performance_region_rows()
+        context = md.get_performance_context_rows()
+        struct_labels = [r.label for r in structural]
+        if struct_labels != self.last_performance_row_labels:
+            self.region_5.refresh_list(context, structural)
             self.session.synth.play_performance_cue(*performance_cue_event())
-            self.last_performance_row_labels = labels
-        elif self.music_data.is_at_beginning_repeat_target():
+            self.last_performance_row_labels = struct_labels
+            self.last_context_labels = [r.label for r in context]
+            return
+        ctx_labels = [r.label for r in context]
+        if ctx_labels != self.last_context_labels:
+            # P2: an intra-section chord/lyric change - relabel in place,
+            # no cue. Fall back to a full rebuild only if the row count
+            # changed (a context row appeared or vanished).
+            if not self.region_5.update_context_rows(context):
+                self.region_5.refresh_list(context, structural)
+            self.last_context_labels = ctx_labels
+        elif md.is_at_beginning_repeat_target():
             self.session.synth.play_performance_cue(*performance_cue_event())
 
     def select_all_region_3(self) -> None:

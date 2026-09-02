@@ -1,21 +1,23 @@
 # parsers/ug_timeline_builder.py
-"""Builds the flat, sorted EventSlice timeline for an Ultimate Guitar chord
+"""Builds the flat, sorted EventSlice timeline for an Ultimate Guitar
 import - the UG counterpart of TimelineBuilder (MusicXML) / MidiTimelineBuilder
 / GpTimelineBuilder. UG gives neither real bar boundaries nor a time
 signature - the only structure in wiki_tab.content is chord placement
-relative to lyric text and [Section] labels - so:
+relative to lyric text, [Section] labels and [tab]...[/tab] blocks - so:
 
-- Bar numbers are fabricated: one bar per chord change, always (the user's
-  own steer during planning - "songs very often have just one chord per
-  bar"). No per-line or strumming-grid heuristics.
-- time_sig stays the EventSlice default (4, 4) on every slice - not
-  inferred from the strumming grid size, to avoid unverified meter-guessing.
+- Bar numbers are fabricated. A chord/lyric block: one bar per chord change,
+  always (the user's own steer during planning - "songs very often have just
+  one chord per bar"). An ASCII-tablature block: one bar per '|' barline
+  column in the source (an explicit marker), or the whole block as one bar
+  when it has no interior barline.
+- Rhythm is flat: a chord bar is one whole-bar event; a tab bar plays its
+  struck columns in sequence as eighth notes. No inferred rhythm - matching
+  the "intentionally simple, not notation-accurate" philosophy of the rest
+  of this import.
+- time_sig stays the EventSlice default (4, 4) on every slice.
 - Tempo is a single, whole-piece value (strum_patterns[0].bpm when present,
-  else the same 120 default MIDI/GP use) - the strummings block has no per-position
-  tempo-change data, only one pattern for the whole tab, so there is nothing
-  here that plays the role of MIDI/GP's tempo_changes list. UgReader passes
-  this bpm straight to MusicData's constructor (mirroring GpReader, which
-  does the same rather than building a tempo_changes entry).
+  else the same 120 default MIDI/GP use). UgReader passes this bpm straight
+  to MusicData's constructor.
 
 Deviation from every other timeline builder, worth calling out: `source` is
 effectively REQUIRED here, not an optional-with-fallback. A real MIDI/GP
@@ -25,32 +27,45 @@ fetchable at that path - build() raises if source is None rather than
 attempting a bogus re-fetch.
 """
 import re
-from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import List, Optional, Tuple, Union
 
 from music21 import harmony
 
+from models import guitar_tuning
 from models.event_slice import EventSlice
 from models.note_data import NoteData
 from models.parts_structure import PartStructureInfo
+from models.pitch_spelling import spell_pitch
 from models.section_span import SectionSpan
-from models.synthetic_parts import CHORDS_PART_ID, LYRICS_PART_ID
-from models.vocabulary import spell_out_minor_chord
+from models.synthetic_parts import (
+    CHORDS_PART_ID,
+    LYRICS_PART_ID,
+    TAB_PART_ID,
+    TAB_PART_NAME,
+)
+from models.vocabulary import looks_like_chord_token, spell_out_minor_chord
 from parsers.ug_source import UgSource
 
-# S2: re-exported from models/synthetic_parts.py (one definition, see
-# there) - these were an independent second copy of the same literals.
+# S2: CHORDS_PART_ID / LYRICS_PART_ID / TAB_PART_ID are re-exported from
+# models/synthetic_parts.py (one definition, see there) - these were an
+# independent second copy of the same literals.
 
 _CH_TAG_RE = re.compile(r"\[ch\](.*?)\[/ch\]")
 _SECTION_LINE_RE = re.compile(r"^\[([^\[\]/][^\[\]]*)\]$")
 # A line that is a fragment of ASCII guitar tablature: a leading string-name
 # letter followed by a bar, or a line made up almost entirely of the
-# characters tab diagrams use. UG chord tabs occasionally paste a riff as
-# raw tablature inside a [tab] block (Summer of '69 opens with two); the
-# chord/lyric aligner has no meaningful reading of one, so such a block is
-# skipped and counted rather than aligned as if the frets were lyrics.
+# characters tab diagrams use.
 _TAB_STRING_PREFIX_RE = re.compile(r"^[A-Ga-g][#b]?\s*\|")
-_TAB_LINE_CHARS = set("-|0123456789 .()/\\hpb~*")
+_TAB_LINE_CHARS = set("-|0123456789 .()/\\hpbrxX~*")
+
+# A string row of an ASCII tab block: a note-letter label, optional
+# accidental, whitespace, then '|', then the fret grid.
+_TAB_ROW_RE = re.compile(r"^\s*([A-Ga-g][#b]?)\s*\|(.*)$")
+
+# Single-character technique markers adjacent to a fret number.
+_GLISSANDO_CHARS = {"/": "slide", "\\": "slide"}
+_TECHNIQUE_CHARS = {"h": "hammer-on", "p": "pull-off", "b": "bend", "~": "vibrato"}
 
 
 @dataclass
@@ -58,6 +73,23 @@ class _ChordEvent:
     section: str
     symbol: str
     lyric_fragment: Optional[str]
+
+
+@dataclass
+class _TabNote:
+    string_index: int          # 0 = top row (highest string) -> NoteData.string = index + 1
+    fret: int
+    midi_pitch: Optional[int]   # None for a muted 'x' hit
+    column: int                 # char column of the attack (grouping / ordering)
+    glissando: Optional[str] = None
+    technique: Optional[str] = None
+    muted: bool = False
+
+
+@dataclass
+class _TabBar:
+    section: str
+    notes: List[_TabNote] = field(default_factory=list)
 
 
 def is_ascii_tablature_line(line: str) -> bool:
@@ -73,13 +105,21 @@ def is_ascii_tablature_line(line: str) -> bool:
     return sum(c in _TAB_LINE_CHARS for c in s) / len(s) >= 0.8
 
 
+def _tab_row_label_and_body(row: str) -> Optional[Tuple[str, str]]:
+    """('e', '--0--2--|...') for a string row like 'e|--0--2--|...', else
+    None. The label is the note letter(+accidental) before the first '|';
+    the body is everything after it."""
+    m = _TAB_ROW_RE.match(row)
+    if not m:
+        return None
+    return m.group(1), m.group(2)
+
+
 def _strip_chord_tags(chord_line: str) -> Tuple[str, List[Tuple[int, str]]]:
     """Removes [ch]/[/ch] markup from a chord line, returning the stripped
     text and (column, chord_symbol) for each chord found - the column is
     measured in the STRIPPED text, which is exactly what lines up with the
-    plain-text lyric line beneath it in a real UG [tab] block (validated
-    against a real page during discovery: chord/lyric column-slicing landed
-    on the correct word every time)."""
+    plain-text lyric line beneath it in a real UG [tab] block."""
     out: List[str] = []
     chords: List[Tuple[int, str]] = []
     last_end = 0
@@ -95,13 +135,10 @@ def _strip_chord_tags(chord_line: str) -> Tuple[str, List[Tuple[int, str]]]:
 
 
 def _snap_to_word_boundary(text: str, col: int) -> int:
-    """Never split a lyric word across two chords' fragments. A raw
-    chord-column boundary can land inside a word - confirmed against a real
-    UG page during discovery, where a contributor's own column spacing
-    split "warning" into "w"/"arning" across a C/B -> Am chord change. When
-    that happens, give the WHOLE word to whichever side already holds the
-    majority of its characters (a tie goes to the later fragment, since
-    that is where the contributor's own chord marker sits closer to)."""
+    """Never split a lyric word across two chords' fragments. When a raw
+    chord-column boundary lands inside a word, give the WHOLE word to
+    whichever side already holds the majority of its characters (a tie goes
+    to the later fragment)."""
     if col <= 0 or col >= len(text):
         return col
     if text[col - 1].isspace() or text[col].isspace():
@@ -117,31 +154,251 @@ def _snap_to_word_boundary(text: str, col: int) -> int:
     return start if after >= before else end
 
 
-def count_tablature_blocks(content: str) -> int:
-    """How many [tab] blocks in `content` are raw ASCII tablature (skipped
-    from the import) - for the Region 1 "Tablature blocks: N (not imported)"
-    credit, so "there was nothing there" and "we didn't import it" stay
-    distinguishable."""
-    return _parse_content(content)[1]
+def _collect_tab_block(raw_lines: List[str], start: int) -> Tuple[List[str], int]:
+    """raw_lines[start] begins with '[tab]'. Returns (rows, next_index) where
+    `rows` are the block's lines with the [tab]/[/tab] markers stripped and
+    `next_index` is the first line after the block. A block with no closing
+    [/tab] (malformed - not seen in real data) runs to end of input."""
+    rows: List[str] = []
+    i = start
+    n = len(raw_lines)
+    while i < n:
+        line = raw_lines[i]
+        if i == start and line.startswith("[tab]"):
+            line = line[len("[tab]"):]
+        closed = line.endswith("[/tab]")
+        if closed:
+            line = line[: -len("[/tab]")]
+        rows.append(line)
+        i += 1
+        if closed:
+            break
+    return rows, i
 
 
-def _parse_content(content: str) -> Tuple[List[_ChordEvent], int]:
+def _emit_chord_lyric(chord_cols: List[Tuple[int, str]], lyric_line: str, section: str,
+                      out: List[Union[_ChordEvent, _TabBar]]) -> None:
+    """The chord/lyric column-alignment path: `(column, symbol)` pairs and
+    the plain lyric line beneath them, sliced by literal character column.
+    Fed by both the [ch]-marked path (via _strip_chord_tags) and the bare
+    plain-text chord line (via _scan_bare_chord_columns)."""
+    if not chord_cols:
+        return
+    # Boundary 0 is always the very start of the lyric line (the first chord
+    # owns any lead-in text before its own column); internal boundaries are
+    # snapped to a whole-word edge; the final boundary is the true line end.
+    boundaries = [0]
+    for col, _symbol in chord_cols[1:]:
+        boundaries.append(max(boundaries[-1], _snap_to_word_boundary(lyric_line, col)))
+    boundaries.append(max(boundaries[-1], len(lyric_line)))
+    for idx, (_col, symbol) in enumerate(chord_cols):
+        fragment = lyric_line[boundaries[idx]:boundaries[idx + 1]].strip()
+        out.append(_ChordEvent(section=section, symbol=symbol, lyric_fragment=fragment or None))
+
+
+def _consume_tab_block(rows: List[str], section: str, tuning_text: str, capo: int,
+                       out: List[Union[_ChordEvent, _TabBar]]) -> None:
+    """Route one [tab]...[/tab] block: a [ch]-marked chord/lyric pair goes to
+    the alignment path; ASCII string rows go to _parse_tab_block."""
+    nonempty = [r for r in rows if r.strip()]
+    if not nonempty:
+        return
+
+    if "[ch]" in nonempty[0]:
+        lyric_line = nonempty[1] if len(nonempty) > 1 else ""
+        if is_ascii_tablature_line(lyric_line):
+            lyric_line = ""
+        _emit_chord_lyric(_strip_chord_tags(nonempty[0])[1], lyric_line, section, out)
+        return
+
+    string_rows = [r for r in rows if _tab_row_label_and_body(r) is not None]
+    if len(string_rows) >= 2 or any(is_ascii_tablature_line(r) for r in nonempty):
+        out.extend(_parse_tab_block(string_rows or nonempty, section, tuning_text, capo))
+
+
+def _open_string_midis_for(rows: List[str], tuning_text: str) -> Tuple[List[str], List[int]]:
+    """(bodies, open_string_midis) for a set of tab rows. Resolution order:
+    each row's own leading label -> the page's tuning text -> standard
+    tuning. `bodies` is each row's fret grid (label prefix stripped when it
+    had one)."""
+    labels_bodies = [_tab_row_label_and_body(r) for r in rows]
+    if labels_bodies and all(lb is not None for lb in labels_bodies):
+        labels = [lb[0] for lb in labels_bodies]
+        bodies = [lb[1] for lb in labels_bodies]
+        open_midis = guitar_tuning.open_string_midis_from_rows(labels)
+    else:
+        bodies = list(rows)
+        open_midis = None
+    if open_midis is None:
+        open_midis = guitar_tuning.parse_tuning_text(tuning_text)
+    if open_midis is None:
+        open_midis = list(guitar_tuning.STANDARD_TUNING_HIGH_TO_LOW)
+
+    num_rows = len(bodies)
+    open_midis = list(open_midis)
+    while len(open_midis) < num_rows:
+        open_midis.append(open_midis[-1] - 5)  # extend downward by a fourth; defensive
+    return bodies, open_midis[:num_rows]
+
+
+def _parse_tab_block(rows: List[str], section: str, tuning_text: str, capo: int) -> List[_TabBar]:
+    """One ASCII-tablature [tab] block -> one or more fabricated bars, split
+    on '|' barline columns."""
+    bodies, open_midis = _open_string_midis_for(rows, tuning_text)
+    num_rows = len(bodies)
+    if num_rows == 0:
+        return []
+
+    width = max((len(b) for b in bodies), default=0)
+    bodies = [b.ljust(width) for b in bodies]
+    barline_threshold = max(1, (num_rows + 1) // 2)
+
+    bars: List[_TabBar] = [_TabBar(section=section)]
+    col = 0
+    while col < width:
+        column_chars = [b[col] for b in bodies]
+
+        if sum(1 for c in column_chars if c == "|") >= barline_threshold:
+            if bars[-1].notes:
+                bars.append(_TabBar(section=section))
+            col += 1
+            continue
+
+        attack_rows = [r for r, c in enumerate(column_chars) if c.isdigit() or c in ("x", "X")]
+        if not attack_rows:
+            col += 1
+            continue
+
+        run_end = col + 1
+        for r in attack_rows:
+            c0 = bodies[r][col]
+            if c0 in ("x", "X"):
+                bars[-1].notes.append(_TabNote(
+                    string_index=r, fret=0, midi_pitch=None, column=col, muted=True,
+                ))
+                continue
+            j = col
+            digits = ""
+            while j < width and bodies[r][j].isdigit():
+                digits += bodies[r][j]
+                j += 1
+            run_end = max(run_end, j)
+            fret = int(digits)
+            before = bodies[r][col - 1] if col > 0 else " "
+            after = bodies[r][j] if j < width else " "
+            gliss = tech = None
+            for ch in (before, after):
+                if ch in _GLISSANDO_CHARS:
+                    gliss = _GLISSANDO_CHARS[ch]
+                elif ch in _TECHNIQUE_CHARS:
+                    tech = _TECHNIQUE_CHARS[ch]
+            bars[-1].notes.append(_TabNote(
+                string_index=r,
+                fret=fret,
+                midi_pitch=guitar_tuning.midi_for(open_midis[r], fret, capo),
+                column=col,
+                glissando=gliss,
+                technique=tech,
+            ))
+        col = run_end
+
+    for bar in bars:
+        bar.notes.sort(key=lambda nt: (nt.column, nt.string_index))
+    return [b for b in bars if b.notes]
+
+
+def _strip_tab_markers(line: str) -> str:
+    return line.replace("[tab]", "").replace("[/tab]", "")
+
+
+def _is_tab_row_line(line: str) -> bool:
+    """True when `line` (with any [tab]/[/tab] markers removed) is one row of
+    an ASCII-tablature system - a labelled string row ('e|--0--') or a bare
+    fret-grid line."""
+    s = _strip_tab_markers(line)
+    return _tab_row_label_and_body(s.strip()) is not None or is_ascii_tablature_line(s)
+
+
+def _scan_bare_chord_columns(line: str) -> List[Tuple[int, str]]:
+    """(start_column, token) for each whitespace-separated run of a bare
+    plain-text chord line. The column is measured in the raw line, which is
+    exactly what lines up with the lyric line beneath it. Returns [] when
+    there are no runs, or when ANY run fails looks_like_chord_token (one
+    ordinary word is enough to disqualify the whole line)."""
+    cols: List[Tuple[int, str]] = []
+    for m in re.finditer(r"\S+", line):
+        if not looks_like_chord_token(m.group(0)):
+            return []
+        cols.append((m.start(), m.group(0)))
+    return cols
+
+
+def _looks_like_chord_line(line: str) -> bool:
+    """A bare chord line: every run is a chord token, at most 8 of them, and
+    either a single token or a >=2-space gap somewhere (the wide spacing a
+    chord-over-lyric layout always has - guards against a short all-caps
+    lyric line being read as chords). Never a [Section] label."""
+    if _SECTION_LINE_RE.match(line.strip()):
+        return False
+    cols = _scan_bare_chord_columns(line)
+    if not cols or len(cols) > 8:
+        return False
+    if len(cols) == 1:
+        return True
+    return bool(re.search(r"\S {2,}\S", line))
+
+
+def _looks_like_lyric_line(line: str) -> bool:
+    """Any non-blank text that isn't a chord line, a section label or a
+    tab-ish line, and doesn't start with a tab/diagram lead character."""
+    s = line.strip()
+    if not s or s[0] in "|*[":
+        return False
+    if _SECTION_LINE_RE.match(s):
+        return False
+    if _looks_like_chord_line(line):
+        return False
+    return not _is_tab_row_line(line)
+
+
+def _tab_block_label(header_line: str, ordinal: int) -> str:
+    """A navigable label for a section-less [tab] fingerpicking block: the
+    chord names in its own header line joined with an arrow
+    ("Picking: D -> F#m") when it has them, else "Intro" for the first such
+    block and "Picking pattern N" after."""
+    cols = _scan_bare_chord_columns(header_line)
+    if cols:
+        return "Picking: " + " → ".join(sym for _c, sym in cols)
+    return "Intro" if ordinal == 1 else f"Picking pattern {ordinal}"
+
+
+def _parse_content(content: str, tuning_text: str = "", capo: int = 0
+                   ) -> List[Union[_ChordEvent, _TabBar]]:
     """Walks source.content top-to-bottom, tracking the current [Section]
-    label, and emits one _ChordEvent per chord occurrence in performance
-    order - inside a [tab]...[/tab] block (chord line + lyric line pair,
-    lyric fragment = the slice of the lyric line from this chord's column up
-    to the next chord's column) or bare (intro/instrumental/outro chord-only
-    lines, which produce a chord event with no lyric fragment at all).
-
-    Returns (events, tablature_block_count) - a [tab] block whose chord or
-    lyric row is ASCII tablature contributes nothing to `events` but is
-    counted, so the reader can report it."""
-    events: List[_ChordEvent] = []
-    tab_block_count = 0
+    label, and returns an ordered, interleaved list of chord events and
+    fabricated tablature bars in performance order."""
+    out: List[Union[_ChordEvent, _TabBar]] = []
     section = ""
+    tab_ordinal = 0
     raw_lines = content.replace("\r\n", "\n").split("\n")
     i = 0
     n = len(raw_lines)
+
+    def _emit_tab_bars(rows: List[str], header_line: str) -> None:
+        """Parse `rows` into fabricated bars and append them. Inside a
+        [Section] the bars carry it; outside one (the fingerpicking
+        library, P2) they carry a generated label - numbered only across
+        blocks that actually produce bars, so the first real one is
+        "Intro"."""
+        nonlocal tab_ordinal
+        bars = _parse_tab_block(rows, section, tuning_text, capo)
+        if bars and not section:
+            tab_ordinal += 1
+            label = _tab_block_label(header_line, tab_ordinal)
+            for bar in bars:
+                bar.section = label
+        out.extend(bars)
+
     while i < n:
         line = raw_lines[i]
         stripped = line.strip()
@@ -152,65 +409,104 @@ def _parse_content(content: str) -> Tuple[List[_ChordEvent], int]:
             i += 1
             continue
 
-        if line.startswith("[tab]"):
-            chord_line = line[len("[tab]"):]
-            lyric_line = ""
-            if chord_line.endswith("[/tab]"):
-                # A single-line [tab]...[/tab] with no lyric row underneath -
-                # defensive; not seen in real data, but handled rather than
-                # producing a bogus fragment.
-                chord_line = chord_line[: -len("[/tab]")]
-            elif i + 1 < n and raw_lines[i + 1].endswith("[/tab]"):
-                lyric_line = raw_lines[i + 1][: -len("[/tab]")]
-                i += 1
+        # Classic chords-page shape: a [ch]-marked chord line (+ optional
+        # lyric line) wrapped in one [tab]...[/tab].
+        if line.startswith("[tab]") and "[ch]" in _strip_tab_markers(line):
+            rows, i = _collect_tab_block(raw_lines, i)
+            _consume_tab_block(rows, section, tuning_text, capo, out)
+            continue
 
-            if is_ascii_tablature_line(chord_line) or is_ascii_tablature_line(lyric_line):
-                tab_block_count += 1
+        # An ASCII-tablature system: a maximal run of consecutive string /
+        # fret-grid rows. UG wraps these inconsistently - the whole system
+        # in one [tab]...[/tab], each string row in its own, or no markers
+        # at all - so the run is collected across all of those and the
+        # markers simply stripped. A blank line ends the system.
+        if _is_tab_row_line(line):
+            rows: List[str] = []
+            while i < n and raw_lines[i].strip() and _is_tab_row_line(raw_lines[i]):
+                rows.append(_strip_tab_markers(raw_lines[i]))
+                i += 1
+            labelled = [r for r in rows if _tab_row_label_and_body(r.strip()) is not None]
+            _emit_tab_bars(labelled or rows, "")
+            continue
+
+        # Any other [tab] block. UG very often opens a tablature system with
+        # a non-tab header line naming the chords played over it
+        # ("        D              F#m"), so the block's real string rows sit
+        # under a line that is neither [ch] markup nor a fret grid - collect
+        # the whole block and parse whatever string rows it holds. Ignore it
+        # only when there are none.
+        if line.startswith("[tab]"):
+            rows, i = _collect_tab_block(raw_lines, i)
+            labelled = [r for r in rows if _tab_row_label_and_body(r.strip()) is not None]
+            tab_rows: Optional[List[str]] = None
+            if len(labelled) >= 2:
+                tab_rows = labelled
+            elif any(is_ascii_tablature_line(r) for r in rows):
+                tab_rows = rows
+            if tab_rows is not None:
+                header = next(
+                    (r for r in rows if r.strip()
+                     and _tab_row_label_and_body(r.strip()) is None
+                     and not is_ascii_tablature_line(r)),
+                    "",
+                )
+                _emit_tab_bars(tab_rows, header)
+            continue
+
+        # P2: a bare plain-text chord line (no [ch] markup) over its lyric
+        # line - the body of a UG "Tab" song sheet. Gated on being inside a
+        # [Section]: the pre-verse prose paragraph and the trailing
+        # chord-shape legend both sit outside one, and neither should
+        # produce events.
+        if section != "":
+            if _looks_like_chord_line(line):
+                j = i + 1
+                while j < n and not raw_lines[j].strip():
+                    j += 1
+                lyric_line = ""
+                if (j < n and _looks_like_lyric_line(raw_lines[j])
+                        and not _looks_like_chord_line(raw_lines[j])):
+                    lyric_line = raw_lines[j]
+                    i = j
+                _emit_chord_lyric(_scan_bare_chord_columns(line), lyric_line, section, out)
+                i += 1
+                continue
+            if _looks_like_lyric_line(line):
+                out.append(_ChordEvent(section=section, symbol="", lyric_fragment=stripped))
                 i += 1
                 continue
 
-            _stripped_chords, chord_cols = _strip_chord_tags(chord_line)
-            # Boundary 0 is always the very start of the lyric line (the
-            # first chord owns any lead-in text before its own column too -
-            # e.g. "And" before a chord that isn't itself at column 0 -
-            # rather than that text being silently dropped), and internal
-            # boundaries are each snapped to a whole-word edge; only the
-            # final boundary is a raw column (the true end of the line).
-            boundaries = [0]
-            for col, _symbol in chord_cols[1:]:
-                boundaries.append(max(boundaries[-1], _snap_to_word_boundary(lyric_line, col)))
-            boundaries.append(max(boundaries[-1], len(lyric_line)))
-
-            for idx, (_col, symbol) in enumerate(chord_cols):
-                fragment = lyric_line[boundaries[idx]:boundaries[idx + 1]].strip()
-                events.append(_ChordEvent(section=section, symbol=symbol, lyric_fragment=fragment or None))
-            i += 1
-            continue
-
-        # A bare chord-only line (intro/instrumental/outro) - no lyric row
-        # exists for these chords at all.
+        # A bare chord-only line (intro/instrumental/outro) - no lyric row.
         for _col, symbol in _strip_chord_tags(line)[1]:
-            events.append(_ChordEvent(section=section, symbol=symbol, lyric_fragment=None))
+            out.append(_ChordEvent(section=section, symbol=symbol, lyric_fragment=None))
         i += 1
 
-    return events, tab_block_count
+    return out
+
+
+def count_tablature_blocks(content: str) -> int:
+    """How many fabricated bars the ASCII-tablature [tab] blocks in `content`
+    produce - for the Region 1 "Tablature: N bars imported" credit. (Was
+    "N blocks not imported"; ASCII tab is now imported as a Tablature part.)"""
+    return sum(1 for seg in _parse_content(content) if isinstance(seg, _TabBar))
+
+
+def content_part_summary(content: str) -> Tuple[bool, bool]:
+    """(has_chord_or_lyric_content, has_tablature_content) for `content` -
+    lets UgReader build parts_info for only the parts the import produces."""
+    segs = _parse_content(content)
+    return (
+        any(isinstance(s, _ChordEvent) for s in segs),
+        any(isinstance(s, _TabBar) for s in segs),
+    )
 
 
 def _chord_symbol_to_pitches(symbol: str) -> List[int]:
     """Resolves a UG chord-symbol string ("Fmaj7", "C/B", "G7"...) to a list
-    of MIDI pitches via music21.harmony.ChordSymbol - already a project
-    dependency (requirements.txt), confirmed during discovery to correctly
-    parse every chord found in a real UG page including slash-bass chords.
-    Lives here, in parsers/, not in models/ - the only other music21 use in
-    this codebase (musicXML_reader.py) is likewise confined to the parser
-    layer; models/gm_instruments.py states models/ is stdlib-only.
-
-    On a parse failure (none occurred against real test data, but UG is
-    user-submitted text and can contain a typo/non-standard symbol), falls
-    back to the chord's root letter alone as a single pitch, so the event
-    stays audible/navigable rather than silently vanishing - the same
-    "absence isn't an error, degrade gracefully" pattern gp_source.py uses
-    throughout."""
+    of MIDI pitches via music21.harmony.ChordSymbol. On a parse failure
+    (UG is user-submitted text and can contain a typo), falls back to the
+    chord's root letter alone, so the event stays audible/navigable."""
     try:
         pitches = [p.midi for p in harmony.ChordSymbol(symbol).pitches]
         if pitches:
@@ -255,8 +551,7 @@ class UgTimelineBuilder:
         self.fine_marks: List = []
         self.navigation_jumps: List = []
         # P2: [Intro]/[Verse 1]/[Chorus]/... labels, as spans of the
-        # fabricated bars. The only builder that populates this today; the
-        # other three stub it empty, like every span list above.
+        # fabricated bars.
         self.section_spans: List[SectionSpan] = []
         self.total_measures: int = 0
 
@@ -269,21 +564,39 @@ class UgTimelineBuilder:
                 "nothing fetchable at it to re-parse."
             )
 
-        chord_events, _tab_blocks = _parse_content(source.content)
-        if not chord_events:
+        segments = _parse_content(source.content, source.tuning, source.capo or 0)
+        if not segments:
             return []
 
         slices: List[EventSlice] = []
-        for i, event in enumerate(chord_events):
-            measure = i + 1  # one bar per chord change, always
-            pitches = _chord_symbol_to_pitches(event.symbol)
+        measure = 0
+        quarters = 0.0
+        measure_sections: List[str] = []
 
-            chord_note = NoteData(
-                # event.symbol is UG's own raw [ch] markup text ("Am"),
-                # unlike TimelineBuilder's MusicXML path which gets a label
-                # from music21's ChordSymbol.figure - both need the same
-                # bare-"m" expansion (see models/vocabulary.py).
-                step_name=spell_out_minor_chord(event.symbol),
+        for seg in segments:
+            measure += 1
+            measure_sections.append(seg.section)
+            if isinstance(seg, _ChordEvent):
+                slices.append(self._chord_slice(seg, measure, quarters))
+            else:
+                slices.extend(self._tab_slices(seg, measure, quarters))
+            quarters += 4.0  # uniform bar advance, chord bar or tab bar alike
+
+        self.total_measures = measure
+        self.section_spans = _section_spans(measure_sections, self.total_measures)
+        return slices
+
+    def _chord_slice(self, event: _ChordEvent, measure: int, quarters: float) -> EventSlice:
+        notes: List[NoteData] = []
+        # P2: a lyrics-only bar (plain-text lyric line with no chord above
+        # it) carries symbol == "" - emit only the Lyrics note, no Chords
+        # note. A real song always has at least one real chord, so the
+        # Chords part is never empty overall.
+        if event.symbol:
+            pitches = _chord_symbol_to_pitches(event.symbol)
+            label = spell_out_minor_chord(event.symbol)
+            notes.append(NoteData(
+                step_name=label,
                 octave=None,
                 midi_pitch=max(pitches),
                 measure=measure,
@@ -295,71 +608,92 @@ class UgTimelineBuilder:
                 staff=1,
                 voice=1,
                 chord_pitches=pitches,
-                # P2 (find_feature_plan.md): same label as step_name, but a
-                # findable key - "Find chord symbol" works the same across
-                # MusicXML <harmony>, GP diagrams and UG [ch] markup.
-                chord_symbol=spell_out_minor_chord(event.symbol),
-            )
-            # Always present, even with no real lyric at this chord (the
-            # wordless bars of an intro/instrumental/outro) - an explicit
-            # "No lyrics" row rather than silently omitting the part
-            # entirely, so its absence reads as "this bar has none" and not
-            # as a missing/broken feature (reported: without this, a user
-            # who lands on the wordless intro first has no way to tell the
-            # two apart).
-            lyric_note = NoteData(
-                step_name=event.lyric_fragment or "No lyrics",
-                octave=None,
-                # Deliberately None, like a rest - keeps this part
-                # genuinely silent (no midi relates to it). The slice
-                # stays navigable regardless, since chord_note above
-                # always carries a real midi_pitch.
-                midi_pitch=None,
-                measure=measure,
-                beat_position=1.0,
-                ts_duration=4.0,
-                quarter_length=4.0,
-                part_id=LYRICS_PART_ID,
-                part_name="Lyrics",
-                staff=1,
-                voice=1,
-            )
-            notes = [chord_note, lyric_note]
+                # P2: same text as step_name, but a findable key.
+                chord_symbol=label,
+            ))
+        notes.append(NoteData(
+            step_name=event.lyric_fragment or "No lyrics",
+            octave=None,
+            midi_pitch=None,  # deliberately silent, like a rest
+            measure=measure,
+            beat_position=1.0,
+            ts_duration=4.0,
+            quarter_length=4.0,
+            part_id=LYRICS_PART_ID,
+            part_name="Lyrics",
+            staff=1,
+            voice=1,
+        ))
+        return EventSlice(
+            measure=measure,
+            beat_position=1.0,
+            quarter_length=4.0,
+            notes=notes,
+            time_sig=(4, 4),
+            key_fifths=0,
+            quarters_from_start=quarters,
+        )
 
-            slices.append(
-                EventSlice(
+    def _tab_slices(self, bar: _TabBar, measure: int, quarters: float) -> List[EventSlice]:
+        columns = sorted({nt.column for nt in bar.notes})
+        slices: List[EventSlice] = []
+        for k, colv in enumerate(columns):
+            beat_pos = 1.0 + k * 0.5  # flat eighth-note grid
+            notes: List[NoteData] = []
+            for nt in sorted((n for n in bar.notes if n.column == colv),
+                             key=lambda n: n.string_index):
+                if nt.midi_pitch is None:
+                    step, octave = "muted", None
+                else:
+                    step, octave = spell_pitch(nt.midi_pitch, 0)
+                notes.append(NoteData(
+                    step_name=step,
+                    octave=octave,
+                    midi_pitch=nt.midi_pitch,
                     measure=measure,
-                    beat_position=1.0,
-                    quarter_length=4.0,
-                    notes=notes,
-                    time_sig=(4, 4),
-                    key_fifths=0,
-                    quarters_from_start=float(i) * 4.0,
-                )
-            )
-
-        self.total_measures = len(chord_events)
-        self.section_spans = _section_spans(chord_events, self.total_measures)
+                    beat_position=beat_pos,
+                    ts_duration=0.5,
+                    quarter_length=0.5,
+                    part_id=TAB_PART_ID,
+                    part_name=TAB_PART_NAME,
+                    staff=1,
+                    voice=1,
+                    string=nt.string_index + 1,
+                    fret=nt.fret if nt.midi_pitch is not None else None,
+                    glissando=nt.glissando,
+                    technique=nt.technique,
+                    articulation="muted" if nt.muted else None,
+                    duration_name_us="eighth",
+                ))
+            slices.append(EventSlice(
+                measure=measure,
+                beat_position=beat_pos,
+                quarter_length=0.5,
+                notes=notes,
+                time_sig=(4, 4),
+                key_fifths=0,
+                quarters_from_start=quarters + k * 0.5,
+            ))
         return slices
 
 
-def _section_spans(chord_events: List[_ChordEvent], total_measures: int) -> List[SectionSpan]:
-    """One SectionSpan per run of consecutive chord events sharing a
-    [Section] label. end_measure is the bar before the next section starts
-    (or total_measures for the last one). Events before the first [Section]
-    label carry section="" and are not given a span."""
+def _section_spans(measure_sections: List[str], total_measures: int) -> List[SectionSpan]:
+    """One SectionSpan per run of consecutive bars sharing a [Section] label.
+    end_measure is the bar before the next section starts (or total_measures
+    for the last). Bars before the first [Section] label carry "" and are
+    not given a span."""
     spans: List[SectionSpan] = []
-    current = None
-    for idx, event in enumerate(chord_events):
+    current: Optional[str] = None
+    for idx, label in enumerate(measure_sections):
         measure = idx + 1
-        if not event.section:
+        if not label:
             continue
-        if current is not None and event.section == current[0]:
+        if current is not None and label == current:
             continue
         if spans:
             spans[-1].end_measure = measure - 1
-        spans.append(SectionSpan(label=event.section, start_measure=measure, end_measure=measure))
-        current = (event.section, measure)
+        spans.append(SectionSpan(label=label, start_measure=measure, end_measure=measure))
+        current = label
     if spans:
         spans[-1].end_measure = max(spans[-1].start_measure, total_measures)
     return spans

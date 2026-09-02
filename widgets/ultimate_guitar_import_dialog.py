@@ -13,15 +13,15 @@ from parsers.ug_source import validate_url_shape
 
 
 class UltimateGuitarImportDialog(QDialog):
-    """File > Import from Ultimate Guitar... - paste a UG chord-tab URL and
-    import its chords + lyrics. Modeled on widgets/key_signature_dialog.py's
-    shape (single control, QFormLayout, one result-accessor, showEvent focus
-    grab) but with a QLineEdit instead of a combo box, since a URL is
-    free-text, not a pick from a fixed list.
+    """File > Import from Ultimate Guitar... - paste a UG tab-page URL and
+    import its chords, lyrics and tablature. Modeled on
+    widgets/key_signature_dialog.py's shape (single control, QFormLayout,
+    one result-accessor, showEvent focus grab) but with a QLineEdit instead
+    of a combo box, since a URL is free-text, not a pick from a fixed list.
 
     Only does the cheap, synchronous URL-shape check on Accept (right host,
     starts with /tab/) - shown inline rather than closing the dialog. The
-    real check (does the page actually have Chords-tab data) can only happen
+    real check (does the page actually have Chords/Tab data) can only happen
     after a network fetch, so it happens later, off the UI thread, and
     surfaces through the existing load_failed path if it fails - this
     dialog itself never touches the network.

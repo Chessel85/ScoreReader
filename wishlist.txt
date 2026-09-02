@@ -1,3 +1,4 @@
+If a stave has only one voice, then no point opening it in the parts view and no point having "Add attribute to voice" etc.
 The performance summary report should not list something if there are zero occurances.
 Possible ducking of midi when speech recognition is on.
 Need to understand so many of the entries in the performance report and those that occur as searchable things in the find dialogue e.g. cascassi etude 2.

@@ -321,6 +321,15 @@ class MusicData:
         # TimelineBuild.apply_to (above) and never mutated, so this is
         # built lazily and kept forever, like _measure_numbers_cache.
         self._tempo_change_starts_cache: Optional[List[float]] = None
+        # P2 (UG "Tab" import): forward-filled "chord / lyric in effect"
+        # context, aligned to _real_timeline_slices (the stable, marker-free
+        # list) and resolved by quarters_from_start - same "cache forever,
+        # source is immutable after apply_to" property _tempo_change_at
+        # relies on, and robust to the metronome splicing markers into
+        # timeline_slices (a marker slice keeps a real quarters_from_start).
+        self._chord_context: Optional[List[Optional[Tuple[str, int]]]] = None
+        self._lyric_context: Optional[List[Optional[Tuple[str, int]]]] = None
+        self._context_quarters: Optional[List[float]] = None
         self._invalidate_visibility_cache()
 
     def _invalidate_visibility_cache(self) -> None:
@@ -1247,6 +1256,80 @@ class MusicData:
                     )
                 )
 
+        return rows
+
+    def _ensure_context_arrays(self) -> None:
+        """Builds the forward-filled chord/lyric context once. Each entry is
+        (display_text, onset_measure) of the last CHORDS_PART_ID / real
+        LYRICS_PART_ID note seen at or before that slice, or None before the
+        first. Aligned to _real_timeline_slices; _context_quarters is the
+        parallel quarters_from_start list for a bisect."""
+        if self._chord_context is not None:
+            return
+        chord_ctx: List[Optional[Tuple[str, int]]] = []
+        lyric_ctx: List[Optional[Tuple[str, int]]] = []
+        quarters: List[float] = []
+        cur_chord: Optional[Tuple[str, int]] = None
+        cur_lyric: Optional[Tuple[str, int]] = None
+        for s in self._real_timeline_slices:
+            for n in s.notes:
+                if n.part_id == CHORDS_PART_ID:
+                    text = n.chord_symbol or n.step_name
+                    if text:
+                        cur_chord = (text, s.measure)
+                elif n.part_id == LYRICS_PART_ID:
+                    if n.step_name and n.step_name != "No lyrics":
+                        cur_lyric = (n.step_name, s.measure)
+            chord_ctx.append(cur_chord)
+            lyric_ctx.append(cur_lyric)
+            quarters.append(s.quarters_from_start)
+        self._chord_context = chord_ctx
+        self._lyric_context = lyric_ctx
+        self._context_quarters = quarters
+
+    def _section_span_at(self, measure: int) -> Optional[SectionSpan]:
+        """The song section (P2) containing `measure`, or None. Sections
+        don't overlap, so the first match is the only one."""
+        for span in self.section_spans:
+            if span.start_measure <= measure <= span.end_measure:
+                return span
+        return None
+
+    def get_performance_context_rows(self, index: Optional[int] = None) -> List[PerformanceRegionRow]:
+        """P2: 0-3 "what's in effect at the cursor" rows for Region 5 -
+        Section / Chord / Lyric - each omitted when it has no value. Updated
+        as the cursor moves (RegionPresenter.refresh_region_5 relabels them
+        in place, without re-firing the change cue). Structural context,
+        like sections themselves - computed regardless of the Region 2 voice
+        filter. Ctrl+Home/Ctrl+End on one jumps to its onset bar."""
+        resolved_index = self.active_event_index if index is None else index
+        if not (0 <= resolved_index < len(self.timeline_slices)):
+            return []
+        slice_ = self.timeline_slices[resolved_index]
+        self._ensure_context_arrays()
+
+        rows: List[PerformanceRegionRow] = []
+        span = self._section_span_at(slice_.measure)
+        if span is not None and span.label:
+            rows.append(PerformanceRegionRow(
+                label=f"Section: {span.label}",
+                jump_target_measure=span.start_measure,
+            ))
+
+        assert self._context_quarters is not None
+        ctx_i = bisect.bisect_right(self._context_quarters, slice_.quarters_from_start) - 1
+        chord = self._chord_context[ctx_i] if ctx_i >= 0 else None
+        lyric = self._lyric_context[ctx_i] if ctx_i >= 0 else None
+        if chord is not None and chord[0]:
+            rows.append(PerformanceRegionRow(
+                label=f"Chord: {chord[0]}",
+                jump_target_measure=chord[1],
+            ))
+        if lyric is not None and lyric[0]:
+            rows.append(PerformanceRegionRow(
+                label=f"Lyric: {lyric[0]}",
+                jump_target_measure=lyric[1],
+            ))
         return rows
 
     def is_at_beginning_repeat_target(self, index: Optional[int] = None) -> bool:
