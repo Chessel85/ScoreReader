@@ -67,6 +67,17 @@ class Sequencer(QObject):
         # every play_from(), same as the other per-run fields above.
         self._jump_state: PlaybackJumpState = PlaybackJumpState()
         self._jump_lower_bound: int = 0
+        # Looping only (controllers/playback_controller.py's respect-repeats
+        # path): stop the run once it has entered this many DISTINCT bars,
+        # rather than at a fixed linear end_index - the only way to express
+        # "play bars 7, 8 then jump back to 1, 2, 3, 4", where bars 7-8 sit
+        # after bar 4 in index order. None for every non-looping run and for
+        # a looping run on a score with no repeat barlines (which keeps the
+        # linear end_index path). A backward jump into an earlier bar counts
+        # as a new bar entry.
+        self._measure_budget: Optional[int] = None
+        self._measures_entered: int = 1
+        self._budget_measure: Optional[int] = None
         # Whether the step ABOUT TO BE SOUNDED was reached by a jump (see
         # PlaybackJumpState.last_step_was_jump) rather than a natural
         # forward advance - read by _sound_current_step to decide retrigger
@@ -97,6 +108,8 @@ class Sequencer(QObject):
         end_index: Optional[int] = None,
         update_cursor: bool = True,
         jump_lower_bound: int = 0,
+        initial_jump_state: Optional[PlaybackJumpState] = None,
+        measure_budget: Optional[int] = None,
     ) -> None:
         """Ref 10 AC1: play from start_index through end_index (inclusive),
         or to the end of the visible timeline. update_cursor tells MainWindow
@@ -107,7 +120,15 @@ class Sequencer(QObject):
         allowed to land on this run (see MusicData.next_playback_index) - 0
         for ordinary full playback (every jump in the piece is reachable),
         or Preview's own start_index (so a jump never lands before Preview's
-        own window)."""
+        own window).
+
+        initial_jump_state SEEDS the run's repeat/ending progress (a COPY is
+        taken, so the caller's template is never mutated) - the looped
+        "second play-through" mode hands in a state pre-marked as if one full
+        pass already happened. measure_budget stops the run after that many
+        distinct bar-entries instead of at end_index - the looped
+        respect-repeats path, where a backward jump makes a linear end_index
+        meaningless. Both default to today's behaviour when absent."""
         self._timer.stop()
         # An explicit reposition clears the deck; _sound_current_step uses
         # retrigger=False and won't, which is what lets other parts' notes
@@ -116,8 +137,17 @@ class Sequencer(QObject):
         self._current_index = start_index
         self._original_start_index = start_index
         self._end_index = end_index
-        self._jump_state = PlaybackJumpState()
+        self._jump_state = (
+            initial_jump_state.copy() if initial_jump_state is not None else PlaybackJumpState()
+        )
         self._jump_lower_bound = jump_lower_bound
+        self._measure_budget = measure_budget
+        self._measures_entered = 1
+        self._budget_measure = None
+        if measure_budget is not None and 0 <= start_index < len(
+            self.music_data.timeline_slices
+        ):
+            self._budget_measure = self.music_data.timeline_slices[start_index].measure
         self._pending_retrigger = False
         self.update_cursor = update_cursor
         self._is_playing = True
@@ -215,6 +245,23 @@ class Sequencer(QObject):
         # comment above) - next_playback_index has already set it fresh for
         # THIS call by the time it returns.
         self._pending_retrigger = self._jump_state.last_step_was_jump
+
+        # Measure-budget stop (looped respect-repeats path): if the next
+        # step would enter a bar this iteration hasn't been in yet and that
+        # would exceed the budget, end the iteration here instead. A
+        # backward jump counts as a new bar entry, which is what lets
+        # "7, 8, 1, 2, 3, 4" be six bars. The None branch below then waits
+        # out the last note's ring and finishes exactly as an ordinary
+        # end-of-run does; controllers/playback_controller.py's ("loop",)
+        # timer restarts the next iteration.
+        if next_index is not None and self._measure_budget is not None:
+            next_measure = self.music_data.timeline_slices[next_index].measure
+            if next_measure != self._budget_measure:
+                if self._measures_entered + 1 > self._measure_budget:
+                    next_index = None
+                else:
+                    self._measures_entered += 1
+                    self._budget_measure = next_measure
         if next_index is None:
             # Stay "playing" and wait out the last note's ring via the same
             # timer path, with _pending_next_index None marking this wait as

@@ -1,6 +1,8 @@
 """models/play_settings.py - the shape the Play Settings dialog edits and
 persistence/app_settings.py stores globally."""
 from models.play_settings import (
+    DEFAULT_LOOP_REPEAT_MODE,
+    LOOP_REPEAT_MODES,
     MAX_LEAD_IN_BARS,
     MAX_LOOP_LENGTH_BARS,
     MIN_LOOP_LENGTH_BARS,
@@ -97,3 +99,24 @@ def test_copy_is_independent_of_the_original():
     original.loop_enabled = True
 
     assert snapshot.loop_enabled is False
+
+
+def test_loop_repeat_mode_defaults_to_first():
+    assert PlaySettings().loop_repeat_mode == "first"
+    assert DEFAULT_LOOP_REPEAT_MODE == "first"
+    assert LOOP_REPEAT_MODES == ("first", "second", "alternate")
+
+
+def test_loop_repeat_mode_round_trips_and_an_unknown_value_coerces():
+    for mode in LOOP_REPEAT_MODES:
+        settings = PlaySettings(loop_repeat_mode=mode)
+        assert settings.loop_repeat_mode == mode
+        assert PlaySettings.from_dict(settings.to_dict()).loop_repeat_mode == mode
+        assert settings.copy().loop_repeat_mode == mode
+
+    assert PlaySettings(loop_repeat_mode="nonsense").loop_repeat_mode == "first"
+
+
+def test_loop_repeat_mode_absent_from_an_older_settings_file_gets_first():
+    assert PlaySettings.from_dict({"loop_enabled": True}).loop_repeat_mode == "first"
+    assert PlaySettings.from_dict({}).loop_repeat_mode == "first"

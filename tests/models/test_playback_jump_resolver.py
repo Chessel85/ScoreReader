@@ -303,3 +303,95 @@ def test_jump_lower_bound_allows_an_in_window_repeat(
     md = timeline(repeat_ending_then_dc_al_coda_score)
     seq = _walk(md, start_index=0, end_index=4, jump_lower_bound=0)
     assert seq == [0, 1, 2, 3, 1, 2, 4]
+
+
+# --- simulate_loop_iteration (looped, repeat-aware, bar-budgeted) ----------
+
+
+def _seed_second(md):
+    """The 'repeat the second play-through' seed, mirroring
+    PlaybackController._loop_seed_jump_state: every repeat consumed, every
+    first-time ending (one spanning a repeat's backward barline) skipped."""
+    endings_to_skip = {
+        j
+        for rs in md.repeat_spans
+        for j, es in enumerate(md.ending_spans)
+        if es.start_measure <= rs.end_measure <= es.end_measure
+    }
+    return PlaybackJumpState(
+        repeats_taken=set(range(len(md.repeat_spans))),
+        endings_to_skip=endings_to_skip,
+        jump_taken=True,
+    )
+
+
+def _bars(md, indices):
+    return [md.timeline_slices[i].measure for i in indices]
+
+
+def test_simulate_loop_first_play_through_takes_the_clipped_repeat(
+    timeline, repeats_and_endings_score
+):
+    """Loop from the forward-repeat bar (m2, index 1), length 4: the 'first'
+    seed plays m2, m3 (ending 1), then the repeat sends it back to m2, then
+    on to m4 - four distinct bar entries, the scaled-down analogue of the
+    plan's '7, 8, 1, 2, 3, 4'."""
+    md = timeline(repeats_and_endings_score)
+    indices, span_ms, end_quarters = md.simulate_loop_iteration(1, 4, None)
+    assert _bars(md, indices) == [2, 2, 3, 2, 2, 4]
+    assert span_ms == 8000  # 120bpm, 4/4: four bars of real time
+    assert end_quarters == 16.0
+
+
+def test_simulate_loop_second_play_through_skips_the_first_time_ending(
+    timeline, repeats_and_endings_score
+):
+    """Same window, the 'second' seed: the repeat is already spent and
+    ending 1 (m3) is skipped, so it runs m2 straight to m4 - the analogue
+    of the plan's '7, 9, 10, ...'."""
+    md = timeline(repeats_and_endings_score)
+    indices, span_ms, _end_quarters = md.simulate_loop_iteration(1, 4, _seed_second(md))
+    assert _bars(md, indices) == [2, 2, 4]
+    assert span_ms == 4000
+
+
+def test_simulate_loop_alternates_between_the_two_seeds(
+    timeline, repeats_and_endings_score
+):
+    md = timeline(repeats_and_endings_score)
+    first = md.simulate_loop_iteration(1, 4, None)[0]
+    second = md.simulate_loop_iteration(1, 4, _seed_second(md))[0]
+    assert _bars(md, first) == [2, 2, 3, 2, 2, 4]
+    assert _bars(md, second) == [2, 2, 4]
+
+
+def test_simulate_loop_long_window_reproduces_normal_repeat_playback(
+    timeline, repeats_and_endings_score
+):
+    """When the loop length is long enough that the repeat's target lies
+    inside the window, the 'first' seed's walk matches a plain
+    next_playback_index traversal of the whole piece - no special case."""
+    md = timeline(repeats_and_endings_score)
+    indices, _span_ms, _end_quarters = md.simulate_loop_iteration(0, 64, None)
+    assert indices == _walk(md, start_index=0)
+
+
+def test_simulate_loop_stops_early_at_the_end_of_the_timeline(
+    timeline, repeats_and_endings_score
+):
+    """A budget larger than the piece stops at the last bar rather than
+    walking off the end (the controller's loop timer then wraps and keeps
+    looping)."""
+    md = timeline(repeats_and_endings_score)
+    indices, _span_ms, _end_quarters = md.simulate_loop_iteration(0, 999, None)
+    assert indices[-1] == len(md.timeline_slices) - 1
+
+
+def test_simulate_loop_does_not_mutate_the_seed_state(
+    timeline, repeats_and_endings_score
+):
+    md = timeline(repeats_and_endings_score)
+    seed = _seed_second(md)
+    before = (set(seed.repeats_taken), set(seed.endings_to_skip), seed.jump_taken)
+    md.simulate_loop_iteration(1, 4, seed)
+    assert (set(seed.repeats_taken), set(seed.endings_to_skip), seed.jump_taken) == before

@@ -52,6 +52,7 @@ class Actions:
     play_settings: Optional[QAction] = None
     loop_toggle: Optional[QAction] = None
     lead_in_toggle: Optional[QAction] = None
+    loop_repeat_mode: Optional[QAction] = None
     mute: Optional[QAction] = None
     solo: Optional[QAction] = None
     unmute_all: Optional[QAction] = None
@@ -481,6 +482,16 @@ class MenuBuilder:
             status_tip="Play a metronome count-in before playback starts",
         )
         playback_menu.addAction(a.lead_in_toggle)
+
+        # Non-checkable: it cycles first -> second -> alternate, spoken
+        # aloud. Ctrl+R is otherwise unbound (Ctrl+Shift+R is Voice Control
+        # Settings, untouched).
+        a.loop_repeat_mode = self._action(
+            "Cycle Loop Repeat &Handling", self.slots.cycle_loop_repeat_mode,
+            QKeySequence("Ctrl+R"),
+            status_tip="Choose how repeat barlines are handled inside a loop",
+        )
+        playback_menu.addAction(a.loop_repeat_mode)
 
         playback_menu.addSeparator()
 

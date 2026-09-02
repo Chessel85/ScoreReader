@@ -1901,6 +1901,15 @@ class MusicData:
         PlaybackEventBuilder.playback_span_ms."""
         return self.playback_events.playback_span_ms(start_index, end_index, end_quarters)
 
+    def simulate_loop_iteration(
+        self, start_index: int, measure_budget: int, seed_jump_state=None
+    ):
+        """One repeat-aware looped iteration's (indices, span_ms,
+        end_quarters) - see PlaybackEventBuilder.simulate_loop_iteration."""
+        return self.playback_events.simulate_loop_iteration(
+            start_index, measure_budget, seed_jump_state
+        )
+
     def get_status_bar_fields(self) -> List[str]:
         """The first four status-bar fields in Tab order: position, key,
         time signature, playback tempo. All read the CURRENT slice, not the

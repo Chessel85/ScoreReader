@@ -352,6 +352,52 @@ def test_full_playback_follows_repeat_ending_and_dc_al_coda(
     assert visited == [0, 1, 2, 3, 1, 2, 4, 5, 6, 0, 1, 2, 4, 5, 7]
 
 
+def test_measure_budget_stops_the_run_after_n_distinct_bars(
+    timeline, null_synth, repeats_and_endings_score
+):
+    """The looped respect-repeats path: play_from(measure_budget=N) ends the
+    run once it has entered N distinct bars, not at a linear end_index. From
+    m1 with budget 4 the run plays m1, m2, m3, then the repeat sends it back
+    to m2 (a backward jump counts as a fresh bar entry) - four bar entries -
+    and stops there rather than continuing on to m4."""
+    md = timeline(repeats_and_endings_score, tempo_bpm=120)
+    seq, timer = _build(md, null_synth)
+
+    sounded = []
+    seq.step_played.connect(sounded.append)
+
+    seq.play_from(0, end_index=None, jump_lower_bound=0, measure_budget=4)
+    guard = 30
+    while timer.running and guard:
+        guard -= 1
+        timer.fire()
+
+    assert sounded == [0, 1, 2, 3, 1, 2]
+    assert seq.is_playing is False
+
+
+def test_measure_budget_run_leaves_the_seed_jump_state_unmutated(
+    timeline, null_synth, repeats_and_endings_score
+):
+    """initial_jump_state is a template the caller reuses across iterations
+    (alternate mode) - play_from must take a copy, never mutate it."""
+    from models.playback_jump_state import PlaybackJumpState
+
+    md = timeline(repeats_and_endings_score, tempo_bpm=120)
+    seq, timer = _build(md, null_synth)
+
+    seed = PlaybackJumpState(repeats_taken={0}, endings_to_skip={0}, jump_taken=True)
+    before = (set(seed.repeats_taken), set(seed.endings_to_skip), seed.jump_taken)
+
+    seq.play_from(1, end_index=None, jump_lower_bound=0, initial_jump_state=seed, measure_budget=8)
+    guard = 30
+    while timer.running and guard:
+        guard -= 1
+        timer.fire()
+
+    assert (set(seed.repeats_taken), set(seed.endings_to_skip), seed.jump_taken) == before
+
+
 def test_a_repeat_jump_retriggers_but_ordinary_steps_do_not(
     timeline, null_synth, repeat_ending_then_dc_al_coda_score
 ):

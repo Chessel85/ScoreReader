@@ -105,6 +105,54 @@ def test_repeat_the_lead_in_needs_both_a_loop_and_a_lead_in(qtbot):
     assert dialog.loop_lead_in_check.isEnabled() is False
 
 
+def test_repeat_handling_combo_lists_the_three_modes_and_round_trips(qtbot):
+    dialog = PlaySettingsDialog(
+        play_settings=PlaySettings(loop_repeat_mode="second"),
+        uk_terms=True,
+        score_has_repeats=True,
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.loop_repeat_combo.count() == 3
+    assert dialog.loop_repeat_combo.currentIndex() == 1  # "second"
+
+    dialog.loop_repeat_combo.setCurrentIndex(2)
+    assert dialog.play_settings().loop_repeat_mode == "alternate"
+
+
+def test_repeat_handling_combo_enabled_only_with_looping_on_and_repeats_present(qtbot):
+    with_repeats = PlaySettingsDialog(
+        play_settings=PlaySettings(loop_enabled=False),
+        uk_terms=True,
+        score_has_repeats=True,
+    )
+    qtbot.addWidget(with_repeats)
+    assert with_repeats.loop_repeat_combo.isEnabled() is False
+
+    with_repeats.loop_check.setChecked(True)
+    assert with_repeats.loop_repeat_combo.isEnabled() is True
+
+    no_repeats = PlaySettingsDialog(
+        play_settings=PlaySettings(loop_enabled=True),
+        uk_terms=True,
+        score_has_repeats=False,
+    )
+    qtbot.addWidget(no_repeats)
+    assert no_repeats.loop_repeat_combo.isEnabled() is False
+
+
+def test_repeat_handling_combo_does_not_mutate_the_settings_passed_in(qtbot):
+    settings = PlaySettings(loop_repeat_mode="first")
+    dialog = PlaySettingsDialog(
+        play_settings=settings, uk_terms=True, score_has_repeats=True
+    )
+    qtbot.addWidget(dialog)
+
+    dialog.loop_repeat_combo.setCurrentIndex(2)
+
+    assert settings.loop_repeat_mode == "first"
+
+
 def test_a_loop_can_never_be_zero_bars_long(qtbot):
     dialog = PlaySettingsDialog(play_settings=PlaySettings(), uk_terms=True)
     qtbot.addWidget(dialog)

@@ -947,8 +947,10 @@ playback follows repeat barlines, 1st/2nd-time endings, and Segno/Coda/
 Da Capo/Dal Segno/Fine instructions exactly as notated - so what you
 hear during Play can genuinely revisit or skip bars, even though those
 same bars are simply listed in order when you browse them with
-<code>Left</code>/<code>Right Arrow</code>. (Looping playback, below, is
-the exception: a loop stays inside its own window.)</p>
+<code>Left</code>/<code>Right Arrow</code>. Looping playback follows
+repeat barlines and endings within its window too, according to the
+“Repeat handling while looping” choice in Play Settings (section
+7.3).</p>
 <h3 id="looping-and-the-lead-in-count-in">7.3 Looping and the Lead-in
 Count-in</h3>
 <p><code>Space</code> is the single play control. What it does depends
@@ -968,6 +970,30 @@ the notes start.</li>
 <p>Toggle looping with <code>Ctrl+L</code> (Playback &gt; Toggle
 Looping) and the lead-in with <code>Ctrl+I</code> (Playback &gt; Toggle
 Lead-in). Both are announced and shown in the status bar.</p>
+<p><strong>Repeat handling while looping.</strong> When your loop window
+clips a repeat barline - the repeat sign is inside the window but the
+bar it jumps back to is not - Recall Score has to choose which way
+through those bars to loop. <code>Ctrl+R</code> (Playback &gt; Cycle
+Loop Repeat Handling) cycles between three readings, spoken aloud each
+press:</p>
+<ul>
+<li><strong>Repeat the first play-through</strong> - the repeat is taken
+and its first-time ending played, so the loop keeps going round the
+repeated path.</li>
+<li><strong>Repeat the second play-through</strong> - the first-time
+ending is skipped and the final ending played, so the loop is the “last
+time through” version.</li>
+<li><strong>Alternate the first and second play-throughs</strong> - the
+two versions alternate on successive loop passes, the way a real repeat
+is performed once each way.</li>
+</ul>
+<p>When the loop is long enough that the repeat’s target bar <em>is</em>
+inside the window, repeats and endings just play as they normally would
+- the choice only matters for a clipped repeat. If a loop pass runs off
+the end of the piece before its bar count is met, it stops at the last
+bar and the loop restarts from the top. <code>Ctrl+R</code> says
+“Looping is off” or “This score has no repeats” when it cannot
+apply.</p>
 <p>While focus is in the Note region, <code>Alt+PageUp</code> and
 <code>Alt+PageDown</code> increase or decrease the loop length by one
 bar at a time, and <code>Ctrl+Enter</code> sets it directly from a
@@ -989,6 +1015,11 @@ for the count-in. When on, the “Lead-in bars” and “Extra lead-in beats”
 fields set its length.</li>
 <li><strong>Repeat (loop) until stopped</strong> - turns looping on.
 When on, “Loop length in bars” sets the window.</li>
+<li><strong>Repeat handling while looping</strong> - how a repeat
+barline clipped by the loop window is played (section 7.3). Enabled only
+with looping on and a score that actually has repeat barlines. Like the
+other looping settings, it is a global practice habit, not saved per
+score.</li>
 <li><strong>Play the lead-in again on every repeat</strong> - only
 meaningful with both looping and the lead-in switched on, and greyed out
 otherwise.</li>
@@ -1909,6 +1940,13 @@ count-in, and looping (sections 7.4, 7.6).</td>
 playback on or off (section 7.3).</td>
 </tr>
 <tr>
+<td style="text-align: left;">Cycle Loop Repeat Handling</td>
+<td style="text-align: left;">Ctrl+R</td>
+<td style="text-align: left;">Cycles how a repeat barline clipped by the
+loop window is played: first play-through, second play-through, or
+alternating (section 7.3).</td>
+</tr>
+<tr>
 <td style="text-align: left;">Mute</td>
 <td style="text-align: left;">F8</td>
 <td style="text-align: left;">Mutes or unmutes the focused row in the
@@ -2239,6 +2277,11 @@ Ctrl+Space again)</td>
 <tr>
 <td style="text-align: left;">Toggle the lead-in count-in on/off</td>
 <td style="text-align: left;">Ctrl+I</td>
+</tr>
+<tr>
+<td style="text-align: left;">Cycle how a clipped repeat is handled
+while looping</td>
+<td style="text-align: left;">Ctrl+R</td>
 </tr>
 <tr>
 <td style="text-align: left;">Increase / decrease the loop length by one

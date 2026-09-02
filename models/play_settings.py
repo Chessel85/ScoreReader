@@ -32,6 +32,15 @@ MIN_LOOP_LENGTH_BARS = 1
 # already a very long practice loop for any real score.
 MAX_LOOP_LENGTH_BARS = 64
 
+# How a repeat barline clipped by the loop window is read (Ctrl+R cycles
+# these; the Play Settings combo picks one). Only meaningful when looping is
+# on and the score actually has repeat barlines.
+#   first     - loop the FIRST play-through (repeat taken, 1st-time ending)
+#   second    - loop the SECOND play-through (1st-time ending skipped)
+#   alternate - alternate the two on successive loop iterations
+LOOP_REPEAT_MODES = ("first", "second", "alternate")
+DEFAULT_LOOP_REPEAT_MODE = "first"
+
 
 def _clamp(value: int, low: int, high: int) -> int:
     try:
@@ -62,6 +71,10 @@ class PlaySettings:
     loop_enabled: bool = False
     loop_length_bars: int = 2
     loop_lead_in: bool = False
+    # How a repeat barline clipped by the loop window is read while looping
+    # (see LOOP_REPEAT_MODES above). Only consulted when looping is on and
+    # the score carries repeat barlines; an unknown value coerces to "first".
+    loop_repeat_mode: str = DEFAULT_LOOP_REPEAT_MODE
 
     def __post_init__(self):
         self.lead_in_enabled = bool(self.lead_in_enabled)
@@ -72,6 +85,8 @@ class PlaySettings:
             self.loop_length_bars, MIN_LOOP_LENGTH_BARS, MAX_LOOP_LENGTH_BARS
         )
         self.loop_lead_in = bool(self.loop_lead_in)
+        if self.loop_repeat_mode not in LOOP_REPEAT_MODES:
+            self.loop_repeat_mode = DEFAULT_LOOP_REPEAT_MODE
 
     def has_lead_in(self) -> bool:
         """A count-in should actually happen: the master toggle is on AND
@@ -99,6 +114,7 @@ class PlaySettings:
             loop_enabled=self.loop_enabled,
             loop_length_bars=self.loop_length_bars,
             loop_lead_in=self.loop_lead_in,
+            loop_repeat_mode=self.loop_repeat_mode,
         )
 
     def to_dict(self) -> dict:
@@ -109,6 +125,7 @@ class PlaySettings:
             "loop_enabled": self.loop_enabled,
             "loop_length_bars": self.loop_length_bars,
             "loop_lead_in": self.loop_lead_in,
+            "loop_repeat_mode": self.loop_repeat_mode,
         }
 
     @classmethod
@@ -141,4 +158,5 @@ class PlaySettings:
                 "loop_lead_in",
                 data.get("loop_includes_lead_in", defaults.loop_lead_in),
             ),
+            loop_repeat_mode=data.get("loop_repeat_mode", defaults.loop_repeat_mode),
         )

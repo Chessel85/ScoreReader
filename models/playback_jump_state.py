@@ -27,6 +27,20 @@ class PlaybackJumpState:
     endings_to_skip: Set[int] = field(default_factory=set)
     jump_taken: bool = False
 
+    def copy(self) -> "PlaybackJumpState":
+        """An independent snapshot of the accumulated progress - so a caller
+        can SEED a run (Sequencer.play_from's initial_jump_state, the looped
+        "second play-through" mode) or a duration simulation
+        (PlaybackEventBuilder.simulate_loop_iteration) from a template state
+        without that template being mutated by the walk. last_step_was_jump
+        is transient (set fresh on every next_playback_index call) and is
+        deliberately not carried."""
+        return PlaybackJumpState(
+            repeats_taken=set(self.repeats_taken),
+            endings_to_skip=set(self.endings_to_skip),
+            jump_taken=self.jump_taken,
+        )
+
     # Transient, not accumulated like the three fields above: overwritten on
     # every next_playback_index call to say whether THAT call's returned
     # index was reached by a jump (repeat retake, dacapo/dalsegno, to-coda,

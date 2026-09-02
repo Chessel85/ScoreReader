@@ -451,6 +451,87 @@ class PlaybackEventBuilder:
             seen += 1
         return candidate
 
+    def _step_ms(self, index: int, next_index: int, position: float, jumped: bool) -> int:
+        """One walk step's contribution to elapsed ms, matching
+        Sequencer._delay_ms_to exactly: a step reached by a jump waits out
+        the departing note's own real ring-out (ring_out_ms_for_index, the
+        per-group max - not the slice-wide minimum); a plain forward step is
+        the quarters delta at the tempo in force, int()-truncated with a 1 ms
+        floor (see playback_span_ms's own comment on why accumulating the
+        un-rounded float instead drifts audibly late)."""
+        if jumped:
+            return self.ring_out_ms_for_index(index)
+        slices = self.data.timeline_slices
+        delta_quarters = slices[next_index].quarters_from_start - position
+        return max(1, int(
+            delta_quarters * 60000.0 / float(self.data.effective_tempo_bpm(index))
+        ))
+
+    def _tail_ms(self, index: int, position: float, end_quarters: float) -> int:
+        """The distance from the last walked note's onset to end_quarters
+        (the bar line), OR that note's own real ring-out - whichever is
+        longer. int()-truncated to match ring_out_ms_for_index's own
+        precision (see playback_span_ms's own comment)."""
+        bar_line_ms = int(max(0.0, end_quarters - position) * 60000.0 / float(
+            self.data.effective_tempo_bpm(index)
+        ))
+        return max(bar_line_ms, self.ring_out_ms_for_index(index))
+
+    def simulate_loop_iteration(
+        self, start_index: int, measure_budget: int, seed_jump_state=None
+    ) -> Tuple[List[int], int, float]:
+        """One looped iteration's repeat-aware walk, as
+        (indices, span_ms, end_quarters).
+
+        A budgeted, seedable generalisation of playback_span_ms: steps
+        next_playback_index from start_index with jump_lower_bound=0 (so a
+        backward repeat whose target precedes the loop window is still
+        followed) and no end_index, seeded from a COPY of seed_jump_state
+        (fresh when None), until it has entered measure_budget distinct bars
+        or next_playback_index genuinely returns None (end of score). A
+        backward jump into an earlier bar counts as a new bar entry. span_ms
+        accumulates real elapsed milliseconds with the same jump/ring-out
+        handling the real Sequencer applies; end_quarters is the bar line
+        after the last walked note, which is where the ("loop",) restart
+        timer fires.
+        """
+        data = self.data
+        slices = data.timeline_slices
+        if not (0 <= start_index < len(slices)):
+            return [], 0, 0.0
+        jump_state = (
+            seed_jump_state.copy() if seed_jump_state is not None else PlaybackJumpState()
+        )
+        budget = max(1, int(measure_budget))
+        indices = [start_index]
+        total_ms = 0.0
+        index = start_index
+        position = slices[start_index].quarters_from_start
+        measures_entered = 1
+        budget_measure = slices[start_index].measure
+        guard = len(slices) * 4 + 8
+        while guard > 0:
+            guard -= 1
+            next_index = self.next_playback_index(index, jump_state, None, 0)
+            if next_index is None:
+                break
+            next_measure = slices[next_index].measure
+            if next_measure != budget_measure:
+                if measures_entered + 1 > budget:
+                    break
+                measures_entered += 1
+                budget_measure = next_measure
+            total_ms += self._step_ms(
+                index, next_index, position, jump_state.last_step_was_jump
+            )
+            position = slices[next_index].quarters_from_start
+            index = next_index
+            indices.append(next_index)
+        bounds = self.bar_bounds_quarters(indices[-1])
+        end_quarters = bounds[1] if bounds else slices[indices[-1]].quarters_from_start
+        total_ms += self._tail_ms(index, position, end_quarters)
+        return indices, max(0, int(round(total_ms))), end_quarters
+
     def playback_span_ms(self, start_index: int, end_index: int, end_quarters: float) -> int:
         """Jump-aware sibling of span_ms_to_quarters (left untouched, still
         used elsewhere) - needed because Preview's own loop-restart timing
@@ -494,35 +575,17 @@ class PlaybackEventBuilder:
             if next_index is None:
                 break
             next_quarters = slices[next_index].quarters_from_start
-            if jump_state.last_step_was_jump:
-                # A jump (backward repeat/D.C./D.S., or a forward
-                # ending-skip/To Coda) - the departing note still rings its
-                # own real duration first (ring_out_ms_for_index, not the
-                # slice-wide-minimum duration_ms_for_index - see
-                # Sequencer._delay_ms_to's own comment) regardless of which
-                # direction the jump moves in elapsed-quarters, the same
-                # jump-aware handling the real run applies.
-                total_ms += self.ring_out_ms_for_index(index)
-            else:
-                # Mirrors Sequencer._delay_ms_to's own non-jump formula
-                # exactly, int() truncation and 1ms floor included, rather
-                # than accumulating an un-rounded float per step - reported
-                # live: sped up ~40bpm from a score's default tempo, a
-                # repeated passage's loop-restart drifted noticeably out of
-                # time. Most tempo/subdivision combinations round a step's
-                # real ms down by a fraction; accumulating the exact float
-                # instead systematically over-estimated the real elapsed
-                # time by that lost fraction on every such step, compounding
-                # across a dense repeated passage into an audible late
-                # restart - small at any one step, but the real Sequencer
-                # run this predicts is exactly as choppy, and the two must
-                # agree exactly or the drift reappears each time this
-                # passage's density/tempo combination lands on another
-                # non-whole-ms step.
-                delta_quarters = next_quarters - position
-                total_ms += max(1, int(
-                    delta_quarters * 60000.0 / float(data.effective_tempo_bpm(index))
-                ))
+            # _step_ms encapsulates both cases (a jump waits out the
+            # departing note's real ring-out; a plain step is the
+            # int()-truncated, 1ms-floored quarters delta) - the same
+            # computation simulate_loop_iteration walks with, so the two
+            # predictions can't drift apart. See _step_ms's own docstring
+            # for why the truncation is load-bearing (reported live: a
+            # repeated passage's loop-restart drifted audibly late when the
+            # un-rounded float was accumulated instead).
+            total_ms += self._step_ms(
+                index, next_index, position, jump_state.last_step_was_jump
+            )
             position = next_quarters
             index = next_index
         # The bar-line-anchored distance from the last simulated note's
@@ -544,9 +607,6 @@ class PlaybackEventBuilder:
         # sub-1ms fraction even though they agree on the real duration,
         # adding a spurious extra ms (reported live, same drift as the walk
         # truncation above - this is the tail's own instance of it).
-        bar_line_ms = int(max(0.0, end_quarters - position) * 60000.0 / float(
-            data.effective_tempo_bpm(index)
-        ))
-        total_ms += max(bar_line_ms, self.ring_out_ms_for_index(index))
+        total_ms += self._tail_ms(index, position, end_quarters)
         return max(0, int(round(total_ms)))
 

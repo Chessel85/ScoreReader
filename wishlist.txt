@@ -1,3 +1,7 @@
+Add a version number to the user guide reflecting the version of the app it was written against.
+Hitting r with the file menu open no longer opens up recent submenu.
+readme.md needs an overhawl.
+If looping, what is the behaviour of repeats and endings?
 If a stave has only one voice, then no point opening it in the parts view and no point having "Add attribute to voice" etc.
 The performance summary report should not list something if there are zero occurances.
 Possible ducking of midi when speech recognition is on.

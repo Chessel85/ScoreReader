@@ -382,6 +382,7 @@ class MainWindow(QMainWindow):
         self.play_settings_action = actions.play_settings
         self.loop_toggle_action = actions.loop_toggle
         self.lead_in_toggle_action = actions.lead_in_toggle
+        self.loop_repeat_mode_action = actions.loop_repeat_mode
         # Global (AppSettings.play), not per-score - set once here from the
         # loaded settings, kept in sync by toggle_loop/toggle_lead_in.
         self.loop_toggle_action.setChecked(self.playback.play_settings.loop_enabled)
@@ -800,6 +801,20 @@ class MainWindow(QMainWindow):
 
     def toggle_lead_in(self):
         self.lead_in_toggle_action.setChecked(self.playback.toggle_lead_in())
+
+    def cycle_loop_repeat_mode(self):
+        """Ctrl+R: rotate how a repeat barline clipped by the loop window is
+        read. Like commit_loop_length, it announces why nothing happened
+        when it can't apply - looping off, or a score with no repeats -
+        rather than silently doing nothing to a screen-reader user."""
+        if not self.playback.play_settings.loop_enabled:
+            accessible_announcer.announce(self.region_3, "Looping is off")
+            return
+        if not (self._music_data and self._music_data.repeat_spans):
+            accessible_announcer.announce(self.region_3, "This score has no repeats")
+            return
+        mode = self.playback.cycle_loop_repeat_mode()
+        self.presenter.announce_loop_repeat_mode(mode)
 
     def increase_loop_length(self):
         """Alt+PageUp in the Note region. Persisted globally right away,
@@ -1239,6 +1254,7 @@ class MainWindow(QMainWindow):
                 play_settings=self.playback.play_settings,
                 current_tempo_display_bpm=current_tempo,
                 uk_terms=self._uk_terms,
+                score_has_repeats=bool(self._music_data and self._music_data.repeat_spans),
             )
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 settings = dialog.play_settings()

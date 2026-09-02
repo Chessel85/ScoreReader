@@ -12,7 +12,8 @@ from audio.sequencer import Sequencer
 from audio.strum_schedule import sound_events
 from models import mixer_settings
 from models.mixer_settings import MixerSettings
-from models.play_settings import PlaySettings
+from models.play_settings import LOOP_REPEAT_MODES, PlaySettings
+from models.playback_jump_state import PlaybackJumpState
 from models.vocabulary import bar_word
 
 
@@ -65,6 +66,18 @@ class _PlayRun:
     event_index: int = 0
     elapsed_ms: int = 0
     playing: bool = False
+    # Looping on a MusicXML score that actually carries repeat barlines:
+    # the iteration follows repeats/endings under a bar-count budget rather
+    # than a linear end_index window (see _build_play_run /
+    # simulate_loop_iteration). False for every other run - MIDI/GP/UG and
+    # repeat-less MusicXML keep the exact linear code path unchanged.
+    respect_repeats: bool = False
+    # How many times the ("loop",) restart has fired - drives "alternate"
+    # mode's per-iteration seed choice (_loop_seed_jump_state).
+    iteration_count: int = 0
+    # The seed handed to Sequencer.play_from for THIS iteration, recomputed
+    # per iteration in _refresh_play_span. None = a fresh first play-through.
+    seed_jump_state: Optional[PlaybackJumpState] = None
 
 
 class PlaybackController(QObject):
@@ -575,6 +588,30 @@ class PlaybackController(QObject):
         self.status_text_changed.emit()
         return self.play_settings.lead_in_enabled
 
+    def set_loop_repeat_mode(self, mode: str) -> str:
+        """"Repeat handling while looping" - how a repeat barline clipped by
+        the loop window is read (see models/play_settings.py's
+        LOOP_REPEAT_MODES). Global, like loop_enabled; an unknown value
+        coerces to "first" in PlaySettings.__post_init__. Returns the mode
+        actually stored."""
+        updated = self.play_settings.copy()
+        updated.loop_repeat_mode = mode
+        updated.__post_init__()
+        self.play_settings = updated
+        from persistence import app_settings
+
+        app_settings.set_play_settings(self.play_settings)
+        self.status_text_changed.emit()
+        return self.play_settings.loop_repeat_mode
+
+    def cycle_loop_repeat_mode(self) -> str:
+        """Ctrl+R: rotate first -> second -> alternate -> first."""
+        try:
+            i = LOOP_REPEAT_MODES.index(self.play_settings.loop_repeat_mode)
+        except ValueError:
+            i = 0
+        return self.set_loop_repeat_mode(LOOP_REPEAT_MODES[(i + 1) % len(LOOP_REPEAT_MODES)])
+
     def _build_play_run(self, looping: bool) -> Optional["_PlayRun"]:
         """Resolve where the play run starts and (for a looping run) ends,
         in both index and real-time terms. Returns None when there is
@@ -633,16 +670,27 @@ class PlaybackController(QObject):
         is_pickup = bool(start_bar and start_bar[0] < 0)
         end_quarters = end_bar[1] if end_bar else start_slice.quarters_from_start
 
+        # Only MusicXML scores that actually carry repeat barlines take the
+        # repeat-aware looped path; everything else (MIDI/GP/UG always have
+        # an empty repeat_spans, as does a repeat-less MusicXML score) keeps
+        # the linear end_index window verbatim, so fingerprints and every
+        # existing loop stay unchanged. When respected, there is no linear
+        # end_index - a backward repeat can send the iteration to a bar
+        # before the window - so it is None and _refresh_play_span derives
+        # end_quarters/iteration_ms from simulate_loop_iteration instead.
+        respect_repeats = bool(self.music_data.repeat_spans)
+
         run = _PlayRun(
             settings=settings,
             looping=True,
             start_index=start_index,
-            end_index=end_index,
+            end_index=None if respect_repeats else end_index,
             end_quarters=end_quarters,
             is_pickup=is_pickup,
             offset_ms=0,
             iteration_ms=0,
             restore_index=self.music_data.active_event_index,
+            respect_repeats=respect_repeats,
         )
         self._refresh_play_span(run)
         return run
@@ -678,13 +726,78 @@ class PlaybackController(QObject):
         lead_quarters = max(0.0, start_slice.quarters_from_start - bar_start_quarters)
         bpm = self.music_data.effective_tempo_bpm(run.start_index)
         run.offset_ms = int(round(lead_quarters * 60000.0 / float(bpm)))
-        # Jump-aware, not span_ms_to_quarters's flat walk - a repeat fully
-        # inside the preview window makes the real Sequencer run take longer
-        # than a naive linear walk would predict, and this drives the
-        # loop-restart timer below (iteration_ms), so it must know about it
-        # too or a contained repeat gets truncated mid-replay.
-        span_ms = self.music_data.playback_span_ms(run.start_index, run.end_index, run.end_quarters)
+        if run.respect_repeats:
+            # A backward repeat can send this iteration to a bar BEFORE the
+            # window, so there is no linear end_index to time against;
+            # simulate_loop_iteration walks the repeat-aware path under a
+            # bar-count budget and returns its real elapsed span and the
+            # bar line the ("loop",) restart fires on. The seed selects
+            # which play-through of a clipped repeat is looped - recomputed
+            # here per iteration so "alternate" gets the right length each
+            # time and an F/S/D tempo change lands on the next restart.
+            run.seed_jump_state = self._loop_seed_jump_state(
+                run.settings.loop_repeat_mode, run.iteration_count
+            )
+            _indices, span_ms, end_quarters = self.music_data.simulate_loop_iteration(
+                run.start_index, run.settings.loop_length_bars, run.seed_jump_state
+            )
+            run.end_quarters = end_quarters
+        else:
+            # Jump-aware, not span_ms_to_quarters's flat walk - a repeat
+            # fully inside the preview window makes the real Sequencer run
+            # take longer than a naive linear walk would predict, and this
+            # drives the loop-restart timer below (iteration_ms), so it must
+            # know about it too or a contained repeat gets truncated
+            # mid-replay.
+            span_ms = self.music_data.playback_span_ms(
+                run.start_index, run.end_index, run.end_quarters
+            )
         run.iteration_ms = run.offset_ms + span_ms
+
+    def _loop_seed_jump_state(
+        self, mode: str, iteration_count: int
+    ) -> Optional[PlaybackJumpState]:
+        """The PlaybackJumpState a looped iteration is seeded with, per the
+        "Repeat handling while looping" mode (models/play_settings.py's
+        LOOP_REPEAT_MODES):
+
+          first     - None (a fresh run): the clipped repeat is taken once
+                      and its first-time ending played; once a loop window
+                      is long enough that the repeat's target lies inside
+                      it, this reproduces normal repeat playback for free.
+          second    - pre-marked as if one full pass already happened: every
+                      repeat consumed, every first-time ending skipped, so
+                      the iteration runs linearly through the second
+                      play-through (first-time endings skipped, final
+                      endings played).
+          alternate - the "first" seed on an even iteration_count, the
+                      "second" seed on an odd one.
+
+        The "first-time ending" is the one whose measure range spans a
+        repeat's backward barline - the exact condition
+        PlaybackEventBuilder._jump_from_measure_end uses to mark an ending
+        skipped when a real repeat retake happens, so a long-window "second"
+        loop and a normal second pass agree on which endings vanish.
+        """
+        if not self.music_data:
+            return None
+        if mode == "alternate":
+            mode = "first" if iteration_count % 2 == 0 else "second"
+        if mode != "second":
+            return None
+        repeats = self.music_data.repeat_spans
+        endings = self.music_data.ending_spans
+        endings_to_skip = {
+            j
+            for rs in repeats
+            for j, es in enumerate(endings)
+            if es.start_measure <= rs.end_measure <= es.end_measure
+        }
+        return PlaybackJumpState(
+            repeats_taken=set(range(len(repeats))),
+            endings_to_skip=endings_to_skip,
+            jump_taken=True,
+        )
 
     def _start_play_iteration(self, with_lead_in: bool) -> None:
         """Build one iteration's event schedule - count-in clicks, the
@@ -810,7 +923,21 @@ class PlaybackController(QObject):
         elif kind == "play":
             run.playing = True
             if self.sequencer is not None:
-                if run.looping:
+                if run.looping and run.respect_repeats:
+                    # No linear end_index - the iteration follows
+                    # repeats/endings and stops on a bar-count budget, and
+                    # jump_lower_bound=0 lets a backward repeat land before
+                    # the window. The seed picks which play-through of a
+                    # clipped repeat this iteration loops.
+                    self.sequencer.play_from(
+                        run.start_index,
+                        end_index=None,
+                        update_cursor=False,
+                        jump_lower_bound=0,
+                        initial_jump_state=run.seed_jump_state,
+                        measure_budget=run.settings.loop_length_bars,
+                    )
+                elif run.looping:
                     self.sequencer.play_from(
                         run.start_index,
                         end_index=run.end_index,
@@ -823,6 +950,11 @@ class PlaybackController(QObject):
                     self.sequencer.play_from(run.start_index, update_cursor=True)
             self.playback_state_changed.emit()
         elif kind == "loop":
+            # Advance the iteration counter BEFORE the next iteration is
+            # built, so "alternate" mode's _loop_seed_jump_state (called
+            # from _start_play_iteration -> _refresh_play_span) sees the new
+            # count.
+            run.iteration_count += 1
             self._start_play_iteration(
                 with_lead_in=run.settings.loop_lead_in and run.settings.has_lead_in()
             )

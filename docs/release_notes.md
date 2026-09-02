@@ -1,5 +1,9 @@
 # Recall Score Release Notes
 
+## 2026.1.48
+
+** Introduced extra feature for playback to allow the user to define how looping around repeats and endings works.
+
 ## 2026.1.47
 
 * Attempts to permit importing of Ultimate Guitar pages when viewing tablature 

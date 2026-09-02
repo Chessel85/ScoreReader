@@ -413,9 +413,15 @@ def test_lead_in_only_space_counts_in_then_plays_to_the_end(
     window.toggle_play_stop()  # cancel the count-in
 
 
-def test_looping_space_window_spans_loop_length_bars(
+def test_looping_space_window_follows_repeats_under_a_bar_budget(
     window, qtbot, repeat_ending_then_dc_al_coda_score
 ):
+    """A score with repeat barlines takes the respect-repeats path: no
+    linear end_index, jump_lower_bound 0 (so a backward repeat is followed
+    even before the window), and a measure budget on the Sequencer. With
+    loop length 4 and mode "first" the iteration plays m1, m2, m3, then the
+    repeat fires back to m2 - four distinct bar entries, ending on m2's own
+    bar line (quarter 8)."""
     load_and_wait(window, qtbot, repeat_ending_then_dc_al_coda_score)
     no_lead_in(window, loop_enabled=True, loop_length_bars=4)
     md = window._music_data
@@ -424,9 +430,13 @@ def test_looping_space_window_spans_loop_length_bars(
     window.toggle_play_stop()
 
     run = window.playback._play_run
-    assert (run.start_index, run.end_index) == (0, 4)
-    assert run.end_quarters == 16.0
-    assert run.iteration_ms == 10000, "jump-aware duration, not the flat 8000ms"
+    assert run.respect_repeats is True
+    assert run.start_index == 0
+    assert run.end_index is None
+    assert run.end_quarters == 8.0
+    assert run.iteration_ms == 8000
+    assert window.sequencer._jump_lower_bound == 0
+    assert window.sequencer._measure_budget == 4
 
     window.toggle_play_stop()
 
@@ -439,12 +449,12 @@ def test_looping_restart_timing_tracks_a_tempo_change_made_mid_loop(
     window.toggle_play_stop()
 
     run = window.playback._play_run
-    assert run.iteration_ms == 10000
+    assert run.iteration_ms == 8000
 
     window._music_data.playback_tempo_bpm = 240  # double speed
     window.playback._start_play_iteration(with_lead_in=False)
 
-    assert run.iteration_ms == 5000
+    assert run.iteration_ms == 4000
 
     window.toggle_play_stop()
 
@@ -461,6 +471,68 @@ def test_looping_jump_lower_bound_is_wired_to_the_windows_start(window, qtbot, m
     assert window.sequencer._jump_lower_bound == run.start_index
 
     window.toggle_play_stop()
+
+
+def _capture_announcements(monkeypatch):
+    messages = []
+    monkeypatch.setattr(
+        accessible_announcer.QAccessible,
+        "updateAccessibility",
+        lambda event: messages.append(event.message()),
+    )
+    return messages
+
+
+def test_ctrl_r_with_looping_off_announces_why_and_changes_nothing(
+    window, qtbot, monkeypatch, repeat_ending_then_dc_al_coda_score
+):
+    load_and_wait(window, qtbot, repeat_ending_then_dc_al_coda_score)
+    no_lead_in(window, loop_enabled=False)
+    before = window.playback.play_settings.loop_repeat_mode
+    messages = _capture_announcements(monkeypatch)
+
+    window.cycle_loop_repeat_mode()
+
+    assert messages == ["Looping is off"]
+    assert window.playback.play_settings.loop_repeat_mode == before
+
+
+def test_ctrl_r_on_a_score_with_no_repeats_announces_why_and_changes_nothing(
+    window, qtbot, monkeypatch, minimal_score
+):
+    load_and_wait(window, qtbot, minimal_score)
+    no_lead_in(window, loop_enabled=True, loop_length_bars=2)
+    before = window.playback.play_settings.loop_repeat_mode
+    messages = _capture_announcements(monkeypatch)
+
+    window.cycle_loop_repeat_mode()
+
+    assert messages == ["This score has no repeats"]
+    assert window.playback.play_settings.loop_repeat_mode == before
+
+
+def test_ctrl_r_cycles_the_mode_and_speaks_it_when_it_applies(
+    window, qtbot, monkeypatch, repeat_ending_then_dc_al_coda_score
+):
+    load_and_wait(window, qtbot, repeat_ending_then_dc_al_coda_score)
+    no_lead_in(window, loop_enabled=True, loop_length_bars=4)
+    assert window.playback.play_settings.loop_repeat_mode == "first"
+    messages = _capture_announcements(monkeypatch)
+
+    window.cycle_loop_repeat_mode()
+    assert window.playback.play_settings.loop_repeat_mode == "second"
+
+    window.cycle_loop_repeat_mode()
+    assert window.playback.play_settings.loop_repeat_mode == "alternate"
+
+    window.cycle_loop_repeat_mode()
+    assert window.playback.play_settings.loop_repeat_mode == "first"
+
+    assert messages == [
+        "Loop repeat handling: repeat the second play-through.",
+        "Loop repeat handling: alternate the first and second play-throughs.",
+        "Loop repeat handling: repeat the first play-through.",
+    ]
 
 
 def test_lead_in_counts_through_a_whole_bar_before_a_pickup_plays(

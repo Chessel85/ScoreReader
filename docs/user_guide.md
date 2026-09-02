@@ -511,8 +511,9 @@ playback follows repeat barlines, 1st/2nd-time endings, and Segno/Coda/
 Da Capo/Dal Segno/Fine instructions exactly as notated - so what you
 hear during Play can genuinely revisit or skip bars, even though those
 same bars are simply listed in order when you browse them with
-`Left`/`Right Arrow`. (Looping playback, below, is the exception: a loop
-stays inside its own window.)
+`Left`/`Right Arrow`. Looping playback follows repeat barlines and endings
+within its window too, according to the "Repeat handling while looping"
+choice in Play Settings (section 7.3).
 
 ### 7.3 Looping and the Lead-in Count-in
 
@@ -531,6 +532,29 @@ settings you can leave on or off:
 Toggle looping with `Ctrl+L` (Playback > Toggle Looping) and the lead-in
 with `Ctrl+I` (Playback > Toggle Lead-in). Both are announced and shown
 in the status bar.
+
+**Repeat handling while looping.** When your loop window clips a repeat
+barline - the repeat sign is inside the window but the bar it jumps back
+to is not - Recall Score has to choose which way through those bars to
+loop. `Ctrl+R` (Playback > Cycle Loop Repeat Handling) cycles between
+three readings, spoken aloud each press:
+
+- **Repeat the first play-through** - the repeat is taken and its
+  first-time ending played, so the loop keeps going round the repeated
+  path.
+- **Repeat the second play-through** - the first-time ending is skipped
+  and the final ending played, so the loop is the "last time through"
+  version.
+- **Alternate the first and second play-throughs** - the two versions
+  alternate on successive loop passes, the way a real repeat is performed
+  once each way.
+
+When the loop is long enough that the repeat's target bar *is* inside the
+window, repeats and endings just play as they normally would - the choice
+only matters for a clipped repeat. If a loop pass runs off the end of the
+piece before its bar count is met, it stops at the last bar and the loop
+restarts from the top. `Ctrl+R` says "Looping is off" or "This score has
+no repeats" when it cannot apply.
 
 While focus is in the Note region, `Alt+PageUp` and `Alt+PageDown`
 increase or decrease the loop length by one bar at a time, and
@@ -554,6 +578,10 @@ dialog for how playback behaves:
   fields set its length.
 - **Repeat (loop) until stopped** - turns looping on. When on, "Loop
   length in bars" sets the window.
+- **Repeat handling while looping** - how a repeat barline clipped by the
+  loop window is played (section 7.3). Enabled only with looping on and a
+  score that actually has repeat barlines. Like the other looping
+  settings, it is a global practice habit, not saved per score.
 - **Play the lead-in again on every repeat** - only meaningful with both
   looping and the lead-in switched on, and greyed out otherwise.
 
@@ -1337,6 +1365,7 @@ directly (see also section 16.3).
 | Play Settings... | Ctrl+Shift+V (also Ctrl+T) | Sets the playback tempo, the lead-in count-in, and looping (sections 7.4, 7.6). |
 | Toggle Looping | Ctrl+L | Turns looping playback on or off (section 7.3). |
 | Toggle Lead-in | Ctrl+I | Turns the metronome count-in before playback on or off (section 7.3). |
+| Cycle Loop Repeat Handling | Ctrl+R | Cycles how a repeat barline clipped by the loop window is played: first play-through, second play-through, or alternating (section 7.3). |
 | Mute | F8 | Mutes or unmutes the focused row in the Parts region (section 6.3). |
 | Solo | F9 | Solos or unsolos the focused row in the Parts region (section 6.3). |
 | Unmute All | Alt+F8 | Clears every mute in the score (section 6.3). |
@@ -1406,6 +1435,7 @@ directly (see also section 16.3).
 | Complete a pending typed bar number *(any region or the status bar)* | Enter |
 | Toggle looping on/off | Ctrl+L |
 | Toggle the lead-in count-in on/off | Ctrl+I |
+| Cycle how a clipped repeat is handled while looping | Ctrl+R |
 | Increase / decrease the loop length by one bar, spoken aloud *(Note region only)* | Alt+PageUp / Alt+PageDown |
 | Set the loop length from a typed number *(any region or the status bar)* | Ctrl+Enter |
 | Play every note at the current position together | Shift+Space |
