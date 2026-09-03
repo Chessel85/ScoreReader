@@ -2,10 +2,12 @@
 persistence/app_settings.py stores globally."""
 from models.play_settings import (
     DEFAULT_LOOP_REPEAT_MODE,
+    DEFAULT_PLAY_MODE,
     LOOP_REPEAT_MODES,
     MAX_LEAD_IN_BARS,
     MAX_LOOP_LENGTH_BARS,
     MIN_LOOP_LENGTH_BARS,
+    PLAY_MODES,
     PlaySettings,
 )
 
@@ -19,9 +21,27 @@ def test_shipped_defaults_are_lead_in_on_one_bar_looping_off():
     assert settings.lead_in_enabled is True
     assert settings.lead_in_bars == 1
     assert settings.lead_in_beats == 0
+    assert settings.play_mode == "to_end"
     assert settings.loop_enabled is False
+    assert settings.loop_forever is False
     assert settings.loop_length_bars == 2
     assert settings.loop_lead_in is False
+
+
+def test_play_mode_drives_the_loop_enabled_and_loop_forever_views():
+    assert PLAY_MODES == ("to_end", "loop_once", "loop_forever")
+    assert DEFAULT_PLAY_MODE == "to_end"
+
+    to_end = PlaySettings(play_mode="to_end")
+    assert (to_end.loop_enabled, to_end.loop_forever) == (False, False)
+
+    once = PlaySettings(play_mode="loop_once")
+    assert (once.loop_enabled, once.loop_forever) == (True, False)
+
+    forever = PlaySettings(play_mode="loop_forever")
+    assert (forever.loop_enabled, forever.loop_forever) == (True, True)
+
+    assert PlaySettings(play_mode="nonsense").play_mode == "to_end"
 
 
 def test_has_lead_in_needs_the_master_toggle_and_at_least_one_beat():
@@ -44,7 +64,7 @@ def test_out_of_range_values_are_clamped_rather_than_rejected():
 def test_round_trips_through_a_dict():
     original = PlaySettings(
         lead_in_enabled=False, lead_in_bars=2, lead_in_beats=3,
-        loop_enabled=True, loop_length_bars=4, loop_lead_in=True,
+        play_mode="loop_once", loop_length_bars=4, loop_lead_in=True,
     )
 
     assert PlaySettings.from_dict(original.to_dict()) == original
@@ -53,7 +73,14 @@ def test_round_trips_through_a_dict():
 def test_a_settings_file_written_before_this_feature_gets_the_defaults():
     assert PlaySettings.from_dict(None) == PlaySettings()
     assert PlaySettings.from_dict({}) == PlaySettings()
-    assert PlaySettings.from_dict({"loop_enabled": True}) == PlaySettings(loop_enabled=True)
+
+
+def test_from_dict_maps_the_pre_play_mode_loop_enabled_bool():
+    """Older settings.json only had a loop on/off bool - on becomes
+    "loop until stopped", off becomes "play to end"."""
+    assert PlaySettings.from_dict({"loop_enabled": True}).play_mode == "loop_forever"
+    assert PlaySettings.from_dict({"loop_enabled": False}).play_mode == "to_end"
+    assert PlaySettings.from_dict({"loop": True}).play_mode == "loop_forever"
 
 
 def test_from_dict_reads_the_pre_rename_preview_keys():
@@ -69,6 +96,7 @@ def test_from_dict_reads_the_pre_rename_preview_keys():
     assert settings.lead_in_enabled is True
     assert settings.loop_length_bars == 5
     assert settings.loop_enabled is True
+    assert settings.play_mode == "loop_forever"
     assert settings.loop_lead_in is True
 
 
@@ -78,13 +106,13 @@ def test_from_dict_infers_lead_in_off_from_a_zero_length_old_count_in():
 
 
 def test_with_loop_length_bars_returns_an_independent_copy():
-    original = PlaySettings(lead_in_bars=3, loop_length_bars=2, loop_enabled=True)
+    original = PlaySettings(lead_in_bars=3, loop_length_bars=2, play_mode="loop_forever")
 
     changed = original.with_loop_length_bars(5)
 
     assert changed.loop_length_bars == 5
     assert changed.lead_in_bars == 3
-    assert changed.loop_enabled is True
+    assert changed.play_mode == "loop_forever"
     assert original.loop_length_bars == 2, "the original is untouched"
 
 
@@ -96,8 +124,9 @@ def test_with_loop_length_bars_clamps_the_bounds():
 def test_copy_is_independent_of_the_original():
     original = PlaySettings()
     snapshot = original.copy()
-    original.loop_enabled = True
+    original.play_mode = "loop_forever"
 
+    assert snapshot.play_mode == "to_end"
     assert snapshot.loop_enabled is False
 
 
@@ -118,5 +147,5 @@ def test_loop_repeat_mode_round_trips_and_an_unknown_value_coerces():
 
 
 def test_loop_repeat_mode_absent_from_an_older_settings_file_gets_first():
-    assert PlaySettings.from_dict({"loop_enabled": True}).loop_repeat_mode == "first"
+    assert PlaySettings.from_dict({"play_mode": "loop_forever"}).loop_repeat_mode == "first"
     assert PlaySettings.from_dict({}).loop_repeat_mode == "first"

@@ -246,6 +246,20 @@ class RegionPresenter(QObject):
         message = f"Loop length {bars} {label}{plural}."
         accessible_announcer.announce(self.region_3, message)
 
+    def announce_play_mode(self, mode: str) -> None:
+        """Ctrl+L (main_window.cycle_play_mode) rotates the three-way play
+        mode without moving focus off the Note region - so, like
+        announce_loop_length, the new mode is spoken aloud since the only
+        other trace is the (unfocused) status bar."""
+        phrases = {
+            "to_end": "Play mode: play to end.",
+            "loop_once": "Play mode: play loop once.",
+            "loop_forever": "Play mode: play loop until stopped.",
+        }
+        accessible_announcer.announce(
+            self.region_3, phrases.get(mode, phrases["to_end"])
+        )
+
     def announce_loop_repeat_mode(self, mode: str) -> None:
         """Ctrl+R (main_window.cycle_loop_repeat_mode) rotates how a repeat
         barline clipped by the loop window is read, without moving focus off

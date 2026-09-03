@@ -19,7 +19,13 @@ def no_lead_in(window, **overrides):
     out of it; the lead-in has its own tests.
     """
     overrides.setdefault("lead_in_enabled", False)
-    overrides.setdefault("loop_enabled", False)
+    # Back-compat shim: callers still pass loop_enabled=True/False; map it to
+    # the three-way play_mode (on -> loop_forever, off -> to_end).
+    if "loop_enabled" in overrides:
+        overrides.setdefault(
+            "play_mode", "loop_forever" if overrides.pop("loop_enabled") else "to_end"
+        )
+    overrides.setdefault("play_mode", "to_end")
     settings = PlaySettings(lead_in_bars=0, lead_in_beats=0, **overrides)
     window.playback.set_play_settings(settings)
     return settings

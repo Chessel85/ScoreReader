@@ -5,14 +5,18 @@ Never exec()'d: the dialog is built, driven through its widgets and read
 back, the same way test_mixer_dialog.py drives MixerDialog.
 """
 from models.music_data import MusicData
-from models.play_settings import PlaySettings
+from models.play_settings import PLAY_MODES, PlaySettings
 from widgets.play_settings_dialog import PlaySettingsDialog
+
+_TO_END = PLAY_MODES.index("to_end")
+_LOOP_ONCE = PLAY_MODES.index("loop_once")
+_LOOP_FOREVER = PLAY_MODES.index("loop_forever")
 
 
 def test_shows_the_settings_it_was_given(qtbot):
     settings = PlaySettings(
         lead_in_enabled=False, lead_in_bars=2, lead_in_beats=3,
-        loop_enabled=True, loop_length_bars=4, loop_lead_in=True,
+        play_mode="loop_forever", loop_length_bars=4, loop_lead_in=True,
     )
     dialog = PlaySettingsDialog(
         play_settings=settings, current_tempo_display_bpm=88, uk_terms=True
@@ -23,9 +27,19 @@ def test_shows_the_settings_it_was_given(qtbot):
     assert dialog.lead_in_check.isChecked() is False
     assert dialog.lead_in_bars_spin.value() == 2
     assert dialog.lead_in_beats_spin.value() == 3
-    assert dialog.loop_check.isChecked() is True
+    assert dialog.play_mode_combo.currentIndex() == _LOOP_FOREVER
     assert dialog.loop_length_spin.value() == 4
     assert dialog.loop_lead_in_check.isChecked() is True
+
+
+def test_play_mode_combo_lists_the_three_modes_in_order(qtbot):
+    dialog = PlaySettingsDialog(play_settings=PlaySettings(), uk_terms=True)
+    qtbot.addWidget(dialog)
+
+    assert [
+        dialog.play_mode_combo.itemText(i)
+        for i in range(dialog.play_mode_combo.count())
+    ] == ["Play to end", "Play loop once", "Play loop until stopped"]
 
 
 def test_edits_round_trip_back_out(qtbot):
@@ -38,14 +52,14 @@ def test_edits_round_trip_back_out(qtbot):
     dialog.lead_in_check.setChecked(True)
     dialog.lead_in_bars_spin.setValue(0)
     dialog.lead_in_beats_spin.setValue(2)
-    dialog.loop_check.setChecked(True)
+    dialog.play_mode_combo.setCurrentIndex(_LOOP_FOREVER)
     dialog.loop_length_spin.setValue(8)
     dialog.loop_lead_in_check.setChecked(True)
 
     assert dialog.tempo_display_bpm() == 60
     assert dialog.play_settings() == PlaySettings(
         lead_in_enabled=True, lead_in_bars=0, lead_in_beats=2,
-        loop_enabled=True, loop_length_bars=8, loop_lead_in=True,
+        play_mode="loop_forever", loop_length_bars=8, loop_lead_in=True,
     )
 
 
@@ -65,9 +79,9 @@ def test_editing_does_not_mutate_the_settings_passed_in(qtbot):
     dialog = PlaySettingsDialog(play_settings=settings, uk_terms=True)
     qtbot.addWidget(dialog)
 
-    dialog.loop_check.setChecked(True)
+    dialog.play_mode_combo.setCurrentIndex(_LOOP_FOREVER)
 
-    assert settings.loop_enabled is False
+    assert settings.play_mode == "to_end"
 
 
 def test_lead_in_length_fields_follow_the_lead_in_checkbox(qtbot):
@@ -82,23 +96,30 @@ def test_lead_in_length_fields_follow_the_lead_in_checkbox(qtbot):
     assert dialog.lead_in_beats_spin.isEnabled() is True
 
 
-def test_loop_length_follows_the_loop_checkbox(qtbot):
-    dialog = PlaySettingsDialog(play_settings=PlaySettings(loop_enabled=False), uk_terms=True)
+def test_loop_length_is_dead_only_for_play_to_end(qtbot):
+    dialog = PlaySettingsDialog(play_settings=PlaySettings(play_mode="to_end"), uk_terms=True)
     qtbot.addWidget(dialog)
     assert dialog.loop_length_spin.isEnabled() is False
 
-    dialog.loop_check.setChecked(True)
+    dialog.play_mode_combo.setCurrentIndex(_LOOP_ONCE)
+    assert dialog.loop_length_spin.isEnabled() is True
+
+    dialog.play_mode_combo.setCurrentIndex(_LOOP_FOREVER)
     assert dialog.loop_length_spin.isEnabled() is True
 
 
-def test_repeat_the_lead_in_needs_both_a_loop_and_a_lead_in(qtbot):
+def test_repeat_the_lead_in_needs_loop_until_stopped_and_a_lead_in(qtbot):
     dialog = PlaySettingsDialog(
-        play_settings=PlaySettings(loop_enabled=False, lead_in_enabled=True), uk_terms=True
+        play_settings=PlaySettings(play_mode="to_end", lead_in_enabled=True), uk_terms=True
     )
     qtbot.addWidget(dialog)
     assert dialog.loop_lead_in_check.isEnabled() is False
 
-    dialog.loop_check.setChecked(True)
+    # "loop once" never repeats, so replaying the lead-in has no meaning.
+    dialog.play_mode_combo.setCurrentIndex(_LOOP_ONCE)
+    assert dialog.loop_lead_in_check.isEnabled() is False
+
+    dialog.play_mode_combo.setCurrentIndex(_LOOP_FOREVER)
     assert dialog.loop_lead_in_check.isEnabled() is True
 
     dialog.lead_in_check.setChecked(False)
@@ -120,20 +141,23 @@ def test_repeat_handling_combo_lists_the_three_modes_and_round_trips(qtbot):
     assert dialog.play_settings().loop_repeat_mode == "alternate"
 
 
-def test_repeat_handling_combo_enabled_only_with_looping_on_and_repeats_present(qtbot):
+def test_repeat_handling_combo_enabled_for_either_loop_mode_with_repeats_present(qtbot):
     with_repeats = PlaySettingsDialog(
-        play_settings=PlaySettings(loop_enabled=False),
+        play_settings=PlaySettings(play_mode="to_end"),
         uk_terms=True,
         score_has_repeats=True,
     )
     qtbot.addWidget(with_repeats)
     assert with_repeats.loop_repeat_combo.isEnabled() is False
 
-    with_repeats.loop_check.setChecked(True)
+    with_repeats.play_mode_combo.setCurrentIndex(_LOOP_ONCE)
+    assert with_repeats.loop_repeat_combo.isEnabled() is True
+
+    with_repeats.play_mode_combo.setCurrentIndex(_LOOP_FOREVER)
     assert with_repeats.loop_repeat_combo.isEnabled() is True
 
     no_repeats = PlaySettingsDialog(
-        play_settings=PlaySettings(loop_enabled=True),
+        play_settings=PlaySettings(play_mode="loop_forever"),
         uk_terms=True,
         score_has_repeats=False,
     )

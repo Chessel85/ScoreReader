@@ -1,5 +1,5 @@
 # tests/test_main_window_menus.py
-"""Menu shortcuts and mnemonics, the Ctrl+T / Ctrl+G / Ctrl+F wiring checks, the About dialog, and the goto-measure dialog focus. Split from test_main_window.py (S10).
+"""Menu shortcuts and mnemonics, the Ctrl+G / Ctrl+F wiring checks, the About dialog, and the goto-measure dialog focus. Split from test_main_window.py (S10).
 """
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence
@@ -8,26 +8,6 @@ from PySide6.QtWidgets import QDialog, QLabel
 from widgets.about_dialog import AboutDialog
 from widgets.goto_measure_dialog import GotoMeasureDialog
 from tests.support.main_window_helpers import _focus, _show, load_and_wait
-
-
-def test_ctrl_t_shortcut_opens_the_play_settings_dialog(window, qtbot, null_synth, minimal_score, monkeypatch):
-    """Ctrl+T now opens Play Settings (it inherited the old Tempo Offset
-    dialog's shortcut). Same scope as Ctrl+G: fires from anywhere normal
-    for a shortcut, not just a particular region."""
-    load_and_wait(window, qtbot, minimal_score)
-    _show(window, qtbot)
-    _focus(window.region_1)
-    opened = []
-    monkeypatch.setattr(
-        "main_window.PlaySettingsDialog",
-        lambda *a, **k: type(
-            "FakeDialog", (), {"exec": lambda self: opened.append(True) or QDialog.DialogCode.Rejected}
-        )(),
-    )
-
-    qtbot.keyClick(window, Qt.Key.Key_T, Qt.KeyboardModifier.ControlModifier)
-
-    assert opened == [True]
 
 
 def test_navigation_menu_items_use_home_and_end_shortcuts(window):
@@ -66,7 +46,7 @@ def test_reorder_and_performance_report_actions_have_global_dialog_shortcuts(win
     test) no mnemonic to cause that confusion."""
     assert window.attribute_order_action.shortcut() == QKeySequence("Ctrl+Shift+A")
     assert window.part_order_action.shortcut() == QKeySequence("Ctrl+Shift+O")
-    assert window.performance_report_action.shortcut() == QKeySequence("Ctrl+Shift+P")
+    assert window.performance_report_action.shortcut() == QKeySequence("Ctrl+Shift+F")
 
 
 def test_items_with_no_menu_mnemonic_have_no_ampersand(window):

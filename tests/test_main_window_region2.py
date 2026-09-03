@@ -22,9 +22,8 @@ def test_playback_menu_shortcuts(window):
     # bar number now (Preview is gone - Space is the single play control).
     assert window.commit_digits_action.shortcut() == QKeySequence(Qt.Key.Key_Enter)
     assert QKeySequence(Qt.Key.Key_Return) in window.commit_digits_action.shortcuts()
-    assert window.play_settings_action.shortcut() == QKeySequence("Ctrl+Shift+V")
-    assert QKeySequence("Ctrl+T") in window.play_settings_action.shortcuts()
-    assert window.loop_toggle_action.shortcut() == QKeySequence("Ctrl+L")
+    assert window.play_settings_action.shortcut() == QKeySequence("Ctrl+Shift+P")
+    assert window.play_mode_action.shortcut() == QKeySequence("Ctrl+L")
     assert window.lead_in_toggle_action.shortcut() == QKeySequence("Ctrl+I")
     assert window.mute_action.shortcut() == QKeySequence(Qt.Key.Key_F8)
     assert window.solo_action.shortcut() == QKeySequence(Qt.Key.Key_F9)

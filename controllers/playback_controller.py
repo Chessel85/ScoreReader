@@ -12,7 +12,13 @@ from audio.sequencer import Sequencer
 from audio.strum_schedule import sound_events
 from models import mixer_settings
 from models.mixer_settings import MixerSettings
-from models.play_settings import LOOP_REPEAT_MODES, PlaySettings
+from models.play_settings import (
+    LOOP_REPEAT_MODES,
+    PLAY_MODE_LOOP_FOREVER,
+    PLAY_MODE_TO_END,
+    PLAY_MODES,
+    PlaySettings,
+)
 from models.playback_jump_state import PlaybackJumpState
 from models.vocabulary import bar_word
 
@@ -50,8 +56,23 @@ class _PlayRun:
     # LOOP repeat with no lead-in of its own; a lead-in ahead of a pickup
     # computes its own play_gap_ms instead (_start_play_iteration).
     offset_ms: int
-    # Bar line to bar line: what one loop iteration lasts.
+    # Bar line to bar line: what one loop iteration lasts. Still computed
+    # (F/S/D tempo tracking, tests), but a "loop until stopped" run no
+    # longer schedules its restart off this as a standalone wall-clock
+    # timer - see loop_tail_pad_ms and _on_sequencer_finished.
     iteration_ms: int
+    # "loop until stopped" only: the restart is driven by the Sequencer's
+    # own `finished` signal (which fires only once every chained step has
+    # actually run and the last note's ring-out has been waited out), NOT
+    # by a monolithic timer armed a whole iteration ahead - that timer
+    # raced the Sequencer's chained per-step timers and, at a slow tempo
+    # with many steps (heavy per-step region-refresh work between each
+    # timer re-arm), drifted early enough to clip the last note (reported,
+    # etude 2 bar 3, loop length 3, 44 bpm). loop_tail_pad_ms is the only
+    # wait left: the gap between that last note's ring-out and the bar line
+    # when the iteration's final bar ends in rests. 0 when the last note
+    # itself rings to (or past) the bar line, so the restart is immediate.
+    loop_tail_pad_ms: int = 0
     # Looping only: the active_event_index to restore when the run stops.
     # A looping run tracks the playing position in Region 3 as it goes, the
     # same as a non-looping run - but the Sequencer's own update_cursor is
@@ -554,26 +575,41 @@ class PlaybackController(QObject):
         self.play_settings = self.play_settings.with_loop_length_bars(bars)
         self.status_text_changed.emit()
 
-    def toggle_loop(self) -> bool:
-        """Ctrl+L. Returns the new state so the caller keeps the menu action
-        checked in sync (pattern mirrors toggle_metronome)."""
-        return self.set_loop_enabled(not self.play_settings.loop_enabled)
+    def cycle_play_mode(self) -> str:
+        """Ctrl+L: rotate the play mode "play to end" -> "play loop once" ->
+        "play loop until stopped" -> "play to end". Returns the new mode.
+        Replaces the old toggle_loop (a plain loop on/off)."""
+        try:
+            i = PLAY_MODES.index(self.play_settings.play_mode)
+        except ValueError:
+            i = 0
+        return self.set_play_mode(PLAY_MODES[(i + 1) % len(PLAY_MODES)])
 
-    def toggle_lead_in(self) -> bool:
-        """Ctrl+I. Returns the new state, like toggle_loop."""
-        return self.set_lead_in_enabled(not self.play_settings.lead_in_enabled)
-
-    def set_loop_enabled(self, enabled: bool) -> bool:
-        """The deterministic on/off target the voice "looping on/off"
-        commands need. Persists globally and refreshes the status bar."""
+    def set_play_mode(self, mode: str) -> str:
+        """The deterministic target for cycle_play_mode and the Play
+        Settings dialog. Persists globally and refreshes the status bar; an
+        unknown value coerces to "play to end" in PlaySettings.__post_init__.
+        Returns the mode actually stored."""
         updated = self.play_settings.copy()
-        updated.loop_enabled = bool(enabled)
+        updated.play_mode = mode
         updated.__post_init__()
         self.play_settings = updated
         from persistence import app_settings
 
         app_settings.set_play_settings(self.play_settings)
         self.status_text_changed.emit()
+        return self.play_settings.play_mode
+
+    def toggle_lead_in(self) -> bool:
+        """Ctrl+I. Returns the new state, like cycle_play_mode."""
+        return self.set_lead_in_enabled(not self.play_settings.lead_in_enabled)
+
+    def set_loop_enabled(self, enabled: bool) -> bool:
+        """The deterministic on/off target the voice "looping on/off"
+        commands still use (Ref 19). Maps onto the three-way play mode: on
+        -> "play loop until stopped", off -> "play to end". Returns the
+        resulting loop_enabled bool."""
+        self.set_play_mode(PLAY_MODE_LOOP_FOREVER if enabled else PLAY_MODE_TO_END)
         return self.play_settings.loop_enabled
 
     def set_lead_in_enabled(self, enabled: bool) -> bool:
@@ -696,8 +732,8 @@ class PlaybackController(QObject):
         return run
 
     def _refresh_play_span(self, run: "_PlayRun") -> None:
-        """(Re)computes offset_ms/iteration_ms from the CURRENT tempo -
-        called both when a run is first built and again at the top of every
+        """(Re)computes offset_ms/iteration_ms/loop_tail_pad_ms from the
+        CURRENT tempo - called both when a run is first built and at the top of every
         _start_play_iteration call (including a loop repeat), so an
         F/S/D tempo change made while Preview is already looping is
         reflected in the very next loop-restart's timing rather than
@@ -738,10 +774,11 @@ class PlaybackController(QObject):
             run.seed_jump_state = self._loop_seed_jump_state(
                 run.settings.loop_repeat_mode, run.iteration_count
             )
-            _indices, span_ms, end_quarters = self.music_data.simulate_loop_iteration(
+            iter_indices, span_ms, end_quarters = self.music_data.simulate_loop_iteration(
                 run.start_index, run.settings.loop_length_bars, run.seed_jump_state
             )
             run.end_quarters = end_quarters
+            last_index = iter_indices[-1] if iter_indices else run.start_index
         else:
             # Jump-aware, not span_ms_to_quarters's flat walk - a repeat
             # fully inside the preview window makes the real Sequencer run
@@ -752,7 +789,25 @@ class PlaybackController(QObject):
             span_ms = self.music_data.playback_span_ms(
                 run.start_index, run.end_index, run.end_quarters
             )
+            last_measure = self.music_data.timeline_slices[run.end_index].measure
+            last_index = self.music_data.last_visible_event_index_of_measure(last_measure)
+            if last_index is None:
+                last_index = run.end_index
         run.iteration_ms = run.offset_ms + span_ms
+
+        # The one wait the Sequencer's own `finished` signal does NOT already
+        # cover: when the iteration's last note is shorter than the run to
+        # the bar line (final bar ends in rests), the loop must still restart
+        # on the bar line, not when that note stops ringing. Mirrors
+        # playback_event_builder._tail_ms exactly (max(bar_line, ring_out)),
+        # minus the ring_out the Sequencer waits out itself - so 0 whenever
+        # the last note rings to or past the bar line.
+        last_slice = self.music_data.timeline_slices[last_index]
+        bar_line_ms = int(
+            max(0.0, run.end_quarters - last_slice.quarters_from_start) * 60000.0 / float(bpm)
+        )
+        ring_out_ms = self.music_data.get_ring_out_ms_for_index(last_index)
+        run.loop_tail_pad_ms = max(0, bar_line_ms - ring_out_ms)
 
     def _loop_seed_jump_state(
         self, mode: str, iteration_count: int
@@ -869,8 +924,13 @@ class PlaybackController(QObject):
             events.extend((offset, ("count", beat)) for offset, beat in clicks)
 
         events.append((lead_in_ms + play_gap_ms, ("play",)))
-        if run.settings.loop_enabled and run.iteration_ms > run.offset_ms:
-            events.append((lead_in_ms + run.iteration_ms, ("loop",)))
+        # No ("loop",) event is scheduled here any more, for EITHER loop
+        # mode. "loop once" ends via _on_sequencer_finished; "loop until
+        # stopped" restarts from there too, off the Sequencer's own
+        # `finished` signal plus loop_tail_pad_ms - anchored to the
+        # Sequencer's real progress so per-step timer drift can't
+        # accumulate into an early restart that clips the last note
+        # (reported: etude 2, bar 3, loop length 3, 44 bpm).
 
         run.events = sorted(events, key=lambda event: event[0])
         run.event_index = 0
@@ -1011,26 +1071,51 @@ class PlaybackController(QObject):
         regions to that reverted position exactly as stop() does, rather
         than leaving them on the last note.
 
-        A non-looping play run (lead-in only) ends here too. A LOOPING one
-        does not: its own timer is still counting down to the bar line, and
-        the Sequencer finishing simply means the last note of this repeat
-        has rung out."""
-        if self._play_run is not None and not self._play_run.looping:
+        A non-looping play run (lead-in only) AND a "loop once" run both end
+        for good here. A "loop until stopped" run does NOT end - it restarts
+        the next iteration off THIS signal (plus loop_tail_pad_ms), which is
+        the whole point: `finished` fires only once every chained Sequencer
+        step has actually run and the last note's ring-out has been waited
+        out, so any accumulated per-step timer drift is already absorbed and
+        the restart can't land early and clip the last note."""
+        run = self._play_run
+        # "loop once" (looping window, but loop_forever False) terminates
+        # like a lead-in run - and, having tracked the Note region through
+        # the single pass with update_cursor False, it restores the cursor
+        # to where the loop started, exactly as stop() does for a stopped
+        # "loop until stopped" run.
+        ends_now = run is not None and (not run.looping or not run.settings.loop_forever)
+        loop_once_restore = (
+            run.restore_index if (ends_now and run is not None and run.looping) else None
+        )
+        if ends_now:
             self.cancel_play_run()
         if self.sequencer.update_cursor and self.music_data:
             self.music_data.active_event_index = self.sequencer.current_index
             self.cursor_moved.emit(False)
-        elif (
-            self._play_run is not None
-            and self._play_run.looping
-            and self.music_data
-        ):
-            # The Note region followed this repeat as it played; snap it
-            # back to the loop's start now so it matches what the next
-            # iteration is about to sound rather than sitting on the last
-            # note through the bar-line gap.
-            self.music_data.active_event_index = self._play_run.start_index
+        elif loop_once_restore is not None and self.music_data:
+            self.music_data.active_event_index = loop_once_restore
             self.cursor_moved.emit(False)
+        elif run is not None and run.looping and not ends_now and self.music_data:
+            # "loop until stopped", between iterations: snap the Note region
+            # back to the loop's start so it matches what the next iteration
+            # is about to sound rather than sitting on the last note through
+            # the bar-line gap, then arm the restart. loop_tail_pad_ms is 0
+            # in the common case, so _advance_play fires ("loop",)
+            # synchronously and the next iteration starts right here.
+            self.music_data.active_event_index = run.start_index
+            self.cursor_moved.emit(False)
+            self.playback_state_changed.emit()
+            # Arm the restart through _play_timer (never synchronously from
+            # inside this `finished` slot): _on_play_timer -> _advance_play
+            # fires the ("loop",) event, which rebuilds the next iteration.
+            # A 0ms pad still defers to the next event-loop turn, keeping the
+            # Sequencer out of a re-entrant play_from.
+            run.events = [(max(0, run.loop_tail_pad_ms), ("loop",))]
+            run.event_index = 0
+            run.elapsed_ms = 0
+            self._play_timer.start(max(0, run.loop_tail_pad_ms))
+            return
         self.playback_state_changed.emit()
 
     # --- tempo -------------------------------------------------------
@@ -1219,7 +1304,9 @@ class PlaybackController(QObject):
             if not self._play_run.playing:
                 return "Playback: Lead-in"
             if self._play_run.looping:
-                return "Playback: Playing (looping)"
+                if self._play_run.settings.loop_forever:
+                    return "Playback: Playing (looping)"
+                return "Playback: Playing (loop once)"
             return "Playback: Playing"
         if self.sequencer is not None and self.sequencer.is_paused:
             return "Playback: Paused"

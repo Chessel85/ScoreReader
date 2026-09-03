@@ -1,5 +1,16 @@
 # Recall Score Release Notes
 
+## 2026.1.50
+
+* Introduced looping mode in playback settings (control+L) to allow play to end, play loop once, play loop until stopped 
+* Fixed a looping playback restart that could clip the last note short at slow tempos with long loops: the restart is now driven by the sequencer actually reaching the end of the loop rather than a timer predicted a whole iteration ahead
+
+## 2026.1.49
+
+* Brought the readme.md up to date
+* Reintroduced letter R opening the recents submenu within the file menu
+* Added a version number to the user guidw which it was written against
+
 ## 2026.1.48
 
 ** Introduced extra feature for playback to allow the user to define how looping around repeats and endings works.

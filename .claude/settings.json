@@ -3,5 +3,18 @@
     "allow": [
       "Bash(.venv/Scripts/python.exe -m pytest *)"
     ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/hooks/write_last_response.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   }
 }

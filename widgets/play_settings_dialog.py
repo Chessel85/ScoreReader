@@ -17,6 +17,9 @@ from models.play_settings import (
     MAX_LEAD_IN_BEATS,
     MAX_LOOP_LENGTH_BARS,
     MIN_LOOP_LENGTH_BARS,
+    PLAY_MODE_LOOP_FOREVER,
+    PLAY_MODE_LOOP_ONCE,
+    PLAY_MODES,
     PlaySettings,
 )
 
@@ -26,11 +29,19 @@ _LOOP_REPEAT_LABELS = (
     "Repeat the second play-through",
     "Alternate the first and second play-throughs",
 )
+
+# Combo labels, index-aligned to models.play_settings.PLAY_MODES. This combo
+# replaces the old "Repeat (loop) until stopped" tickbox.
+_PLAY_MODE_LABELS = (
+    "Play to end",
+    "Play loop once",
+    "Play loop until stopped",
+)
 from models.vocabulary import bar_word
 
 
 class PlaySettingsDialog(QDialog):
-    """Playback > Play Settings... (Ctrl+Shift+V, also Ctrl+T) - the single
+    """Playback > Play Settings... (Ctrl+Shift+P) - the single
     settings dialog for the one play transport: the absolute playback tempo
     for this piece, the lead-in count-in before Space starts, and whether
     Space loops a fixed window.
@@ -89,9 +100,18 @@ class PlaySettingsDialog(QDialog):
         self.lead_in_beats_spin.setValue(settings.lead_in_beats)
         self._add_row(layout, "Extra lead-in beats:", self.lead_in_beats_spin)
 
-        self.loop_check = QCheckBox("&Repeat (loop) until stopped", self)
-        self.loop_check.setChecked(settings.loop_enabled)
-        layout.addWidget(self.loop_check)
+        # Replaces the old "Repeat (loop) until stopped" tickbox: a three-way
+        # choice of how far Space plays. Sits here - right after the lead-in
+        # controls and before the loop-length spin - both visually and in
+        # the tab order.
+        self.play_mode_combo = QComboBox(self)
+        self.play_mode_combo.addItems(_PLAY_MODE_LABELS)
+        try:
+            play_mode_index = PLAY_MODES.index(settings.play_mode)
+        except ValueError:
+            play_mode_index = 0
+        self.play_mode_combo.setCurrentIndex(play_mode_index)
+        self._add_row(layout, "&Play mode:", self.play_mode_combo)
 
         self.loop_length_spin = QSpinBox(self)
         self.loop_length_spin.setRange(MIN_LOOP_LENGTH_BARS, MAX_LOOP_LENGTH_BARS)
@@ -112,7 +132,7 @@ class PlaySettingsDialog(QDialog):
         layout.addWidget(self.loop_lead_in_check)
 
         self.lead_in_check.toggled.connect(self._update_enabled_states)
-        self.loop_check.toggled.connect(self._update_enabled_states)
+        self.play_mode_combo.currentIndexChanged.connect(self._update_enabled_states)
         self._update_enabled_states()
 
         buttons = QDialogButtonBox(
@@ -130,14 +150,21 @@ class PlaySettingsDialog(QDialog):
 
     def _update_enabled_states(self, *_args) -> None:
         lead_in = self.lead_in_check.isChecked()
-        looping = self.loop_check.isChecked()
+        mode = PLAY_MODES[self.play_mode_combo.currentIndex()]
+        looping = mode in (PLAY_MODE_LOOP_ONCE, PLAY_MODE_LOOP_FOREVER)
+        loop_forever = mode == PLAY_MODE_LOOP_FOREVER
         self.lead_in_bars_spin.setEnabled(lead_in)
         self.lead_in_beats_spin.setEnabled(lead_in)
+        # Loop length defines the loop window, so it is relevant to both
+        # looping modes and dead only for "Play to end".
         self.loop_length_spin.setEnabled(looping)
+        # Repeat handling bites for either looping mode (and only when the
+        # score actually carries repeat barlines).
         self.loop_repeat_combo.setEnabled(looping and self._score_has_repeats)
         # "Play the lead-in again on every repeat" only means something when
-        # there is both a loop to repeat and a lead-in to replay.
-        self.loop_lead_in_check.setEnabled(looping and lead_in)
+        # the loop actually repeats - i.e. "Play loop until stopped" - and
+        # there is a lead-in to replay.
+        self.loop_lead_in_check.setEnabled(loop_forever and lead_in)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -151,7 +178,7 @@ class PlaySettingsDialog(QDialog):
             lead_in_enabled=self.lead_in_check.isChecked(),
             lead_in_bars=self.lead_in_bars_spin.value(),
             lead_in_beats=self.lead_in_beats_spin.value(),
-            loop_enabled=self.loop_check.isChecked(),
+            play_mode=PLAY_MODES[self.play_mode_combo.currentIndex()],
             loop_length_bars=self.loop_length_spin.value(),
             loop_lead_in=self.loop_lead_in_check.isChecked(),
             loop_repeat_mode=LOOP_REPEAT_MODES[self.loop_repeat_combo.currentIndex()],

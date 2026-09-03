@@ -50,7 +50,7 @@ class Actions:
     play_metronome: Optional[QAction] = None
     commit_digits: Optional[QAction] = None
     play_settings: Optional[QAction] = None
-    loop_toggle: Optional[QAction] = None
+    play_mode_cycle: Optional[QAction] = None
     lead_in_toggle: Optional[QAction] = None
     loop_repeat_mode: Optional[QAction] = None
     mute: Optional[QAction] = None
@@ -130,13 +130,15 @@ class MenuBuilder:
         # not file_menu.addMenu(title) - that inserts immediately, which
         # would place it before &Open below); actually added to file_menu
         # in the addAction block, in the position it belongs.
-        # No "&" access key: NVDA announces a menu mnemonic as a pseudo-
-        # global "Alt+R" shortcut, which misleads (it only works with this
-        # menu open) - same reasoning as the Close action below.
-        a.recent_files_menu = QMenu("Recent Files", self.window)
+        # "&Recent Files" access key restored at the user's request (they
+        # navigate this menu with NVDA and want R to open the submenu while
+        # the File menu is open). The pseudo-global "Alt+R" NVDA announces is
+        # accepted as the lesser cost here; "R" doesn't collide with any
+        # other item in this menu.
+        a.recent_files_menu = QMenu("&Recent Files", self.window)
         # Experimental (feature/ug-import): chords + lyrics from an
         # Ultimate Guitar chord-tab page - infrequent, and no "&" access key
-        # for the same NVDA-pseudo-shortcut reason as Recent Files above.
+        # for the same NVDA-pseudo-shortcut reason as the Close action below.
         a.import_from_ultimate_guitar = self._action(
             "Import from Ultimate Guitar...", self.slots.open_ultimate_guitar_import_dialog,
             status_tip="Import chords and lyrics from an Ultimate Guitar tab page",
@@ -393,8 +395,8 @@ class MenuBuilder:
     def _playback_menu(self, menu_bar, a: Actions) -> None:
         """The transport controls plus Mixer, all in one menu - Play/Stop
         and Pause use a QAction carrying the shortcut instead of a bare
-        QShortcut in main_window.py (same pattern Ctrl+M/Ctrl+P/Ctrl+G/
-        Ctrl+T already use), so Space/Ctrl+Space show up here too.
+        QShortcut in main_window.py (same pattern Ctrl+M/Ctrl+P/Ctrl+G
+        already use), so Space/Ctrl+Space show up here too.
 
         Mute/Solo/Unmute All/Unsolo All used to live here too; they moved
         to the Parts menu (see _parts_menu).
@@ -453,28 +455,30 @@ class MenuBuilder:
         self.window.addAction(a.commit_digits)
 
         # Mnemonic on T: O, u, M, S, A and l are already taken in this menu.
-        # Ctrl+Shift+V alongside the other dialogs' Ctrl+Shift+I/K/X, plus
-        # Ctrl+T (which the old Tempo Offset... dialog used to carry - this
-        # dialog now owns the absolute playback tempo too).
+        # Ctrl+Shift+P alongside the other dialogs' Ctrl+Shift+I/K/X (it took
+        # over from Ctrl+Shift+V at the user's request; Performance Report
+        # now carries Ctrl+Shift+F). The old Ctrl+T second shortcut (a
+        # carry-over from the retired Tempo Offset... dialog) was dropped at
+        # the user's request.
         a.play_settings = self._action(
             "Play Se&ttings...", self.slots._show_play_settings_dialog,
-            status_tip="Set the playback tempo, lead-in and looping",
+            QKeySequence("Ctrl+Shift+P"),
+            status_tip="Set the playback tempo, lead-in and play mode",
         )
-        a.play_settings.setShortcuts([
-            QKeySequence("Ctrl+Shift+V"), QKeySequence("Ctrl+T"),
-        ])
         playback_menu.addAction(a.play_settings)
 
-        # Quick toggles for the two play-session habits, checkable so a
-        # screen reader announces their state on focus (pattern like Toggle
-        # Metronome). Ctrl+L / Ctrl+I - Ctrl+L was Toggle Live MIDI Input,
-        # which moves to Ctrl+D below.
-        a.loop_toggle = self._action(
-            "Toggle Loopin&g", self.slots.toggle_loop,
-            QKeySequence("Ctrl+L"), checkable=True,
-            status_tip="Loop the loop-length window from the cursor when playing",
+        # Ctrl+L cycles the three-way play mode (it replaced the old
+        # "Toggle Looping" tickbox / bool - Ctrl+L was Toggle Live MIDI
+        # Input before that, which moved to Ctrl+D below). Non-checkable:
+        # three states, spoken aloud on each press (MainWindow.
+        # cycle_play_mode -> RegionPresenter.announce_play_mode). Ctrl+I's
+        # lead-in toggle stays a plain checkable on/off.
+        a.play_mode_cycle = self._action(
+            "C&ycle Play Mode", self.slots.cycle_play_mode,
+            QKeySequence("Ctrl+L"),
+            status_tip="Cycle: play to end, play loop once, play loop until stopped",
         )
-        playback_menu.addAction(a.loop_toggle)
+        playback_menu.addAction(a.play_mode_cycle)
 
         a.lead_in_toggle = self._action(
             "Toggle Lead-&in", self.slots.toggle_lead_in,
@@ -646,14 +650,16 @@ class MenuBuilder:
         # Moved here from Edit (user-requested review, 2026-08-26): a
         # read-only whole-score summary - see
         # widgets/performance_report_dialog.py. Given a real global
-        # Ctrl+Shift+P shortcut and no mnemonic, same "an Alt-only mnemonic
+        # Ctrl+Shift+F shortcut and no mnemonic, same "an Alt-only mnemonic
         # that NVDA announces as if it were a real global shortcut, for an
         # item that opens a dialog like every other Ctrl+Shift+<letter>
         # item, is misleading" reasoning as Reorder Attributes/Parts above.
+        # (Ctrl+Shift+F, not the earlier Ctrl+Shift+P, at the user's
+        # request; Ctrl+Shift+P now opens Play Settings.)
         tools_menu.addSeparator()
         a.performance_report = self._action(
             "Performance Report...", self.slots._show_performance_report_dialog,
-            QKeySequence("Ctrl+Shift+P"),
+            QKeySequence("Ctrl+Shift+F"),
         )
         tools_menu.addAction(a.performance_report)
 

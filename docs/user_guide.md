@@ -1,5 +1,7 @@
 # Recall Score — User Guide
 
+*Written against version 2026.1.50*
+
 *This guide describes Recall Score, a screen-reader-first music score and
 guitar-tab viewer for visually impaired musicians, for Windows.*
 
@@ -515,29 +517,32 @@ same bars are simply listed in order when you browse them with
 within its window too, according to the "Repeat handling while looping"
 choice in Play Settings (section 7.3).
 
-### 7.3 Looping and the Lead-in Count-in
+### 7.3 Play Mode and the Lead-in Count-in
 
-`Space` is the single play control. What it does depends on two habit
-settings you can leave on or off:
+`Space` is the single play control. What it does depends on the **play
+mode** and on whether the lead-in is on:
 
-- **Looping on**: `Space` loops a fixed window of bars starting from the
-  bar your cursor is in, over and over, until you press `Space` again.
-  Your cursor does not move while a loop plays. The window length is the
-  "Loop length in bars" setting.
-- **Looping off**: `Space` plays from your cursor to the end of the piece
+- **Play to end**: `Space` plays from your cursor to the end of the piece
   and stops, with your cursor following along - the ordinary transport.
+- **Play loop once**: `Space` plays a fixed window of bars once, starting
+  from the bar your cursor is in, then stops and returns your cursor to
+  where it was. The window length is the "Loop length in bars" setting.
+- **Play loop until stopped**: the same window, but it repeats over and
+  over until you press `Space` again. Your cursor does not move while it
+  loops.
 - **Lead-in on**: a metronome count-in plays first, giving you a moment
   to get your hands back onto your instrument before the notes start.
 
-Toggle looping with `Ctrl+L` (Playback > Toggle Looping) and the lead-in
-with `Ctrl+I` (Playback > Toggle Lead-in). Both are announced and shown
-in the status bar.
+Cycle the play mode with `Ctrl+L` (Playback > Cycle Play Mode) - it steps
+through play to end, play loop once, and play loop until stopped, speaking
+the new mode aloud. Toggle the lead-in with `Ctrl+I` (Playback > Toggle
+Lead-in). Both are shown in the status bar.
 
-**Repeat handling while looping.** When your loop window clips a repeat
-barline - the repeat sign is inside the window but the bar it jumps back
-to is not - Recall Score has to choose which way through those bars to
-loop. `Ctrl+R` (Playback > Cycle Loop Repeat Handling) cycles between
-three readings, spoken aloud each press:
+**Repeat handling while looping.** In either loop mode, when your loop
+window clips a repeat barline - the repeat sign is inside the window but
+the bar it jumps back to is not - Recall Score has to choose which way
+through those bars to loop. `Ctrl+R` (Playback > Cycle Loop Repeat
+Handling) cycles between three readings, spoken aloud each press:
 
 - **Repeat the first play-through** - the repeat is taken and its
   first-time ending played, so the loop keeps going round the repeated
@@ -559,7 +564,8 @@ no repeats" when it cannot apply.
 While focus is in the Note region, `Alt+PageUp` and `Alt+PageDown`
 increase or decrease the loop length by one bar at a time, and
 `Ctrl+Enter` sets it directly from a number you have just typed (section
-5.4) - if looping is off, `Ctrl+Enter` says "Looping is off" instead.
+5.4) - if the play mode is "Play to end", `Ctrl+Enter` says "Looping is
+off" instead.
 Each change speaks the new length aloud ("Loop length 3 bars" or "Loop
 length 3 measures", depending on your Terminology (UK/US) setting).
 
@@ -568,7 +574,7 @@ half-typed bar number.
 
 ### 7.4 Play Settings (Playback > Play Settings...)
 
-Playback > Play Settings... (`Ctrl+Shift+V`, also `Ctrl+T`) is the one
+Playback > Play Settings... (`Ctrl+Shift+P`) is the one
 dialog for how playback behaves:
 
 - **Playback tempo** - an exact tempo in beats per minute (see section
@@ -576,17 +582,23 @@ dialog for how playback behaves:
 - **Play a lead-in metronome click** - the master switch for the
   count-in. When on, the "Lead-in bars" and "Extra lead-in beats"
   fields set its length.
-- **Repeat (loop) until stopped** - turns looping on. When on, "Loop
-  length in bars" sets the window.
+- **Play mode** - a dropdown with "Play to end", "Play loop once" and
+  "Play loop until stopped" (section 7.3). It sits just after the lead-in
+  fields, and `Ctrl+L` cycles the same three values from anywhere in the
+  app. It replaces the old "Repeat (loop) until stopped" tickbox.
+- **Loop length in bars** - the window length for both loop modes. Greyed
+  out for "Play to end".
 - **Repeat handling while looping** - how a repeat barline clipped by the
-  loop window is played (section 7.3). Enabled only with looping on and a
+  loop window is played (section 7.3). Enabled for either loop mode on a
   score that actually has repeat barlines. Like the other looping
   settings, it is a global practice habit, not saved per score.
-- **Play the lead-in again on every repeat** - only meaningful with both
-  looping and the lead-in switched on, and greyed out otherwise.
+- **Play the lead-in again on every repeat** - only meaningful with "Play
+  loop until stopped" and the lead-in both switched on, and greyed out
+  otherwise.
 
-The lead-in and looping settings are global practice habits that follow
-you between pieces; only the playback tempo is saved per score.
+The play mode, lead-in and looping settings are global practice habits
+that follow you between pieces; only the playback tempo is saved per
+score.
 
 ### 7.5 Auditioning the Current Chord (Shift+Space)
 
@@ -599,8 +611,8 @@ re-trigger it.
 `F` speeds playback up by 10, `S` slows it down by 10, and `D` resets to
 the score's own written tempo. These are global shortcuts - they work
 regardless of which region has focus, since tempo is a playback-wide
-setting. For an exact value, open Play Settings... (`Ctrl+Shift+V` or
-`Ctrl+T`) and type into the "Playback tempo" field.
+setting. For an exact value, open Play Settings... (`Ctrl+Shift+P`) and
+type into the "Playback tempo" field.
 
 The tempo you set is an **absolute** value between 5 and 300, where a
 beat is the time-signature denominator (a quarter in 4/4, an eighth in
@@ -842,7 +854,7 @@ at the new position immediately, the same as any other timeline move.
 
 ### 8.4 The Performance Report (Tools > Performance Report...)
 
-Tools > Performance Report... (`Ctrl+Shift+P`) opens a read-only summary of the whole
+Tools > Performance Report... (`Ctrl+Shift+F`) opens a read-only summary of the whole
 piece, independent of whatever's currently filtered in Region 2: title,
 composer, key, time signature and tempo (the same details Region 1
 shows), whether the piece has a pickup bar, its total number of bars, a
@@ -1359,11 +1371,11 @@ directly (see also section 16.3).
 
 | Item | Shortcut | What it does |
 | :--- | :--- | :--- |
-| Play/Stop | Space | Starts playback from the current position (looping when looping is on), resumes from pause, or stops it (sections 7.2, 7.3). |
+| Play/Stop | Space | Starts playback from the current position (per the play mode), resumes from pause, or stops it (sections 7.2, 7.3). |
 | Pause | Ctrl+Space | Pauses playback; resume with Space, not Ctrl+Space again (section 7.2). |
 | Play Metronome | Ctrl+Alt+Space | Starts or stops a free-running click track at the current tempo, without moving the timeline, for playing along by ear (section 7.7). |
-| Play Settings... | Ctrl+Shift+V (also Ctrl+T) | Sets the playback tempo, the lead-in count-in, and looping (sections 7.4, 7.6). |
-| Toggle Looping | Ctrl+L | Turns looping playback on or off (section 7.3). |
+| Play Settings... | Ctrl+Shift+P | Sets the playback tempo, the lead-in count-in, and the play mode (sections 7.4, 7.6). |
+| Cycle Play Mode | Ctrl+L | Cycles the play mode: play to end, play loop once, play loop until stopped (section 7.3). |
 | Toggle Lead-in | Ctrl+I | Turns the metronome count-in before playback on or off (section 7.3). |
 | Cycle Loop Repeat Handling | Ctrl+R | Cycles how a repeat barline clipped by the loop window is played: first play-through, second play-through, or alternating (section 7.3). |
 | Mute | F8 | Mutes or unmutes the focused row in the Parts region (section 6.3). |
@@ -1391,7 +1403,7 @@ directly (see also section 16.3).
 | Item | Shortcut | What it does |
 | :--- | :--- | :--- |
 | Tuner... | Ctrl+Shift+T | Opens the microphone-based chromatic tuner (section 11). |
-| Performance Report... | Ctrl+Shift+P | Opens a read-only summary of the whole piece (section 8.4). |
+| Performance Report... | Ctrl+Shift+F | Opens a read-only summary of the whole piece (section 8.4). |
 | Strumming Patterns... | Ctrl+Shift+U | Opens a read-only view of an Ultimate Guitar import's strum pattern(s), with a tempo / metronome-click control and looped demo playback (section 10.7). Disabled unless such an import is loaded. |
 
 ### 14.7 Help Menu
@@ -1430,10 +1442,10 @@ directly (see also section 16.3).
 | Solo / unsolo the focused row *(Parts List region only)* | F9 |
 | Clear every mute in the score *(Parts List region only)* | Alt+F8 |
 | Clear every solo in the score *(Parts List region only)* | Alt+F9 |
-| Play / stop playback from the current position, looping when looping is on (also resumes from pause) | Space |
+| Play / stop playback from the current position, per the play mode (also resumes from pause) | Space |
 | Pause playback (resume with Space, not Ctrl+Space again) | Ctrl+Space |
 | Complete a pending typed bar number *(any region or the status bar)* | Enter |
-| Toggle looping on/off | Ctrl+L |
+| Cycle the play mode: play to end, play loop once, play loop until stopped | Ctrl+L |
 | Toggle the lead-in count-in on/off | Ctrl+I |
 | Cycle how a clipped repeat is handled while looping | Ctrl+R |
 | Increase / decrease the loop length by one bar, spoken aloud *(Note region only)* | Alt+PageUp / Alt+PageDown |
@@ -1441,7 +1453,7 @@ directly (see also section 16.3).
 | Play every note at the current position together | Shift+Space |
 | Increase / decrease playback tempo by 10 *(works from any region or the status bar)* | F / S |
 | Reset playback tempo to the score's own tempo *(works from any region or the status bar)* | D |
-| Open the Play Settings dialog | Ctrl+Shift+V (also Ctrl+T) |
+| Open the Play Settings dialog | Ctrl+Shift+P |
 | Toggle the metronome on/off | Ctrl+M |
 | Start / stop a free-running click track at the current tempo, without moving the timeline | Ctrl+Alt+Space |
 | Toggle the position announcer on/off | Ctrl+P |
@@ -1462,7 +1474,7 @@ directly (see also section 16.3).
 | Open the Reorder Parts dialog | Ctrl+Shift+O |
 | Move the selected part up / down *(Reorder Parts dialog only)* | Alt+U / Alt+D |
 | Jump to the start / end of the focused Performance region entry *(Performance region only)* | Ctrl+Home / Ctrl+End |
-| Open the Performance Report | Ctrl+Shift+P |
+| Open the Performance Report | Ctrl+Shift+F |
 | Open a note attribute's context menu *(Note Attributes region only)* | right-click, or Menu key / Shift+F10 |
 | Open a score file | Ctrl+O |
 

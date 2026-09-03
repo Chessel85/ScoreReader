@@ -41,6 +41,22 @@ MAX_LOOP_LENGTH_BARS = 64
 LOOP_REPEAT_MODES = ("first", "second", "alternate")
 DEFAULT_LOOP_REPEAT_MODE = "first"
 
+# The three-way play extent the Play Settings dialog's "Play mode" combo
+# offers and Ctrl+L cycles - it replaces the old loop_enabled tickbox
+# ("Repeat (loop) until stopped").
+#   to_end        - play from the cursor to the end of the piece, once
+#   loop_once     - play the loop-length window once, then stop
+#   loop_forever  - loop the loop-length window until playback is stopped
+# loop_enabled (below) is True for both loop_once and loop_forever - it is
+# still the flag every play-run code path keys off to decide "snap to the
+# bar line and run a fixed window"; only the loop-RESTART is gated on
+# loop_forever alone.
+PLAY_MODE_TO_END = "to_end"
+PLAY_MODE_LOOP_ONCE = "loop_once"
+PLAY_MODE_LOOP_FOREVER = "loop_forever"
+PLAY_MODES = (PLAY_MODE_TO_END, PLAY_MODE_LOOP_ONCE, PLAY_MODE_LOOP_FOREVER)
+DEFAULT_PLAY_MODE = PLAY_MODE_TO_END
+
 
 def _clamp(value: int, low: int, high: int) -> int:
     try:
@@ -63,12 +79,17 @@ class PlaySettings:
     has_lead_in() (bars/beats both zero) and lead_in_click (the tickbox now
     just IS "play the count-in click"; there is no silent-numbers-only
     count-in any more).
+
+    play_mode is the three-way play extent (see PLAY_MODES above); it
+    replaces the old loop_enabled bool. loop_enabled / loop_forever are now
+    read-only views derived from it, kept as the names the play-run builder
+    already uses.
     """
 
     lead_in_enabled: bool = True
     lead_in_bars: int = 1
     lead_in_beats: int = 0
-    loop_enabled: bool = False
+    play_mode: str = DEFAULT_PLAY_MODE
     loop_length_bars: int = 2
     loop_lead_in: bool = False
     # How a repeat barline clipped by the loop window is read while looping
@@ -80,13 +101,30 @@ class PlaySettings:
         self.lead_in_enabled = bool(self.lead_in_enabled)
         self.lead_in_bars = _clamp(self.lead_in_bars, 0, MAX_LEAD_IN_BARS)
         self.lead_in_beats = _clamp(self.lead_in_beats, 0, MAX_LEAD_IN_BEATS)
-        self.loop_enabled = bool(self.loop_enabled)
+        if self.play_mode not in PLAY_MODES:
+            self.play_mode = DEFAULT_PLAY_MODE
         self.loop_length_bars = _clamp(
             self.loop_length_bars, MIN_LOOP_LENGTH_BARS, MAX_LOOP_LENGTH_BARS
         )
         self.loop_lead_in = bool(self.loop_lead_in)
         if self.loop_repeat_mode not in LOOP_REPEAT_MODES:
             self.loop_repeat_mode = DEFAULT_LOOP_REPEAT_MODE
+
+    @property
+    def loop_enabled(self) -> bool:
+        """True for either looping mode (loop_once or loop_forever). The
+        play-run builder (controllers/playback_controller.py) keys off this
+        to decide "snap to the bar line and run a fixed loop_length_bars
+        window" - which both looping modes do. "Play to end" is the only
+        mode it is False for."""
+        return self.play_mode in (PLAY_MODE_LOOP_ONCE, PLAY_MODE_LOOP_FOREVER)
+
+    @property
+    def loop_forever(self) -> bool:
+        """Only "loop until stopped" - the mode that schedules the
+        loop-restart timer. "loop once" plays the window a single time and
+        then ends like a plain lead-in run."""
+        return self.play_mode == PLAY_MODE_LOOP_FOREVER
 
     def has_lead_in(self) -> bool:
         """A count-in should actually happen: the master toggle is on AND
@@ -111,7 +149,7 @@ class PlaySettings:
             lead_in_enabled=self.lead_in_enabled,
             lead_in_bars=self.lead_in_bars,
             lead_in_beats=self.lead_in_beats,
-            loop_enabled=self.loop_enabled,
+            play_mode=self.play_mode,
             loop_length_bars=self.loop_length_bars,
             loop_lead_in=self.loop_lead_in,
             loop_repeat_mode=self.loop_repeat_mode,
@@ -122,7 +160,7 @@ class PlaySettings:
             "lead_in_enabled": self.lead_in_enabled,
             "lead_in_bars": self.lead_in_bars,
             "lead_in_beats": self.lead_in_beats,
-            "loop_enabled": self.loop_enabled,
+            "play_mode": self.play_mode,
             "loop_length_bars": self.loop_length_bars,
             "loop_lead_in": self.loop_lead_in,
             "loop_repeat_mode": self.loop_repeat_mode,
@@ -134,10 +172,16 @@ class PlaySettings:
         file written by an older version keeps working - the same
         best-effort shape MixerSettings.from_dict has. Also accepts the
         pre-rename Preview keys (lead_in_click, preview_bars, loop,
-        loop_includes_lead_in) so an existing settings.json carries over."""
+        loop_includes_lead_in) so an existing settings.json carries over,
+        and the pre-play_mode loop_enabled bool (maps on -> loop_forever,
+        off -> to_end)."""
         if not data:
             return cls()
         defaults = cls()
+        play_mode = data.get("play_mode")
+        if play_mode not in PLAY_MODES:
+            legacy_loop = data.get("loop_enabled", data.get("loop", False))
+            play_mode = PLAY_MODE_LOOP_FOREVER if legacy_loop else PLAY_MODE_TO_END
         return cls(
             lead_in_enabled=data.get(
                 "lead_in_enabled",
@@ -150,7 +194,7 @@ class PlaySettings:
             ),
             lead_in_bars=data.get("lead_in_bars", defaults.lead_in_bars),
             lead_in_beats=data.get("lead_in_beats", defaults.lead_in_beats),
-            loop_enabled=data.get("loop_enabled", data.get("loop", defaults.loop_enabled)),
+            play_mode=play_mode,
             loop_length_bars=data.get(
                 "loop_length_bars", data.get("preview_bars", defaults.loop_length_bars)
             ),

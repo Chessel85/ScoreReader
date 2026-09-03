@@ -68,7 +68,7 @@ def test_play_settings_default_when_nothing_has_been_saved():
 
 def test_set_play_settings_round_trips():
     app_settings.set_play_settings(
-        PlaySettings(lead_in_bars=2, lead_in_enabled=False, loop_length_bars=4, loop_enabled=True)
+        PlaySettings(lead_in_bars=2, lead_in_enabled=False, loop_length_bars=4, play_mode="loop_forever")
     )
 
     saved = app_settings.load().play
@@ -97,7 +97,7 @@ def test_set_play_settings_leaves_the_other_preferences_alone():
     files list."""
     app_settings.save(AppSettings(uk_terms=True, recent_files=["a.xml"]))
 
-    app_settings.set_play_settings(PlaySettings(loop_enabled=True))
+    app_settings.set_play_settings(PlaySettings(play_mode="loop_forever"))
 
     settings = app_settings.load()
     assert settings.uk_terms is True

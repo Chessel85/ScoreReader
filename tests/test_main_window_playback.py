@@ -8,7 +8,10 @@ import pytest
 from PySide6.QtCore import Qt
 
 from audio.metronome import METRONOME_ACCENT_NOTE, METRONOME_OFFBEAT_NOTE
-from models.play_settings import PlaySettings
+from models.play_settings import PLAY_MODES, PlaySettings
+
+_LOOP_ONCE = PLAY_MODES.index("loop_once")
+_LOOP_FOREVER = PLAY_MODES.index("loop_forever")
 from persistence import app_settings
 from widgets import accessible_announcer
 from widgets.play_settings_dialog import PlaySettingsDialog
@@ -156,27 +159,27 @@ def test_play_settings_dialog_cancelled_changes_nothing(window, qtbot, minimal_s
     load_and_wait(window, qtbot, minimal_score)
     dialog = _fake_play_settings_dialog(window, monkeypatch, accept=False)
     dialog.tempo_spin.setValue(50)
-    dialog.loop_check.setChecked(True)
+    dialog.play_mode_combo.setCurrentIndex(_LOOP_FOREVER)
 
     window._show_play_settings_dialog()
 
     assert window._music_data.playback_tempo_bpm is None
-    assert window.playback.play_settings.loop_enabled is False
+    assert window.playback.play_settings.play_mode == "to_end"
 
 
-def test_play_settings_dialog_toggles_looping_and_lead_in_and_syncs_the_menu(
+def test_play_settings_dialog_sets_the_play_mode_and_lead_in_and_syncs_the_menu(
     window, qtbot, minimal_score, monkeypatch
 ):
     load_and_wait(window, qtbot, minimal_score)
     dialog = _fake_play_settings_dialog(window, monkeypatch)
-    dialog.loop_check.setChecked(True)
+    dialog.play_mode_combo.setCurrentIndex(_LOOP_FOREVER)
     dialog.lead_in_check.setChecked(False)
 
     window._show_play_settings_dialog()
 
+    assert window.playback.play_settings.play_mode == "loop_forever"
     assert window.playback.play_settings.loop_enabled is True
     assert window.playback.play_settings.lead_in_enabled is False
-    assert window.loop_toggle_action.isChecked() is True
     assert window.lead_in_toggle_action.isChecked() is False
 
 
@@ -379,6 +382,72 @@ def test_looping_run_tracks_the_playing_position_in_the_note_region(
     assert window._music_data.active_event_index == restore
 
 
+def test_loop_once_plays_the_window_a_single_time_then_ends(
+    window, qtbot, null_synth, many_measures_score
+):
+    load_and_wait(window, qtbot, many_measures_score)
+    assert window._music_data.jump_to_measure(3) is True
+    restore = window._music_data.active_event_index
+    no_lead_in(window, play_mode="loop_once", loop_length_bars=2)
+    null_synth.played.clear()
+
+    window.toggle_play_stop()
+    run = window.playback._play_run
+    assert run is not None and run.looping is True
+    # No restart is scheduled - that is what makes it "once".
+    assert not any(action[0] == "loop" for _, action in run.events)
+    assert null_synth.played, "the loop window's first note sounded"
+
+    # When the single pass finishes, the run ends and the cursor goes back
+    # to where the loop was started from.
+    window.sequencer.stop()
+    window.playback._on_sequencer_finished()
+    assert window.playback.is_play_run_active is False
+    assert window._music_data.active_event_index == restore
+
+
+def test_loop_once_status_field_says_loop_once(
+    window, qtbot, null_synth, many_measures_score
+):
+    load_and_wait(window, qtbot, many_measures_score)
+    no_lead_in(window, play_mode="loop_once", loop_length_bars=2)
+    window.toggle_play_stop()
+
+    window.playback._play_run.playing = True
+    assert window.playback.playback_status_text() == "Playback: Playing (loop once)"
+
+
+def test_loop_until_stopped_restarts_from_the_sequencers_finished_signal(
+    window, qtbot, null_synth, many_measures_score
+):
+    """The ("loop",) restart is no longer a standalone wall-clock timer
+    racing the Sequencer's chained per-step timers (which drifted early at a
+    slow tempo and clipped the last note - reported, etude 2). It is armed
+    only when the Sequencer emits `finished`, i.e. once every step has
+    actually run and the last note's ring-out has been waited out."""
+    load_and_wait(window, qtbot, many_measures_score)
+    assert window._music_data.jump_to_measure(3) is True
+    no_lead_in(window, loop_enabled=True, loop_length_bars=2)
+
+    window.toggle_play_stop()
+    run = window.playback._play_run
+    assert run is not None and run.looping is True
+    # No standalone restart event is scheduled up front any more.
+    assert not any(action[0] == "loop" for _, action in run.events)
+    assert run.loop_tail_pad_ms >= 0
+
+    # The Sequencer reaching the end arms the restart; firing the (0ms in
+    # this case) pad timer starts the next iteration.
+    window.playback._on_sequencer_finished()
+    assert window.playback.is_play_run_active is True, "the loop did not end"
+    window.playback._on_play_timer()
+
+    assert run.iteration_count == 1
+    assert window.sequencer.is_playing is True
+
+    window.toggle_play_stop()
+
+
 def test_a_second_space_while_looping_stops_it(window, qtbot, null_synth, many_measures_score):
     load_and_wait(window, qtbot, many_measures_score)
     no_lead_in(window, loop_enabled=True, loop_length_bars=2)
@@ -396,7 +465,7 @@ def test_lead_in_only_space_counts_in_then_plays_to_the_end(
 ):
     load_and_wait(window, qtbot, many_measures_score)
     window.playback.set_play_settings(
-        PlaySettings(lead_in_enabled=True, lead_in_bars=1, loop_enabled=False)
+        PlaySettings(lead_in_enabled=True, lead_in_bars=1, play_mode="to_end")
     )
     null_synth.played.clear()
 
@@ -540,7 +609,7 @@ def test_lead_in_counts_through_a_whole_bar_before_a_pickup_plays(
 ):
     load_and_wait(window, qtbot, score_bourree_full)
     window.playback.set_play_settings(
-        PlaySettings(lead_in_enabled=True, lead_in_bars=1, lead_in_beats=0, loop_enabled=True, loop_length_bars=1)
+        PlaySettings(lead_in_enabled=True, lead_in_bars=1, lead_in_beats=0, play_mode="loop_forever", loop_length_bars=1)
     )
     assert window._music_data.active_event_index == 0
 
@@ -632,7 +701,7 @@ def test_alt_page_up_persists_the_new_length_globally(window, qtbot, minimal_sco
 
 def test_ctrl_enter_sets_the_loop_length_from_a_typed_number(window, qtbot, minimal_score):
     load_and_wait(window, qtbot, minimal_score)
-    window.playback.set_play_settings(PlaySettings(loop_enabled=True))
+    window.playback.set_play_settings(PlaySettings(play_mode="loop_forever"))
     window.navigation.append_pending_digit("8")
 
     window.commit_loop_length()
@@ -650,7 +719,7 @@ def test_ctrl_enter_with_looping_off_announces_and_clears(window, qtbot, monkeyp
         lambda event: announcements.append(event.message()),
     )
     load_and_wait(window, qtbot, minimal_score)
-    window.playback.set_play_settings(PlaySettings(loop_enabled=False, loop_length_bars=2))
+    window.playback.set_play_settings(PlaySettings(play_mode="to_end", loop_length_bars=2))
     window.navigation.append_pending_digit("8")
 
     window.commit_loop_length()
@@ -662,27 +731,34 @@ def test_ctrl_enter_with_looping_off_announces_and_clears(window, qtbot, monkeyp
 
 def test_ctrl_enter_with_no_pending_number_is_a_no_op(window, qtbot, minimal_score):
     load_and_wait(window, qtbot, minimal_score)
-    window.playback.set_play_settings(PlaySettings(loop_enabled=True, loop_length_bars=2))
+    window.playback.set_play_settings(PlaySettings(play_mode="loop_forever", loop_length_bars=2))
 
     window.commit_loop_length()
 
     assert window.playback.play_settings.loop_length_bars == 2
 
 
-# --- Ctrl+L / Ctrl+I quick toggles ----------------------------------
+# --- Ctrl+L play-mode cycle / Ctrl+I lead-in toggle -----------------
 
-def test_ctrl_l_toggles_looping_and_keeps_the_menu_in_sync(window, qtbot, minimal_score):
+def test_ctrl_l_cycles_the_three_play_modes_and_persists(window, qtbot, monkeypatch, minimal_score):
     load_and_wait(window, qtbot, minimal_score)
-    assert window.playback.play_settings.loop_enabled is False
+    spoken = []
+    monkeypatch.setattr(
+        window.presenter, "announce_play_mode", lambda mode: spoken.append(mode)
+    )
+    assert window.playback.play_settings.play_mode == "to_end"
 
-    window.toggle_loop()
+    window.cycle_play_mode()
+    assert window.playback.play_settings.play_mode == "loop_once"
+    assert app_settings.load().play.play_mode == "loop_once"
+    assert spoken[-1] == "loop_once"
 
-    assert window.playback.play_settings.loop_enabled is True
-    assert window.loop_toggle_action.isChecked() is True
-    assert app_settings.load().play.loop_enabled is True
+    window.cycle_play_mode()
+    assert window.playback.play_settings.play_mode == "loop_forever"
 
-    window.toggle_loop()
-    assert window.playback.play_settings.loop_enabled is False
+    window.cycle_play_mode()
+    assert window.playback.play_settings.play_mode == "to_end"
+    assert spoken == ["loop_once", "loop_forever", "to_end"]
 
 
 def test_ctrl_i_toggles_the_lead_in_and_keeps_the_menu_in_sync(window, qtbot, minimal_score):

@@ -53,3 +53,6 @@ packaging/version_info.txt
 # repo root.
 /vosk_model/
 /vosk_model_large/
+
+# Screen-reader convenience: Claude's last response, written by .claude/hooks/write_last_response.py
+stuff.txt

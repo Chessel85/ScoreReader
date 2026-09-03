@@ -236,7 +236,7 @@ class MainWindow(QMainWindow):
         - that causes ambiguous-shortcut conflicts between MainWindow
         instances alive in the same QApplication.
 
-        Ctrl+M/Ctrl+P/Ctrl+G/Ctrl+T/Ctrl+A have no QShortcut here: their menu
+        Ctrl+M/Ctrl+P/Ctrl+G/Ctrl+A have no QShortcut here: their menu
         actions carry the shortcut themselves. Ctrl+A in particular used to
         be a bare QShortcut right here with no menu presence at all - it's
         now Edit > Select All (widgets/menu_builder.py), gated to the Note
@@ -265,7 +265,7 @@ class MainWindow(QMainWindow):
         # pause_resume QAction shortcuts instead of a QShortcut here - two
         # bindings for the same key sequence in the same WindowShortcut
         # context would be ambiguous and neither would fire. Same pattern
-        # Ctrl+M/Ctrl+P/Ctrl+G/Ctrl+T already use.
+        # Ctrl+M/Ctrl+P/Ctrl+G already use.
 
         # Ref 13: re-trigger the chord at the cursor on demand. No held-key
         # tracking needed - AC2's "hold for the marked length" is already
@@ -380,12 +380,13 @@ class MainWindow(QMainWindow):
         self.play_metronome_action = actions.play_metronome
         self.commit_digits_action = actions.commit_digits
         self.play_settings_action = actions.play_settings
-        self.loop_toggle_action = actions.loop_toggle
+        self.play_mode_action = actions.play_mode_cycle
         self.lead_in_toggle_action = actions.lead_in_toggle
         self.loop_repeat_mode_action = actions.loop_repeat_mode
-        # Global (AppSettings.play), not per-score - set once here from the
-        # loaded settings, kept in sync by toggle_loop/toggle_lead_in.
-        self.loop_toggle_action.setChecked(self.playback.play_settings.loop_enabled)
+        # Global (AppSettings.play), not per-score - the lead-in toggle is
+        # checkable and set once here from the loaded settings, kept in sync
+        # by toggle_lead_in. The play-mode action is a non-checkable cycle
+        # (three states), so it carries no checked state of its own.
         self.lead_in_toggle_action.setChecked(self.playback.play_settings.lead_in_enabled)
         self.mute_action = actions.mute
         self.solo_action = actions.solo
@@ -796,8 +797,12 @@ class MainWindow(QMainWindow):
         self.navigation.clear_pending_digits()
         self.presenter.announce_loop_length(self.playback.play_settings.loop_length_bars)
 
-    def toggle_loop(self):
-        self.loop_toggle_action.setChecked(self.playback.toggle_loop())
+    def cycle_play_mode(self):
+        """Ctrl+L: rotate play to end -> play loop once -> play loop until
+        stopped. Non-checkable (three states), so the new mode is spoken
+        aloud - the only other trace is the (unfocused) status bar."""
+        mode = self.playback.cycle_play_mode()
+        self.presenter.announce_play_mode(mode)
 
     def toggle_lead_in(self):
         self.lead_in_toggle_action.setChecked(self.playback.toggle_lead_in())
@@ -1239,7 +1244,7 @@ class MainWindow(QMainWindow):
         self.region_3.setFocus()
 
     def _show_play_settings_dialog(self):
-        """Playback > Play Settings... (Ctrl+Shift+V, also Ctrl+T) - the one
+        """Playback > Play Settings... (Ctrl+Shift+P) - the one
         settings dialog for playback: the absolute tempo (per-score, saved
         in the .rsc), and the lead-in / looping habits (global, saved in
         app_settings like the UK/US dialect). Unlike GotoMeasureDialog
@@ -1260,7 +1265,6 @@ class MainWindow(QMainWindow):
                 settings = dialog.play_settings()
                 self.playback.set_play_settings(settings)
                 app_settings.set_play_settings(settings)
-                self.loop_toggle_action.setChecked(settings.loop_enabled)
                 self.lead_in_toggle_action.setChecked(settings.lead_in_enabled)
                 if self._music_data:
                     self.playback.set_playback_tempo(dialog.tempo_display_bpm())
