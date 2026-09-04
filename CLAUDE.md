@@ -8,7 +8,7 @@ Handled automatically by Stop/Notification hooks in `~/.claude/settings.json` (S
 
 ## Project
 
-"Recall Score" (repo `SReader`, remote `ScoreReader`) — a screen-reader-first music score and guitar-tab viewer/editor for visually impaired musicians. `Product Definition Document.md` is the authoritative spec: roles, numbered functional requirements with acceptance criteria, the 2x2 region layout, and the intended keystroke map. Read the relevant requirement rows before implementing a feature; most current code maps directly onto them (e.g. pickup-bar measure numbering is Ref 17, TS-relative beat/duration units is Ref 18, part/staff/voice filtering is Ref 7).
+"Recall Score" (local folder `SReader`, GitHub repo `RecallScore`) — a screen-reader-first music score and guitar-tab viewer/editor for visually impaired musicians. `Product Definition Document.md` is the authoritative spec: roles, numbered functional requirements with acceptance criteria, the 2x2 region layout, and the intended keystroke map. Read the relevant requirement rows before implementing a feature; most current code maps directly onto them (e.g. pickup-bar measure numbering is Ref 17, TS-relative beat/duration units is Ref 18, part/staff/voice filtering is Ref 7).
 
 Accessibility is the product, not a polish item: notes are rendered as spoken-friendly text ("F sharp", "B double flat", octave omitted in the note list), navigation is keyboard-driven with a cyclic region focus loop, and every timeline move triggers MIDI audition. Ref 9 sets a 25 ms audition latency budget — that constraint is why the audio path is in-process FluidSynth rather than an external MIDI port. Preserve these properties when changing UI or data formatting.
 

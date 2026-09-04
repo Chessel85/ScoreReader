@@ -11,7 +11,7 @@ notation and play at the same time, so learning a piece well enough to play it f
 memory matters more than it does for a sighted player. Recall Score is designed to
 make that process efficient.
 
-*(Repo `SReader`; GitHub remote `ScoreReader` — <https://github.com/Chessel85/ScoreReader>.
+*(Local folder `SReader`; GitHub repo `RecallScore` — <https://github.com/Chessel85/RecallScore>.
 Current version: see `version.txt`.)*
 
 ---
@@ -80,7 +80,7 @@ Current version: see `version.txt`.)*
 ## Getting Started (development)
 
 ```powershell
-git clone git@github.com:Chessel85/ScoreReader.git SReader
+git clone git@github.com:Chessel85/RecallScore.git SReader
 cd SReader
 
 python -m venv .venv
