@@ -1513,7 +1513,7 @@ version you're running - worth including if you report an issue. Check
 section 16 (Troubleshooting) first; if that doesn't resolve it, please
 raise an issue on the project's GitHub page:
 
-<https://github.com/Chessel85/ScoreReader/issues>
+<https://github.com/Chessel85/RecallScore/issues>
 
 Include what you were doing, the version number, and - if the app was
 involved - the contents of `recall_score.log` (section 16.2).
