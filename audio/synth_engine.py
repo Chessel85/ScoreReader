@@ -1,5 +1,6 @@
 # audio/synth_engine.py
 import os
+import sys
 import ctypes
 from typing import List, Optional, Tuple
 from PySide6.QtCore import QTimer
@@ -12,11 +13,11 @@ from audio.voice_confirmation_cue import VOICE_CONTROL_CUE_CHANNEL
 from audio.grace_note_schedule import effective_grace_duration_ms
 from audio.strum_schedule import build_strum_schedule
 
-# --- DLL RESOLUTION FROM SUBFOLDER ---
+# --- NATIVE FLUIDSYNTH LIBRARY RESOLUTION ---
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN_DIR = os.path.join(PROJECT_ROOT, "bin")
 
-if os.path.exists(BIN_DIR):
+if sys.platform == "win32" and os.path.exists(BIN_DIR):
     if hasattr(os, "add_dll_directory"):
         os.add_dll_directory(BIN_DIR)
 
@@ -36,6 +37,19 @@ if os.path.exists(BIN_DIR):
                 ctypes.CDLL(dll_path)
             except Exception:
                 pass
+elif sys.platform == "darwin":
+    # pyfluidsynth's find_libfluidsynth() locates the native library via
+    # ctypes.util.find_library, which never looks inside a frozen .app
+    # bundle. Its one documented escape hatch is
+    # $HOMEBREW_PREFIX/lib/libfluidsynth.dylib - point that at our own
+    # bundled copy when one exists (the packaged .app case, where the dylibs
+    # are staged into lib/ - see packaging/RecallScore-mac.spec). In dev on a
+    # Mac with a real Homebrew install, find_library succeeds on its own and
+    # HOMEBREW_PREFIX is already set, so this never fires and never shadows
+    # the developer's own FluidSynth.
+    _bundled_dylib = os.path.join(PROJECT_ROOT, "lib", "libfluidsynth.dylib")
+    if os.path.exists(_bundled_dylib) and not os.environ.get("HOMEBREW_PREFIX"):
+        os.environ["HOMEBREW_PREFIX"] = PROJECT_ROOT
 
 try:
     import fluidsynth
@@ -166,7 +180,10 @@ class SynthEngine:
             # and .midi_driver stay at Synth.__init__'s own None default, so
             # Synth.delete()'s teardown (`if self.midi_driver: ...`) is a
             # harmless no-op on close - nothing to hang on there either.
-            driver = "wasapi"
+            # Driver is platform-selected: WASAPI on Windows, CoreAudio on
+            # macOS (WASAPI does not exist there). The MIDI-router / teardown
+            # reasoning above applies identically on both.
+            driver = "coreaudio" if sys.platform == "darwin" else "wasapi"
             device = self._fs.get_setting(f"audio.{driver}.device")
             self._fs.setting("audio.driver", driver)
             self._fs.setting(f"audio.{driver}.device", device)

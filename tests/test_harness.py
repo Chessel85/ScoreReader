@@ -27,6 +27,18 @@ def test_constructing_a_real_synth_engine_is_blocked():
         SynthEngine()
 
 
+def test_voice_recognition_module_imports_on_every_platform():
+    """audio/voice_recognition.py is in audio/synth_engine.py's import chain,
+    so an import-time failure there takes the whole app down before the
+    window opens. It used to reference subprocess.CREATE_NO_WINDOW at module
+    scope - a Windows-only constant that AttributeErrors on macOS/Linux.
+    Asserting the resolved flag set is a plain int catches that regression
+    for any platform branch, while running on Windows."""
+    import audio.voice_recognition as vr
+
+    assert isinstance(vr._POPEN_CREATIONFLAGS, int)
+
+
 def test_models_package_does_not_import_qt():
     """R2: "models/ stays Qt-free" is a stated invariant, not just a
     preference - main_window.detect_default_uk_terms() lives in the UI layer

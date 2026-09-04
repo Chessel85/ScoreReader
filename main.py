@@ -14,7 +14,10 @@ def _redirect_stdio_if_headless():
     Must run before any other import that could print."""
     if sys.stdout is not None and sys.stderr is not None:
         return
-    log_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "Recall Score")
+    if sys.platform == "darwin":
+        log_dir = os.path.expanduser("~/Library/Logs/Recall Score")
+    else:
+        log_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "Recall Score")
     try:
         os.makedirs(log_dir, exist_ok=True)
         log_file = open(os.path.join(log_dir, "recall_score.log"), "a", encoding="utf-8", buffering=1)
@@ -35,13 +38,19 @@ from widgets.accessible_menu_style import AccessibleMenuStyle
 
 
 def _app_icon_path():
-    """RecallScore.ico lives next to main.py in dev, and at the frozen bundle
-    root (sys._MEIPASS) once packaging/RecallScore.spec bundles
-    packaging/RecallScore.ico - see M2. Returns None until the user supplies
-    that file; QIcon(None) would raise, so callers must check first."""
+    """RecallScore.ico (Windows) / RecallScore.icns (macOS - QIcon will not
+    read a .ico reliably for the Dock) lives next to main.py in dev, and at
+    the frozen bundle root (sys._MEIPASS) once packaging/RecallScore.spec
+    bundles packaging/RecallScore.ico - see M2. On macOS the real Dock icon
+    comes from the .app bundle's Info.plist regardless; this is just the
+    window icon. Returns None until such a file is supplied; QIcon(None)
+    would raise, so callers must check first."""
     base_dir = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-    icon_path = os.path.join(base_dir, "RecallScore.ico")
-    return icon_path if os.path.exists(icon_path) else None
+    for name in ("RecallScore.icns", "RecallScore.ico"):
+        icon_path = os.path.join(base_dir, name)
+        if os.path.exists(icon_path):
+            return icon_path
+    return None
 
 
 def main():

@@ -118,9 +118,14 @@ WORKER_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "voice_
 # root here (the same __file__-faking trick RecallScore.spec's header
 # comment documents for audio/synth_engine.py's PROJECT_ROOT, which is also
 # how MODEL_DIR above resolves correctly with no frozen-specific code).
+# The worker executable has a .exe suffix only on Windows; PyInstaller drops
+# the suffix on macOS/Linux.
+_WORKER_EXE_NAME = (
+    "RecallScoreVoiceWorker.exe" if sys.platform == "win32" else "RecallScoreVoiceWorker"
+)
 WORKER_EXE = os.path.join(
     getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "voice_worker", "RecallScoreVoiceWorker.exe",
+    "voice_worker", _WORKER_EXE_NAME,
 )
 
 if FROZEN:
@@ -148,7 +153,11 @@ def _worker_command() -> List[str]:
 # affecting the pipes themselves. Harmless to pass in dev too (python.exe
 # spawned from an already-console-attached parent doesn't open a new window
 # either way), so it's applied unconditionally rather than only when FROZEN.
-_POPEN_CREATIONFLAGS = subprocess.CREATE_NO_WINDOW
+# The constant does not exist on macOS/Linux (there is no console window to
+# suppress); getattr(..., 0) yields creationflags=0, which is the POSIX
+# default and a no-op there - so importing this module can't AttributeError
+# on those platforms.
+_POPEN_CREATIONFLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 # Vosk's own recommended catch-all - documented as letting the decoder say
 # "none of these phrases" instead of forcing the nearest wrong match.
