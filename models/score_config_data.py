@@ -55,6 +55,9 @@ class ScoreConfig:
     voices_soloed: Set[VoiceKey] = field(default_factory=set)
     metronome_enabled: bool = False
     position_announcer_enabled: bool = False
+    # Options > Bar Line Indicator (Ctrl+B) - a per-score toggle like
+    # metronome_enabled above, off by default.
+    bar_line_indicator_enabled: bool = False
     voice_display_attributes: Dict[VoiceKey, Set[str]] = field(default_factory=dict)
     attribute_order: List[str] = field(default_factory=list)
     # Wishlist #4/#7: per-instrument volume/pan and the global mute. Empty

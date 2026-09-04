@@ -1172,6 +1172,40 @@ class PlaybackController(QObject):
         self.status_text_changed.emit()
         return self.music_data.position_announcer_enabled
 
+    def toggle_bar_line_indicator(self) -> bool:
+        """Ctrl+B: mirrors toggle_position_announcer - per-score (saved in
+        the .rsc), needs no timeline rebuild. Returns the new state so the
+        caller can keep the menu action checked in sync and speak it aloud."""
+        if not self.music_data:
+            return False
+        self.music_data.toggle_bar_line_indicator()
+        return self.music_data.bar_line_indicator_enabled
+
+    def play_barline_indicator(self) -> None:
+        """Options > Bar Line Indicator: a single high metronome beep, fired
+        when a plain Left/Right step (arrow key or the "forward"/"back" voice
+        command) crosses a bar line, so a screen-reader user hears bar
+        boundaries while arrowing through notes.
+
+        No effect while the Ctrl+M metronome is on - it already accents beat
+        1 of every bar, so a second beep at the same instant is just noise
+        (the feature can be left on regardless, per the user). Independent of
+        the position announcer, which stays audible alongside it.
+
+        Sounds AFTER the destination note's own audition, never before: the
+        beep is on METRONOME_CHANNEL, which stop_all_notes() releases, and
+        the note audition's retrigger=True calls stop_all_notes() - firing
+        the beep first would have it cut off almost immediately (the same
+        ordering constraint as the Region 5 change cue and the Find wrap
+        boundary cue)."""
+        if not self.music_data or not self.music_data.bar_line_indicator_enabled:
+            return
+        if self._muted or self.music_data.metronome_enabled:
+            return
+        click = click_event_for_beat(1.0)
+        if click is not None:
+            self.synth.play_click(*click)
+
     # --- play metronome (Alt+Space) --------------------------------------
 
     @property

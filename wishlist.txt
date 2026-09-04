@@ -1,4 +1,3 @@
-Want an audio indicator of crossing a barline. Or does the metronome already do that?
 Really want to condense  down to as few midi channels as possible because I've come across scores with 16 instruments.
 If a stave has only one voice, then no point opening it in the parts view and no point having "Add attribute to voice" etc.
 The performance summary report should not list something if there are zero occurances.

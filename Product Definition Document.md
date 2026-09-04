@@ -186,6 +186,6 @@ Much of the contents of this document are based on good experience of applicatio
 
 ## Known bugs
 
-* The application title bar is currently Score Reader and Editor.  If going with Recall Score as the product name, should change this.
+* ~~The application title bar is currently Score Reader and Editor.  If going with Recall Score as the product name, should change this.~~ RESOLVED - the title bar now reads "Recall Score" (or "&lt;filename&gt; - Recall Score" once a file is loaded); `QApplication.setApplicationName` is also "Recall Score". The GitHub repo was renamed ScoreReader -> RecallScore (local folder stays `SReader`).
 
 

@@ -416,6 +416,7 @@ class MainWindow(QMainWindow):
         self.us_language_action = actions.us_language
         self.metronome_action = actions.metronome
         self.position_announcer_action = actions.position_announcer
+        self.bar_line_indicator_action = actions.bar_line_indicator
         self.live_midi_input_action = actions.live_midi_input
         self.live_midi_input_settings_action = actions.live_midi_input_settings
         # Global (AppSettings), not per-score like metronome/position
@@ -456,6 +457,7 @@ class MainWindow(QMainWindow):
         # Both "the cursor moved" sources land on the same redraw.
         self.navigation.position_changed.connect(self.presenter.update_timeline_views)
         self.navigation.boundary_hit.connect(self.playback.play_boundary_cue)
+        self.navigation.barline_crossed.connect(self.playback.play_barline_indicator)
         self.navigation.pending_digits_changed.connect(self.presenter.show_pending_digits)
         self.playback.cursor_moved.connect(self.presenter.update_timeline_views)
         self.playback.status_text_changed.connect(self.presenter.update_status_bar)
@@ -562,6 +564,7 @@ class MainWindow(QMainWindow):
         self.persistence.refresh_clear_action()
         self.metronome_action.setChecked(False)
         self.position_announcer_action.setChecked(False)
+        self.bar_line_indicator_action.setChecked(False)
 
         self.region_1.setFocus()
 
@@ -715,6 +718,7 @@ class MainWindow(QMainWindow):
         )
         self.metronome_action.setChecked(self._music_data.metronome_enabled)
         self.position_announcer_action.setChecked(self._music_data.position_announcer_enabled)
+        self.bar_line_indicator_action.setChecked(self._music_data.bar_line_indicator_enabled)
         self.presenter.update_timeline_views(play_all=play_all)
 
     # --- navigation (delegators) --------------------------------------
@@ -866,6 +870,18 @@ class MainWindow(QMainWindow):
     def toggle_position_announcer(self):
         self.position_announcer_action.setChecked(
             self.playback.toggle_position_announcer()
+        )
+
+    def toggle_bar_line_indicator(self):
+        """Ctrl+B: on/off for the bar-line-crossing beep. Spoken aloud
+        (a bare shortcut, so the checkable menu item's own state change
+        isn't heard). Per-score - saved in the .rsc via MusicData.export_
+        config, like the metronome and position announcer toggles."""
+        enabled = self.playback.toggle_bar_line_indicator()
+        self.bar_line_indicator_action.setChecked(enabled)
+        accessible_announcer.announce(
+            self.region_3,
+            f"Bar line indicator {'on' if enabled else 'off'}",
         )
 
     def toggle_live_midi_input(self):

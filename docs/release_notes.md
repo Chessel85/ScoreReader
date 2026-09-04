@@ -4,6 +4,8 @@
 
 * Introduced looping mode in playback settings (control+L) to allow play to end, play loop once, play loop until stopped 
 * Fixed a looping playback restart that could clip the last note short at slow tempos with long loops: the restart is now driven by the sequencer actually reaching the end of the loop rather than a timer predicted a whole iteration ahead
+* Changed performance report to control+shift+F to allow playback settings to be control+shift+P. Removed duplicate control+T shortcut.
+* Added a Bar Line Indicator (Options menu, above Toggle Metronome, control+B): a high metronome beep when arrow-key navigation crosses a bar line. Saved per score in its preferences file, defaults off, spoken on toggle, and silent while the metronome is already on.
 
 ## 2026.1.49
 

@@ -123,6 +123,12 @@ class MusicData:
     # splice in or out.
     position_announcer_enabled: bool = False
 
+    # Options > Bar Line Indicator (Ctrl+B): a high metronome beep when a
+    # plain Left/Right step crosses a bar line. Like position_announcer_
+    # enabled, toggling it needs no timeline rebuild. Per-score (saved in
+    # the .rsc), off by default per load.
+    bar_line_indicator_enabled: bool = False
+
     # Wishlist #4: per-score volume/pan overrides, live on MusicData like
     # every other per-score setting above - export_config()/apply_config()
     # carry it the same way, so it survives a load/save round trip instead
@@ -414,6 +420,14 @@ class MusicData:
 
     def toggle_position_announcer(self) -> None:
         self.set_position_announcer_enabled(not self.position_announcer_enabled)
+
+    def set_bar_line_indicator_enabled(self, enabled: bool) -> None:
+        """Options > Bar Line Indicator toggle. No timeline rebuild needed,
+        exactly like set_position_announcer_enabled."""
+        self.bar_line_indicator_enabled = enabled
+
+    def toggle_bar_line_indicator(self) -> None:
+        self.set_bar_line_indicator_enabled(not self.bar_line_indicator_enabled)
 
     # --- timeline navigation (Refs 2/3/5/6) ---------------------------
     #
@@ -784,6 +798,7 @@ class MusicData:
             voices_muted=voices_muted,
             metronome_enabled=self.metronome_enabled,
             position_announcer_enabled=self.position_announcer_enabled,
+            bar_line_indicator_enabled=self.bar_line_indicator_enabled,
             voice_display_attributes={
                 k: set(v) for k, v in self.voice_display_attributes.items()
             },
@@ -826,6 +841,7 @@ class MusicData:
 
         self.set_metronome_enabled(config.metronome_enabled)
         self.set_position_announcer_enabled(config.position_announcer_enabled)
+        self.set_bar_line_indicator_enabled(config.bar_line_indicator_enabled)
         self.mixer = config.mixer.copy()
 
         known_part_ids = {p.part_id for p in self.parts_info}

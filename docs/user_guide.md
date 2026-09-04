@@ -659,6 +659,21 @@ count subdivided beats aloud. It's independent of the metronome switch
 (section 7.7) - you can have either, both, or neither running at once,
 and each is remembered separately.
 
+**Bar Line Indicator.** Options > Toggle Bar Line Indicator, or `Ctrl+B`,
+turns on a single high metronome beep that plays whenever you step across
+a bar line with the Left or Right arrow key (or the "forward"/"back"
+voice command) - moving from the last note of one bar to the first note
+of the next, or back the other way. It's a quick way to hear where the
+bars fall while you arrow through the notes, without switching the full
+metronome on. Pressing `Ctrl+B` speaks "Bar line indicator on" or "Bar
+line indicator off". Stepping a whole bar at a time with `Ctrl+Left`/
+`Ctrl+Right` doesn't trigger it - those moves already announce the new
+bar number. The setting is saved per score (in that score's preferences
+file, section 13) and starts off for a score you haven't set it on
+before. It has no effect while the metronome (section 7.7) is switched
+on, since the metronome already accents the first beat of every bar; it
+works normally alongside the position announcer.
+
 ### 7.9 Adjusting Volume and Pan (the Mixer)
 
 Playback > Mixer... (`Ctrl+Shift+X`) opens a dialog listing every
@@ -1295,6 +1310,7 @@ next time that file is opened:
 - Which parts, staves and voices are muted or soloed.
 - Whether the metronome is switched on.
 - Whether the position announcer is switched on.
+- Whether the bar line indicator is switched on (section 7.8).
 - Which note attributes are shown for each voice (section 9.2).
 - The order those attributes are read in (section 9.4).
 - Volume and pan set for each instrument, the metronome and the position
@@ -1389,6 +1405,7 @@ directly (see also section 16.3).
 | Item | Shortcut | What it does |
 | :--- | :--- | :--- |
 | Terminology (UK/US) | - | Submenu to choose UK or US wording (section 12.2). |
+| Toggle Bar Line Indicator | Ctrl+B | Turns on a high metronome beep when arrow-key navigation crosses a bar line (section 7.8). |
 | Toggle Metronome | Ctrl+M | Turns the beat click on or off (section 7.7). |
 | Toggle Position Announcer | Ctrl+P | Turns the spoken beat-position announcer on or off (section 7.8). |
 | Toggle Live MIDI Input | Ctrl+D | Turns a connected MIDI keyboard's live playback through Recall Score on or off (section 7.11). |
@@ -1457,6 +1474,7 @@ directly (see also section 16.3).
 | Toggle the metronome on/off | Ctrl+M |
 | Start / stop a free-running click track at the current tempo, without moving the timeline | Ctrl+Alt+Space |
 | Toggle the position announcer on/off | Ctrl+P |
+| Toggle the bar line indicator on/off | Ctrl+B |
 | Toggle live MIDI input on/off | Ctrl+D |
 | Open the Live MIDI Input Settings dialog | Ctrl+Shift+L |
 | Toggle voice control on/off | Alt+Enter |

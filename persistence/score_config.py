@@ -82,6 +82,7 @@ def load_for(file_path: str) -> Optional[ScoreConfig]:
             voices_soloed={_decode_voice_key(k) for k in data.get("voices_soloed", [])},
             metronome_enabled=data.get("metronome_enabled", False),
             position_announcer_enabled=data.get("position_announcer_enabled", False),
+            bar_line_indicator_enabled=data.get("bar_line_indicator_enabled", False),
             voice_display_attributes={
                 _decode_voice_key(k): set(v)
                 for k, v in data.get("voice_display_attributes", {}).items()
@@ -127,6 +128,7 @@ def save(file_path: str, config: ScoreConfig) -> None:
         "voices_soloed": [_encode_voice_key(k) for k in sorted(config.voices_soloed)],
         "metronome_enabled": config.metronome_enabled,
         "position_announcer_enabled": config.position_announcer_enabled,
+        "bar_line_indicator_enabled": config.bar_line_indicator_enabled,
         "voice_display_attributes": {
             _encode_voice_key(k): sorted(v)
             for k, v in config.voice_display_attributes.items()

@@ -64,6 +64,7 @@ class Actions:
     terminology_group: Optional[QActionGroup] = None
     metronome: Optional[QAction] = None
     position_announcer: Optional[QAction] = None
+    bar_line_indicator: Optional[QAction] = None
     live_midi_input: Optional[QAction] = None
     live_midi_input_settings: Optional[QAction] = None
     voice_control: Optional[QAction] = None
@@ -540,6 +541,20 @@ class MenuBuilder:
 
         # Checkable so screen readers announce its state on focus - one of
         # three ways to discover it, with the shortcut and the status bar.
+
+        # A high metronome beep when a plain Left/Right step crosses a bar
+        # line, so bar boundaries are audible while arrowing through notes.
+        # Sits just above Toggle Metronome (user-requested). Checkable like
+        # the two toggles below; MainWindow also speaks the new state aloud
+        # on Ctrl+B (a bare shortcut, not reached via the menu). Per-score,
+        # saved in the .rsc like the metronome/announcer toggles.
+        a.bar_line_indicator = self._action(
+            "Toggle &Bar Line Indicator", self.slots.toggle_bar_line_indicator,
+            QKeySequence("Ctrl+B"), checkable=True,
+            status_tip="Play a high metronome beep when arrow-key navigation crosses a bar line",
+        )
+        options_menu.addAction(a.bar_line_indicator)
+
         a.metronome = self._action(
             "Toggle &Metronome", self.slots.toggle_metronome,
             QKeySequence("Ctrl+M"), checkable=True,

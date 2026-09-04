@@ -1089,6 +1089,22 @@ and “e”, “and” or “a” for the subdivisions in between, the standard 
 musicians count subdivided beats aloud. It’s independent of the
 metronome switch (section 7.7) - you can have either, both, or neither
 running at once, and each is remembered separately.</p>
+<p><strong>Bar Line Indicator.</strong> Options &gt; Toggle Bar Line
+Indicator, or <code>Ctrl+B</code>, turns on a single high metronome beep
+that plays whenever you step across a bar line with the Left or Right
+arrow key (or the “forward”/“back” voice command) - moving from the last
+note of one bar to the first note of the next, or back the other way.
+It’s a quick way to hear where the bars fall while you arrow through the
+notes, without switching the full metronome on. Pressing
+<code>Ctrl+B</code> speaks “Bar line indicator on” or “Bar line
+indicator off”. Stepping a whole bar at a time with
+<code>Ctrl+Left</code>/ <code>Ctrl+Right</code> doesn’t trigger it -
+those moves already announce the new bar number. The setting is saved
+per score (in that score’s preferences file, section 13) and starts off
+for a score you haven’t set it on before. It has no effect while the
+metronome (section 7.7) is switched on, since the metronome already
+accents the first beat of every bar; it works normally alongside the
+position announcer.</p>
 <h3 id="adjusting-volume-and-pan-the-mixer">7.9 Adjusting Volume and Pan
 (the Mixer)</h3>
 <p>Playback &gt; Mixer… (<code>Ctrl+Shift+X</code>) opens a dialog
@@ -1672,6 +1688,7 @@ off.</li>
 <li>Which parts, staves and voices are muted or soloed.</li>
 <li>Whether the metronome is switched on.</li>
 <li>Whether the position announcer is switched on.</li>
+<li>Whether the bar line indicator is switched on (section 7.8).</li>
 <li>Which note attributes are shown for each voice (section 9.2).</li>
 <li>The order those attributes are read in (section 9.4).</li>
 <li>Volume and pan set for each instrument, the metronome and the
@@ -2011,6 +2028,12 @@ instrument, the metronome and the position announcer (section 7.9).</td>
 (section 12.2).</td>
 </tr>
 <tr>
+<td style="text-align: left;">Toggle Bar Line Indicator</td>
+<td style="text-align: left;">Ctrl+B</td>
+<td style="text-align: left;">Turns on a high metronome beep when
+arrow-key navigation crosses a bar line (section 7.8).</td>
+</tr>
+<tr>
 <td style="text-align: left;">Toggle Metronome</td>
 <td style="text-align: left;">Ctrl+M</td>
 <td style="text-align: left;">Turns the beat click on or off (section
@@ -2336,6 +2359,10 @@ the current tempo, without moving the timeline</td>
 <tr>
 <td style="text-align: left;">Toggle the position announcer on/off</td>
 <td style="text-align: left;">Ctrl+P</td>
+</tr>
+<tr>
+<td style="text-align: left;">Toggle the bar line indicator on/off</td>
+<td style="text-align: left;">Ctrl+B</td>
 </tr>
 <tr>
 <td style="text-align: left;">Toggle live MIDI input on/off</td>

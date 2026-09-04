@@ -20,6 +20,15 @@ class NavigationController(QObject):
 
     position_changed = Signal(bool, bool)  # play_all, announce_measure
     boundary_hit = Signal()
+    # Options > Bar Line Indicator (Ctrl+B): emitted when a plain Left/Right
+    # step (arrow key or the "forward"/"back" voice command, both of which
+    # land on timeline_left/right) actually moves AND the measure number
+    # changes - i.e. a bar line was crossed. Emitted AFTER position_changed
+    # so PlaybackController.play_barline_indicator's beep isn't cut off by
+    # the destination note's own retrigger=True audition. The by-measure
+    # jumps (Ctrl+Left/Right) deliberately don't emit it - they always cross
+    # a bar line and already announce the new bar number.
+    barline_crossed = Signal()
     # Ref 6: the digits typed so far towards a bar number, emitted on every
     # change so RegionPresenter can show "Go to measure: 12" in the status
     # bar. Empty string once committed or cancelled.
@@ -77,17 +86,31 @@ class NavigationController(QObject):
         self.to_typed_measure(digits)
         return True
 
+    def _current_measure(self) -> Optional[int]:
+        slice_ = self.music_data.get_current_slice() if self.music_data else None
+        return slice_.measure if slice_ is not None else None
+
     def timeline_left(self) -> None:
         self.clear_pending_digits()
         if not self.music_data:
             return
-        self._moved(self.music_data.move_timeline_left())
+        before = self._current_measure()
+        moved = self.music_data.move_timeline_left()
+        self._moved(moved)
+        after = self._current_measure()
+        if moved and before is not None and after is not None and before != after:
+            self.barline_crossed.emit()
 
     def timeline_right(self) -> None:
         self.clear_pending_digits()
         if not self.music_data:
             return
-        self._moved(self.music_data.move_timeline_right())
+        before = self._current_measure()
+        moved = self.music_data.move_timeline_right()
+        self._moved(moved)
+        after = self._current_measure()
+        if moved and before is not None and after is not None and before != after:
+            self.barline_crossed.emit()
 
     def measure_left(self) -> None:
         self.clear_pending_digits()
