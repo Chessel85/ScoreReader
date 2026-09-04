@@ -1,0 +1,1049 @@
+<h1 id="tomac.md-producing-a-macos-build-of-recall-score">ToMac.md —
+Producing a macOS build of Recall Score</h1>
+<p><strong>Audience:</strong> the author of this repo, who has never
+used a Mac and does not own one. <strong>Goal:</strong> a downloadable
+<code>.dmg</code> that at least one macOS user can install, run, and
+give feedback on — without breaking the existing Windows build.</p>
+<p>Everything below is written so that Windows remains the primary,
+fully-supported platform. Every code change is a
+<code>sys.platform</code> branch that leaves the Windows path
+byte-identical. Nothing here is a rewrite.</p>
+<hr />
+<h2 id="the-honest-summary-first">0. The honest summary first</h2>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>Area</th>
+<th>Difficulty</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Python/Qt/music21 code</td>
+<td><strong>Easy</strong></td>
+<td>Already portable. Runs unmodified.</td>
+</tr>
+<tr>
+<td>Paths, config, persistence</td>
+<td><strong>Easy</strong></td>
+<td><code>QStandardPaths</code> already does the right thing on
+macOS.</td>
+</tr>
+<tr>
+<td>FluidSynth audio</td>
+<td><strong>Medium</strong></td>
+<td>Driver name and library loading are Windows-specific; both are
+one-branch fixes. Bundling the <code>.dylib</code>s into the app is the
+fiddly part.</td>
+</tr>
+<tr>
+<td>Voice control (Vosk)</td>
+<td><strong>Medium</strong></td>
+<td>One import-time crash to fix, plus microphone permission plumbing.
+Can be shipped disabled for v1.</td>
+</tr>
+<tr>
+<td>Packaging (<code>.app</code> + <code>.dmg</code>)</td>
+<td><strong>Medium</strong></td>
+<td>PyInstaller does the <code>.app</code>;
+<code>hdiutil</code>/<code>create-dmg</code> does the <code>.dmg</code>.
+NSIS is not involved at all.</td>
+</tr>
+<tr>
+<td>Code signing / Gatekeeper</td>
+<td><strong>Medium</strong></td>
+<td>Unsigned apps <em>can</em> be opened, but the tester needs a
+specific right-click gesture. Ad-hoc signing avoids the worse “app is
+damaged” error.</td>
+</tr>
+<tr>
+<td><strong>Screen reader accessibility (VoiceOver)</strong></td>
+<td><strong>Unknown — the real risk</strong></td>
+<td>This is the product. Qt’s macOS accessibility bridge is not the same
+as its Windows/NVDA one. This is what the tester exists to tell
+you.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Recommendation:</strong> treat v1 macOS as an <em>experiment
+shipped to one tester</em>, not a supported platform. Build it, get it
+running, get feedback on VoiceOver, then decide whether to invest
+further.</p>
+<hr />
+<h2 id="how-to-build-without-owning-a-mac">1. How to build without
+owning a Mac</h2>
+<p>You cannot cross-compile a macOS app from Windows. PyInstaller must
+run on macOS. You have three options:</p>
+<h3 id="option-a-github-actions-macos-runner-recommended">Option A —
+GitHub Actions macOS runner (recommended)</h3>
+<p>GitHub gives you free macOS runners (<code>macos-14</code> and
+<code>macos-15</code> are Apple Silicon / arm64; <code>macos-13</code>
+is Intel / x86_64). You push a workflow file, it builds the
+<code>.app</code> and <code>.dmg</code>, and uploads them as a release
+asset or artifact.</p>
+<ul>
+<li><strong>Pros:</strong> free (for public repos), reproducible, you
+never touch a Mac, and the tester downloads from a GitHub Release like
+any normal user.</li>
+<li><strong>Cons:</strong> no interactive debugging — you iterate
+through commit → wait 5 minutes → read logs. You cannot see the UI or
+hear the audio.</li>
+<li><strong>The blocker to solve:</strong> the runner has no
+<code>soundfonts/Airfont_380_final.sf2</code> (263 MB, gitignored) and
+no <code>vosk_model_large/</code> (205 MB, gitignored). See §8 for how
+to feed those in.</li>
+</ul>
+<h3 id="option-b-a-rented-cloud-mac">Option B — a rented cloud Mac</h3>
+<p>MacStadium, MacinCloud, AWS EC2 Mac instances, Scaleway Mac minis.
+You get a real desktop over screen sharing, roughly $1–2/hour or
+$30+/month.</p>
+<ul>
+<li><strong>Pros:</strong> interactive. You can actually run the app,
+hear whether audio works, and turn VoiceOver on yourself
+(<code>Cmd+F5</code>).</li>
+<li><strong>Cons:</strong> costs money; and as a first-time Mac user
+you’ll spend the first hour just learning the desktop.</li>
+<li><strong>Worth it for one session</strong> if the Actions build fails
+in a way the logs don’t explain.</li>
+</ul>
+<h3 id="option-c-the-tester-builds-it">Option C — the tester builds
+it</h3>
+<p>If your Mac tester is technical, they clone the repo,
+<code>brew install fluid-synth</code>,
+<code>pip install -r requirements.txt</code>,
+<code>python main.py</code>. This is by far the fastest route to “does
+it work at all, and does VoiceOver read it” — and it skips packaging
+entirely.</p>
+<p><strong>Suggested plan: do C first, then A.</strong> Ask the tester
+to run from source. If the app works and VoiceOver is usable,
+<em>then</em> invest in the <code>.dmg</code> pipeline. If VoiceOver is
+unusable, you have saved yourself the whole packaging effort.</p>
+<hr />
+<h2 id="which-mac-architecture-to-target">2. Which Mac architecture to
+target</h2>
+<p>Macs since late 2020 are <strong>Apple Silicon (arm64)</strong>.
+Older ones are <strong>Intel (x86_64)</strong>. An arm64 build will not
+run on an Intel Mac. An x86_64 build <em>will</em> run on Apple Silicon
+via Rosetta 2 translation, but with a startup penalty and, more
+importantly, an extra “install Rosetta” prompt for the user.</p>
+<ul>
+<li><strong>Build arm64 only for v1.</strong> Ask your tester what Mac
+they have (Apple menu → About This Mac — the “Chip” line says either
+“Apple M…” or “Intel”). If they’re on Intel, build x86_64 instead by
+using the <code>macos-13</code> runner.</li>
+<li>Universal2 (both architectures in one binary) is possible but
+requires every wheel — PySide6, numpy, vosk, python-rtmidi — to ship
+universal builds. They mostly don’t. <strong>Do not attempt
+this.</strong></li>
+</ul>
+<hr />
+<h2 id="code-changes">3. Code changes</h2>
+<p>Six files. All changes are additive branches; the Windows behaviour
+is unchanged.</p>
+<h3 id="audiosynth_engine.py-audio-driver-and-library-loading">3.1
+<code>audio/synth_engine.py</code> — audio driver and library
+loading</h3>
+<p><strong>Three separate problems.</strong></p>
+<p><strong>(a) The <code>bin/</code> DLL preload block (lines
+~15–37).</strong> This is already safe on macOS by accident: it’s
+guarded by <code>if os.path.exists(BIN_DIR)</code> and
+<code>hasattr(os, "add_dll_directory")</code>, and the <code>.dll</code>
+filenames simply won’t exist. It no-ops. <strong>But</strong> for the
+bundled <code>.app</code> you <em>do</em> need to help
+<code>pyfluidsynth</code> find the bundled <code>.dylib</code>, so this
+block gains a macOS sibling:</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> sys</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>PROJECT_ROOT <span class="op">=</span> os.path.dirname(os.path.dirname(os.path.abspath(<span class="va">__file__</span>)))</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>BIN_DIR <span class="op">=</span> os.path.join(PROJECT_ROOT, <span class="st">&quot;bin&quot;</span>)</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> sys.platform <span class="op">==</span> <span class="st">&quot;win32&quot;</span> <span class="kw">and</span> os.path.exists(BIN_DIR):</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>    ...existing Windows block, unchanged...</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="cf">elif</span> sys.platform <span class="op">==</span> <span class="st">&quot;darwin&quot;</span>:</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    <span class="co"># pyfluidsynth&#39;s find_libfluidsynth() searches the system via</span></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>    <span class="co"># ctypes.util.find_library, which never looks inside an .app bundle.</span></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>    <span class="co"># It has one documented escape hatch: if HOMEBREW_PREFIX is set it</span></span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>    <span class="co"># tries $HOMEBREW_PREFIX/lib/libfluidsynth.dylib. We reuse that to</span></span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>    <span class="co"># point it at our own bundled copy. Only set it if we actually have</span></span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>    <span class="co"># one - otherwise leave a developer&#39;s real Homebrew install alone.</span></span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>    _bundled <span class="op">=</span> os.path.join(PROJECT_ROOT, <span class="st">&quot;lib&quot;</span>, <span class="st">&quot;libfluidsynth.dylib&quot;</span>)</span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> os.path.exists(_bundled) <span class="kw">and</span> <span class="kw">not</span> os.environ.get(<span class="st">&quot;HOMEBREW_PREFIX&quot;</span>):</span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>        os.environ[<span class="st">&quot;HOMEBREW_PREFIX&quot;</span>] <span class="op">=</span> PROJECT_ROOT</span></code></pre></div>
+<p>Read <code>.venv/Lib/site-packages/fluidsynth.py</code>’s
+<code>find_libfluidsynth()</code> to confirm this hook still exists in
+whatever version you build against — it is checked <em>after</em>
+<code>find_library</code> fails, which is exactly the frozen-app case.
+In dev on a Mac with Homebrew, <code>find_library</code> succeeds and
+this code never fires.</p>
+<p>Note the bundled path is <code>lib/</code>, not <code>bin/</code> —
+that is a macOS convention <em>and</em> it is what the
+<code>HOMEBREW_PREFIX</code> trick requires
+(<code>$PREFIX/lib/libfluidsynth.dylib</code>).</p>
+<p><strong>(b) The audio driver name (<code>_init_engine</code>, ~line
+172).</strong> <code>driver = "wasapi"</code> is hardcoded. WASAPI does
+not exist on macOS; FluidSynth’s macOS driver is
+<code>coreaudio</code>.</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>driver <span class="op">=</span> <span class="st">&quot;coreaudio&quot;</span> <span class="cf">if</span> sys.platform <span class="op">==</span> <span class="st">&quot;darwin&quot;</span> <span class="cf">else</span> <span class="st">&quot;wasapi&quot;</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>device <span class="op">=</span> <span class="va">self</span>._fs.get_setting(<span class="ss">f&quot;audio.</span><span class="sc">{</span>driver<span class="sc">}</span><span class="ss">.device&quot;</span>)</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="va">self</span>._fs.setting(<span class="st">&quot;audio.driver&quot;</span>, driver)</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="va">self</span>._fs.setting(<span class="ss">f&quot;audio.</span><span class="sc">{</span>driver<span class="sc">}</span><span class="ss">.device&quot;</span>, device)</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="va">self</span>._fs.audio_driver <span class="op">=</span> fluidsynth.new_fluid_audio_driver(<span class="va">self</span>._fs.settings, <span class="va">self</span>._fs.synth)</span></code></pre></div>
+<p>The surrounding comment block (why <code>Synth.start()</code> is
+deliberately not called — the MIDI-router collision and the teardown
+deadlock) applies equally on macOS; leave it, and add a line noting the
+driver is now platform-selected.</p>
+<p><strong>(c) Latency settings.</strong>
+<code>audio.period-size = 128</code>, <code>audio.periods = 2</code> are
+your Ref 9 (25 ms) budget. CoreAudio generally handles small periods
+<em>better</em> than WASAPI, so these should be fine. If the tester
+reports crackling or dropouts, the fix is to raise <code>periods</code>
+to 3 and re-test — this is a tuning question, not a porting one.
+<strong>Ask the tester specifically about audio glitching.</strong></p>
+<p><strong>(d) Sample rate.</strong> The <code>samplerate=48000.0</code>
+constructor argument and its load-bearing comment stay exactly as they
+are. CoreAudio, like WASAPI shared mode, resamples to the device rate.
+No change.</p>
+<h3 id="audiovoice_recognition.py-an-import-time-crash">3.2
+<code>audio/voice_recognition.py</code> — an import-time crash</h3>
+<p><strong>This one will hard-crash the app on macOS at startup, before
+anything else.</strong></p>
+<p>Line ~151:</p>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>_POPEN_CREATIONFLAGS <span class="op">=</span> subprocess.CREATE_NO_WINDOW</span></code></pre></div>
+<p><code>subprocess.CREATE_NO_WINDOW</code> <strong>does not exist on
+macOS</strong> — it is a Windows-only constant. This is an
+<code>AttributeError</code> at module import, and
+<code>audio/synth_engine.py</code> imports this chain, so the app dies
+before the window opens.</p>
+<p>Fix:</p>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Windows-only flag (suppresses the worker&#39;s console window). On macOS and</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Linux there is no console window to suppress and the constant does not</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="co"># exist, so the flag set is empty.</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>_POPEN_CREATIONFLAGS <span class="op">=</span> <span class="bu">getattr</span>(subprocess, <span class="st">&quot;CREATE_NO_WINDOW&quot;</span>, <span class="dv">0</span>)</span></code></pre></div>
+<p>Passing <code>creationflags=0</code> is valid on POSIX (it’s the
+default), so the two call sites (<code>subprocess.run</code> at ~line
+195, <code>subprocess.Popen</code> at ~line 326) need no changes.</p>
+<p><strong>Also:</strong> <code>WORKER_EXE</code> hardcodes
+<code>"RecallScoreVoiceWorker.exe"</code>. On macOS the executable has
+no extension:</p>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>_WORKER_EXE_NAME <span class="op">=</span> (</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;RecallScoreVoiceWorker.exe&quot;</span> <span class="cf">if</span> sys.platform <span class="op">==</span> <span class="st">&quot;win32&quot;</span> <span class="cf">else</span> <span class="st">&quot;RecallScoreVoiceWorker&quot;</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>WORKER_EXE <span class="op">=</span> os.path.join(</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>    <span class="bu">getattr</span>(sys, <span class="st">&quot;_MEIPASS&quot;</span>, os.path.dirname(os.path.dirname(os.path.abspath(<span class="va">__file__</span>)))),</span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;voice_worker&quot;</span>, _WORKER_EXE_NAME,</span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<p><strong>Design note for macOS:</strong> the entire reason the voice
+worker is a <em>separate process</em> is a Windows-specific DLL-name
+collision between Vosk’s bundled MinGW runtime and FluidSynth’s
+(documented in that module’s docstring). That collision does not exist
+on macOS. <strong>Keep the separate-process design anyway</strong> — one
+architecture for both platforms is far cheaper to maintain than two, and
+the separate process costs nothing on macOS.</p>
+<h3 id="main.py-log-path-and-app-icon">3.3 <code>main.py</code> — log
+path and app icon</h3>
+<p><strong>Log redirection.</strong>
+<code>_redirect_stdio_if_headless()</code> uses
+<code>%LOCALAPPDATA%</code>, falling back to <code>~</code>. On macOS
+that works but drops a folder in the user’s home directory, which is
+untidy. Macs put logs in <code>~/Library/Logs</code>:</p>
+<div class="sourceCode" id="cb6"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> sys.platform <span class="op">==</span> <span class="st">&quot;darwin&quot;</span>:</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>    log_dir <span class="op">=</span> os.path.expanduser(<span class="st">&quot;~/Library/Logs/Recall Score&quot;</span>)</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="cf">else</span>:</span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>    log_dir <span class="op">=</span> os.path.join(os.environ.get(<span class="st">&quot;LOCALAPPDATA&quot;</span>, os.path.expanduser(<span class="st">&quot;~&quot;</span>)), <span class="st">&quot;Recall Score&quot;</span>)</span></code></pre></div>
+<p>Note: a PyInstaller windowed macOS app <em>also</em> gets
+<code>sys.stdout = None</code>, so this function is load-bearing on
+macOS for exactly the same reason it is on Windows. Don’t skip it — and
+remember this log file is where you will read every
+<code>[WARN]</code>/<code>[ERROR]</code> when debugging remotely.</p>
+<p><strong>App icon.</strong> <code>_app_icon_path()</code> looks for
+<code>RecallScore.ico</code>. macOS needs <code>.icns</code>, and
+<code>QIcon</code> will not read a <code>.ico</code> reliably for the
+Dock. Widen the search:</p>
+<div class="sourceCode" id="cb7"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> _app_icon_path():</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>    base_dir <span class="op">=</span> <span class="bu">getattr</span>(sys, <span class="st">&quot;_MEIPASS&quot;</span>, os.path.dirname(os.path.abspath(<span class="va">__file__</span>)))</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> name <span class="kw">in</span> (<span class="st">&quot;RecallScore.icns&quot;</span>, <span class="st">&quot;RecallScore.ico&quot;</span>):</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>        candidate <span class="op">=</span> os.path.join(base_dir, name)</span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> os.path.exists(candidate):</span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>            <span class="cf">return</span> candidate</span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="va">None</span></span></code></pre></div>
+<p>On macOS the <em>real</em> icon comes from the <code>.app</code>
+bundle’s <code>Info.plist</code>, not from <code>setWindowIcon</code> —
+see §5.2. This change just stops it looking wrong in edge cases.</p>
+<p>Creating the <code>.icns</code> needs a Mac (or the
+<code>icnsutil</code> Python package on Windows). The simplest path is
+to commit a 1024×1024 PNG of the existing icon and generate the
+<code>.icns</code> on the build runner with <code>iconutil</code> (macOS
+built-in). See §5.2.</p>
+<h3 id="packaging-a-new-macos-spec">3.4 <code>packaging/</code> — a new
+macOS spec</h3>
+<p>Do <strong>not</strong> modify <code>RecallScore.spec</code> /
+<code>VoiceWorker.spec</code> into cross-platform monsters. Create two
+new files alongside them:</p>
+<ul>
+<li><code>packaging/RecallScore-mac.spec</code></li>
+<li><code>packaging/VoiceWorker-mac.spec</code></li>
+</ul>
+<p>They can be near-copies. Full contents and reasoning are in §5.</p>
+<h3 id="menus-and-keyboard-shortcuts">3.5 Menus and keyboard
+shortcuts</h3>
+<p><strong>Mostly free, with four things to check.</strong></p>
+<ul>
+<li><strong><code>Ctrl</code> maps to <code>Command</code>
+automatically.</strong> Qt’s <code>QKeySequence("Ctrl+F")</code>
+produces ⌘F on macOS. All 49 <code>Ctrl+</code> shortcuts in
+<code>widgets/menu_builder.py</code> translate for free. If you ever
+wanted a <em>literal</em> Control key on macOS you’d write
+<code>Meta+</code>, but you don’t.</li>
+<li><strong>Ampersand mnemonics (<code>&amp;File</code>) are ignored on
+macOS.</strong> The <code>&amp;</code> characters are stripped from menu
+titles automatically — the menus read correctly, they just have no
+underlined access letters. But <strong>Alt-key mnemonics on dialog
+buttons will not work</strong>: <code>Alt+U</code>/<code>Alt+D</code> in
+<code>AttributeOrderDialog</code> and <code>PartOrderDialog</code>,
+<code>Alt+P</code> in the strumming dialog, <code>Alt+W</code> in the
+mixer. This is a real functional loss for a keyboard-first app. Flag it
+for the tester; the fix, if it matters, is an explicit
+<code>QShortcut</code> on macOS.</li>
+<li><strong>Qt auto-moves some menu items into the macOS application
+menu.</strong> Qt guesses from the action’s <em>text</em>: anything
+matching “About…”, “Preferences…”/“Settings…”, “Quit”/“Exit” is
+relocated to the “Recall Score” menu at the far left. This is correct
+macOS behaviour and you should let it happen — but Qt’s matching is
+loose and can <em>steal</em> an item you didn’t intend. If a menu item
+goes missing on macOS, this is why; the fix is
+<code>action.setMenuRole(QAction.MenuRole.NoRole)</code>.</li>
+<li><strong>Bare-letter shortcuts work unchanged</strong> — the
+Z/X/C/V/B region jumps, F/S/D tempo, O toggle, Space play/stop, and the
+0–9 typed-bar buffer. These are unmodified keys, so there’s no mapping
+question. macOS does reserve some system shortcuts (⌘Space for
+Spotlight, ⌃↑ for Mission Control), but none of yours collide on paper.
+<strong>Ask the tester to report any shortcut that behaves
+unexpectedly.</strong></li>
+</ul>
+<h3 id="nothing-to-change-verified-against-the-code">3.6 Nothing to
+change (verified against the code)</h3>
+<ul>
+<li><strong><code>persistence/app_settings.py</code> /
+<code>score_config.py</code></strong> —
+<code>QStandardPaths.AppLocalDataLocation</code> resolves to
+<code>~/Library/Application Support/Recall Score</code> on macOS
+automatically. Because
+<code>QApplication.setApplicationName("Recall Score")</code> is already
+set in <code>main.py</code>, this just works, and per-user config stays
+per-user exactly as on Windows.</li>
+<li><strong><code>controllers/score_persistence.py</code>’s “Open Local
+Folder”</strong> —
+<code>QDesktopServices.openUrl(QUrl.fromLocalFile(...))</code> opens
+Finder on macOS. Works.</li>
+<li><strong><code>main_window.py</code>’s Help &gt; User Guide</strong>
+— same mechanism, opens the default browser. Works.</li>
+<li><strong><code>_app_base_dir()</code> / <code>version.py</code> /
+<code>sys._MEIPASS</code></strong> — PyInstaller sets
+<code>_MEIPASS</code> on macOS too. See §5.1 for a bundle-layout caveat
+to verify on the first build.</li>
+<li><strong><code>models/</code>, <code>parsers/</code>,
+<code>widgets/</code>, <code>controllers/</code>,
+<code>workers/</code></strong> — pure Python and Qt. Nothing
+platform-specific anywhere in them.</li>
+<li><strong><code>audio/midi_input.py</code></strong> —
+<code>python-rtmidi</code> supports CoreMIDI natively and ships macOS
+wheels. The module already degrades to
+<code>RTMIDI_AVAILABLE = False</code> if the import fails.</li>
+<li><strong><code>audio/metronome.py</code>,
+<code>position_announcer.py</code>, <code>performance_cue.py</code>,
+<code>strum_schedule.py</code>, <code>pitch_detector.py</code></strong>
+— pure stdlib/numpy maths. Nothing to do.</li>
+</ul>
+<hr />
+<h2 id="dependencies-on-macos">4. Dependencies on macOS</h2>
+<h3 id="python">4.1 Python</h3>
+<p>Use <strong>python.org’s official installer</strong> or Homebrew’s
+<code>python@3.13</code>. Do <strong>not</strong> use the
+<code>/usr/bin/python3</code> that ships with macOS — it’s a stub and
+can’t install packages cleanly.</p>
+<h3 id="the-pip-requirements">4.2 The pip requirements</h3>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Package</th>
+<th>macOS arm64 status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PySide6==6.11.1</code></td>
+<td>Official wheels. Fine.</td>
+</tr>
+<tr>
+<td><code>music21==10.5.0</code></td>
+<td>Pure Python. Fine.</td>
+</tr>
+<tr>
+<td><code>pyfluidsynth==1.4.0</code></td>
+<td>Pure Python binding — needs the native library (below).</td>
+</tr>
+<tr>
+<td><code>python-rtmidi==1.5.8</code></td>
+<td>Wheels published for macOS. May build from source; needs Xcode
+Command Line Tools.</td>
+</tr>
+<tr>
+<td><code>numpy==2.5.1</code></td>
+<td>Wheels. Fine.</td>
+</tr>
+<tr>
+<td><code>vosk==0.3.45</code></td>
+<td>Publishes macOS arm64 wheels. <strong>Verify</strong> — this is the
+one most likely to need a version bump or to be dropped for v1.</td>
+</tr>
+<tr>
+<td><code>sounddevice==0.5.6</code></td>
+<td>Bundles PortAudio. Fine.</td>
+</tr>
+<tr>
+<td><code>pyinstaller==6.22.0</code></td>
+<td>Fine.</td>
+</tr>
+</tbody>
+</table>
+<p>If <code>vosk</code> won’t install, <strong>ship v1 without voice
+control</strong>. The app already degrades gracefully
+(<code>VOSK_AVAILABLE = False</code>) and voice control is a
+supplementary feature. That is a much better use of your time than
+fighting a wheel.</p>
+<h3 id="fluidsynth-native-library">4.3 FluidSynth native library</h3>
+<p>There is no <code>bin/</code> equivalent to copy — you install
+it:</p>
+<div class="sourceCode" id="cb8"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">xcode-select</span> <span class="at">--install</span>     <span class="co"># Xcode Command Line Tools, a Homebrew prerequisite</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="ex">brew</span> install fluid-synth</span></code></pre></div>
+<p>This installs <code>libfluidsynth.dylib</code> plus its own
+dependencies (glib, libsndfile, libinstpatch and more) into
+<code>/opt/homebrew/</code> on Apple Silicon or <code>/usr/local/</code>
+on Intel. <code>pyfluidsynth</code>’s <code>find_library</code> locates
+it automatically in dev.</p>
+<h3 id="the-two-big-local-binaries">4.4 The two big local binaries</h3>
+<ul>
+<li><strong><code>soundfonts/Airfont_380_final.sf2</code></strong> (263
+MB) — gitignored, exactly as on Windows. Must be present at the same
+relative path. The app runs without it, silently and with no audio.</li>
+<li><strong><code>soundfonts/recall_score_sounds.sf2</code></strong> —
+checked into git. Comes with the clone.</li>
+<li><strong><code>vosk_model_large/</code></strong> (205 MB) —
+gitignored. Only needed for voice control.</li>
+</ul>
+<p>The same rule from CLAUDE.md applies unchanged: <strong>never
+<code>git add</code> these.</strong> Getting them onto a build runner is
+§8’s problem.</p>
+<hr />
+<h2 id="packaging-.app-and-.dmg">5. Packaging: <code>.app</code> and
+<code>.dmg</code></h2>
+<p>macOS has no NSIS, no <code>Program Files</code>, and no registry.
+The conventions are:</p>
+<ul>
+<li>An application is a <strong>bundle</strong>: a directory named
+<code>RecallScore.app</code> that Finder displays as a single file.
+Inside: <code>Contents/MacOS/</code> (the executable),
+<code>Contents/Resources/</code> (data),
+<code>Contents/Frameworks/</code> (libraries),
+<code>Contents/Info.plist</code> (metadata).</li>
+<li>An <strong>installer</strong> is usually just a
+<strong><code>.dmg</code></strong> — a disk image the user
+double-clicks, which mounts and shows a window containing the
+<code>.app</code> and a shortcut to <code>/Applications</code>. The user
+drags one onto the other. That is the whole installation.</li>
+<li>There is no uninstaller. The user drags the <code>.app</code> to the
+Trash. Your <code>~/Library/Application Support</code> config survives —
+which is exactly what your Windows uninstaller deliberately does with
+<code>AppData</code>. Same behaviour, no work needed.</li>
+</ul>
+<h3 id="packagingrecallscore-mac.spec">5.1
+<code>packaging/RecallScore-mac.spec</code></h3>
+<p>Start from <code>RecallScore.spec</code> and make these changes:</p>
+<div class="sourceCode" id="cb9"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Instead of bin/*.dll: the FluidSynth dylibs, collected from Homebrew and</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="co"># relocated (see 5.3). Destination is &quot;lib&quot; (not &quot;bin&quot;) to match the</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="co"># HOMEBREW_PREFIX hook in audio/synth_engine.py.</span></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>datas <span class="op">=</span> [</span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>    (os.path.join(REPO_ROOT, <span class="st">&quot;macbin&quot;</span>, <span class="st">&quot;*.dylib&quot;</span>), <span class="st">&quot;lib&quot;</span>),</span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>    (os.path.join(REPO_ROOT, <span class="st">&quot;soundfonts&quot;</span>, <span class="st">&quot;Airfont_380_final.sf2&quot;</span>), <span class="st">&quot;soundfonts&quot;</span>),</span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>    (os.path.join(REPO_ROOT, <span class="st">&quot;soundfonts&quot;</span>, <span class="st">&quot;recall_score_sounds.sf2&quot;</span>), <span class="st">&quot;soundfonts&quot;</span>),</span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a>    (os.path.join(REPO_ROOT, <span class="st">&quot;docs&quot;</span>, <span class="st">&quot;user_guide.html&quot;</span>), <span class="st">&quot;docs&quot;</span>),</span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a>    (os.path.join(REPO_ROOT, <span class="st">&quot;version.txt&quot;</span>), <span class="st">&quot;.&quot;</span>),</span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>]</span></code></pre></div>
+<p>Everything else — the <code>music21</code> corpus exclusion, the
+<code>matplotlib</code>/<code>PIL</code> excludes, the
+<code>examples/</code> glob, and the guarded voice-worker/vosk-model
+<code>Tree()</code> additions — <strong>carries over
+verbatim</strong>.</p>
+<p>Drop the <code>version_info.txt</code> generation entirely: that’s a
+Windows PE resource and PyInstaller ignores <code>version=</code> on
+macOS. Version metadata goes in <code>Info.plist</code> instead.</p>
+<p>Then <code>EXE</code> and <code>COLLECT</code> as before
+(<code>console=False</code>, <code>icon=</code> pointing at the
+<code>.icns</code>), plus a <strong><code>BUNDLE</code></strong> step
+that has no Windows equivalent:</p>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>app <span class="op">=</span> BUNDLE(</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>    coll,</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>    name<span class="op">=</span><span class="st">&quot;Recall Score.app&quot;</span>,</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>    icon<span class="op">=</span>os.path.join(PACKAGING_DIR, <span class="st">&quot;RecallScore.icns&quot;</span>),</span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>    bundle_identifier<span class="op">=</span><span class="st">&quot;com.recallscore.app&quot;</span>,</span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>    version<span class="op">=</span>APP_VERSION,</span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>    info_plist<span class="op">=</span>{</span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;CFBundleName&quot;</span>: <span class="st">&quot;Recall Score&quot;</span>,</span>
+<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;CFBundleDisplayName&quot;</span>: <span class="st">&quot;Recall Score&quot;</span>,</span>
+<span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;CFBundleShortVersionString&quot;</span>: APP_VERSION,</span>
+<span id="cb10-11"><a href="#cb10-11" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;CFBundleVersion&quot;</span>: APP_VERSION,</span>
+<span id="cb10-12"><a href="#cb10-12" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;LSMinimumSystemVersion&quot;</span>: <span class="st">&quot;12.0&quot;</span>,</span>
+<span id="cb10-13"><a href="#cb10-13" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;NSHighResolutionCapable&quot;</span>: <span class="va">True</span>,</span>
+<span id="cb10-14"><a href="#cb10-14" aria-hidden="true" tabindex="-1"></a>        <span class="co"># REQUIRED. Without this key, macOS KILLS the process the instant it</span></span>
+<span id="cb10-15"><a href="#cb10-15" aria-hidden="true" tabindex="-1"></a>        <span class="co"># opens the microphone - it does not merely deny permission. Affects</span></span>
+<span id="cb10-16"><a href="#cb10-16" aria-hidden="true" tabindex="-1"></a>        <span class="co"># both Tools &gt; Tuner (audio/tuner_capture.py) and voice control</span></span>
+<span id="cb10-17"><a href="#cb10-17" aria-hidden="true" tabindex="-1"></a>        <span class="co"># (audio/voice_recognition_worker.py).</span></span>
+<span id="cb10-18"><a href="#cb10-18" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;NSMicrophoneUsageDescription&quot;</span>:</span>
+<span id="cb10-19"><a href="#cb10-19" aria-hidden="true" tabindex="-1"></a>            <span class="st">&quot;Recall Score uses the microphone for the instrument tuner and &quot;</span></span>
+<span id="cb10-20"><a href="#cb10-20" aria-hidden="true" tabindex="-1"></a>            <span class="st">&quot;for hands-free voice commands. Audio is processed on your Mac &quot;</span></span>
+<span id="cb10-21"><a href="#cb10-21" aria-hidden="true" tabindex="-1"></a>            <span class="st">&quot;and never leaves it.&quot;</span>,</span>
+<span id="cb10-22"><a href="#cb10-22" aria-hidden="true" tabindex="-1"></a>        <span class="co"># Lets Finder&#39;s Open With / double-click route score files here.</span></span>
+<span id="cb10-23"><a href="#cb10-23" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;CFBundleDocumentTypes&quot;</span>: [{</span>
+<span id="cb10-24"><a href="#cb10-24" aria-hidden="true" tabindex="-1"></a>            <span class="st">&quot;CFBundleTypeName&quot;</span>: <span class="st">&quot;Music score&quot;</span>,</span>
+<span id="cb10-25"><a href="#cb10-25" aria-hidden="true" tabindex="-1"></a>            <span class="st">&quot;CFBundleTypeRole&quot;</span>: <span class="st">&quot;Viewer&quot;</span>,</span>
+<span id="cb10-26"><a href="#cb10-26" aria-hidden="true" tabindex="-1"></a>            <span class="st">&quot;CFBundleTypeExtensions&quot;</span>: [</span>
+<span id="cb10-27"><a href="#cb10-27" aria-hidden="true" tabindex="-1"></a>                <span class="st">&quot;xml&quot;</span>, <span class="st">&quot;musicxml&quot;</span>, <span class="st">&quot;mxl&quot;</span>, <span class="st">&quot;mid&quot;</span>, <span class="st">&quot;midi&quot;</span>, <span class="st">&quot;gp&quot;</span>, <span class="st">&quot;ug&quot;</span></span>
+<span id="cb10-28"><a href="#cb10-28" aria-hidden="true" tabindex="-1"></a>            ],</span>
+<span id="cb10-29"><a href="#cb10-29" aria-hidden="true" tabindex="-1"></a>        }],</span>
+<span id="cb10-30"><a href="#cb10-30" aria-hidden="true" tabindex="-1"></a>    },</span>
+<span id="cb10-31"><a href="#cb10-31" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<p><code>LSMinimumSystemVersion: "12.0"</code> (Monterey) is a safe
+floor for PySide6 6.11. Ask your tester their macOS version and lower it
+only if needed.</p>
+<p><strong>Bundle-layout caveat — verify this on the first
+build.</strong> PyInstaller 6 splits a macOS <code>.app</code>’s
+contents between <code>Contents/Frameworks</code> (binaries) and
+<code>Contents/Resources</code> (data files), creating cross-symlinks so
+both resolve. <code>sys._MEIPASS</code> points at
+<code>Contents/Frameworks</code>. Your <code>_app_base_dir()</code> /
+<code>PROJECT_ROOT</code> / <code>MODEL_DIR</code> idiom <em>should</em>
+still find <code>docs/</code>, <code>soundfonts/</code>,
+<code>lib/</code> and <code>version.txt</code> through those symlinks —
+but <strong>this is the single most likely thing to be wrong on the
+first build.</strong> If the app launches with “SoundFont not found” in
+the log, this is the cause. Diagnose by temporarily adding
+<code>print(sys._MEIPASS, os.listdir(sys._MEIPASS))</code> and reading
+<code>~/Library/Logs/Recall Score/recall_score.log</code>.</p>
+<h3 id="the-.icns-icon">5.2 The <code>.icns</code> icon</h3>
+<p><code>iconutil</code> (built into macOS) converts an
+<code>.iconset</code> folder of PNGs. Save this as
+<code>packaging/make_icns.sh</code>:</p>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="co">#!/bin/bash</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="bu">set</span> <span class="at">-e</span></span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="va">SRC</span><span class="op">=</span>packaging/RecallScore-1024.png     <span class="co"># commit this: a 1024x1024 PNG of the icon</span></span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="va">OUT</span><span class="op">=</span>packaging/RecallScore.iconset</span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a><span class="fu">rm</span> <span class="at">-rf</span> <span class="st">&quot;</span><span class="va">$OUT</span><span class="st">&quot;</span><span class="kw">;</span> <span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$OUT</span><span class="st">&quot;</span></span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a><span class="ex">sips</span> <span class="at">-z</span> 16 16    <span class="st">&quot;</span><span class="va">$SRC</span><span class="st">&quot;</span> <span class="at">--out</span> <span class="st">&quot;</span><span class="va">$OUT</span><span class="st">/icon_16x16.png&quot;</span></span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a><span class="ex">sips</span> <span class="at">-z</span> 32 32    <span class="st">&quot;</span><span class="va">$SRC</span><span class="st">&quot;</span> <span class="at">--out</span> <span class="st">&quot;</span><span class="va">$OUT</span><span class="st">/icon_16x16@2x.png&quot;</span></span>
+<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a><span class="ex">sips</span> <span class="at">-z</span> 32 32    <span class="st">&quot;</span><span class="va">$SRC</span><span class="st">&quot;</span> <span class="at">--out</span> <span class="st">&quot;</span><span class="va">$OUT</span><span class="st">/icon_32x32.png&quot;</span></span>
+<span id="cb11-9"><a href="#cb11-9" aria-hidden="true" tabindex="-1"></a><span class="ex">sips</span> <span class="at">-z</span> 64 64    <span class="st">&quot;</span><span class="va">$SRC</span><span class="st">&quot;</span> <span class="at">--out</span> <span class="st">&quot;</span><span class="va">$OUT</span><span class="st">/icon_32x32@2x.png&quot;</span></span>
+<span id="cb11-10"><a href="#cb11-10" aria-hidden="true" tabindex="-1"></a><span class="ex">sips</span> <span class="at">-z</span> 128 128  <span class="st">&quot;</span><span class="va">$SRC</span><span class="st">&quot;</span> <span class="at">--out</span> <span class="st">&quot;</span><span class="va">$OUT</span><span class="st">/icon_128x128.png&quot;</span></span>
+<span id="cb11-11"><a href="#cb11-11" aria-hidden="true" tabindex="-1"></a><span class="ex">sips</span> <span class="at">-z</span> 256 256  <span class="st">&quot;</span><span class="va">$SRC</span><span class="st">&quot;</span> <span class="at">--out</span> <span class="st">&quot;</span><span class="va">$OUT</span><span class="st">/icon_128x128@2x.png&quot;</span></span>
+<span id="cb11-12"><a href="#cb11-12" aria-hidden="true" tabindex="-1"></a><span class="ex">sips</span> <span class="at">-z</span> 256 256  <span class="st">&quot;</span><span class="va">$SRC</span><span class="st">&quot;</span> <span class="at">--out</span> <span class="st">&quot;</span><span class="va">$OUT</span><span class="st">/icon_256x256.png&quot;</span></span>
+<span id="cb11-13"><a href="#cb11-13" aria-hidden="true" tabindex="-1"></a><span class="ex">sips</span> <span class="at">-z</span> 512 512  <span class="st">&quot;</span><span class="va">$SRC</span><span class="st">&quot;</span> <span class="at">--out</span> <span class="st">&quot;</span><span class="va">$OUT</span><span class="st">/icon_256x256@2x.png&quot;</span></span>
+<span id="cb11-14"><a href="#cb11-14" aria-hidden="true" tabindex="-1"></a><span class="ex">sips</span> <span class="at">-z</span> 512 512  <span class="st">&quot;</span><span class="va">$SRC</span><span class="st">&quot;</span> <span class="at">--out</span> <span class="st">&quot;</span><span class="va">$OUT</span><span class="st">/icon_512x512.png&quot;</span></span>
+<span id="cb11-15"><a href="#cb11-15" aria-hidden="true" tabindex="-1"></a><span class="fu">cp</span> <span class="st">&quot;</span><span class="va">$SRC</span><span class="st">&quot;</span>                <span class="st">&quot;</span><span class="va">$OUT</span><span class="st">/icon_512x512@2x.png&quot;</span></span>
+<span id="cb11-16"><a href="#cb11-16" aria-hidden="true" tabindex="-1"></a><span class="ex">iconutil</span> <span class="at">-c</span> icns <span class="st">&quot;</span><span class="va">$OUT</span><span class="st">&quot;</span> <span class="at">-o</span> packaging/RecallScore.icns</span></code></pre></div>
+<p>Commit the 1024×1024 PNG (the source art the <code>.ico</code> was
+made from — a small real asset, like <code>RecallScore.ico</code>
+itself). The <code>.icns</code> is then generated on the build machine
+and never needs committing. Like <code>has_icon</code> in the Windows
+spec, guard for its absence so a missing icon degrades the build rather
+than failing it.</p>
+<h3 id="bundling-the-fluidsynth-dylibs">5.3 Bundling the FluidSynth
+dylibs</h3>
+<p>This is the fiddliest step. A macOS <code>.dylib</code> records the
+<em>paths of its own dependencies</em> inside itself (its “install
+names”). Homebrew’s <code>libfluidsynth.dylib</code> says “I need
+<code>/opt/homebrew/opt/glib/lib/libglib-2.0.0.dylib</code>” — an
+absolute path that will not exist on the tester’s machine.</p>
+<p><strong>Easy option — <code>dylibbundler</code>:</strong></p>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">brew</span> install dylibbundler</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> macbin</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="fu">cp</span> <span class="st">&quot;</span><span class="va">$(</span><span class="ex">brew</span> <span class="at">--prefix</span> fluid-synth<span class="va">)</span><span class="st">/lib/libfluidsynth.dylib&quot;</span> macbin/</span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a><span class="ex">dylibbundler</span> <span class="at">-od</span> <span class="at">-b</span> <span class="at">-x</span> macbin/libfluidsynth.dylib <span class="at">-d</span> macbin/ <span class="at">-p</span> @loader_path/</span></code></pre></div>
+<p>This copies every transitive dependency into <code>macbin/</code> and
+rewrites all the install names to <code>@loader_path/…</code> (“next to
+me”), which is exactly what a bundle needs. The <code>datas</code> entry
+<code>("macbin/*.dylib", "lib")</code> then puts them all in one
+directory inside the app, where they find each other.</p>
+<p><strong>Always verify afterwards:</strong></p>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="ex">otool</span> <span class="at">-L</span> macbin/libfluidsynth.dylib</span></code></pre></div>
+<p>Every line should start with <code>@loader_path/</code>,
+<code>/usr/lib/</code> or <code>/System/Library/</code> (the last two
+are OS-provided and fine). <strong>Any remaining
+<code>/opt/homebrew/</code> path is a bug that will work on the build
+machine and crash on the tester’s.</strong></p>
+<p><code>macbin/</code> should be gitignored, like <code>bin/</code> —
+it’s a build byproduct.</p>
+<h3 id="the-.dmg">5.4 The <code>.dmg</code></h3>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="ex">brew</span> install create-dmg</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="ex">create-dmg</span> <span class="dt">\</span></span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--volname</span> <span class="st">&quot;Recall Score </span><span class="va">$APP_VERSION</span><span class="st">&quot;</span> <span class="dt">\</span></span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--window-size</span> 600 400 <span class="dt">\</span></span>
+<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--icon</span> <span class="st">&quot;Recall Score.app&quot;</span> 150 200 <span class="dt">\</span></span>
+<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--app-drop-link</span> 450 200 <span class="dt">\</span></span>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--hide-extension</span> <span class="st">&quot;Recall Score.app&quot;</span> <span class="dt">\</span></span>
+<span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a>  <span class="st">&quot;dist_installer/RecallScore-</span><span class="va">$APP_VERSION</span><span class="st">.dmg&quot;</span> <span class="dt">\</span></span>
+<span id="cb14-10"><a href="#cb14-10" aria-hidden="true" tabindex="-1"></a>  <span class="st">&quot;dist/Recall Score.app&quot;</span></span></code></pre></div>
+<p><code>--app-drop-link</code> is what creates the
+<code>/Applications</code> shortcut users drag onto. That is the entire
+installer.</p>
+<p>If <code>create-dmg</code> is unavailable,
+<code>hdiutil create -volname "Recall Score" -srcfolder "dist/Recall Score.app" -ov -format UDZO out.dmg</code>
+produces a plain, uglier but functional disk image.</p>
+<hr />
+<h2
+id="code-signing-and-gatekeeper-what-your-tester-will-actually-see">6.
+Code signing and Gatekeeper — what your tester will actually see</h2>
+<p>This matters more than it sounds, because <strong>without handling it
+the tester will download the app and be told it is damaged.</strong>
+They will assume your app is broken. It isn’t.</p>
+<h3 id="the-three-tiers">The three tiers</h3>
+<p><strong>Tier 0 — completely unsigned.</strong> On Apple Silicon,
+macOS <em>requires</em> every executable to carry at least an ad-hoc
+signature. A downloaded, wholly unsigned app produces: <em>“Recall Score
+is damaged and can’t be opened. You should move it to the Trash.”</em>
+This is misleading, but it’s what the user sees. <strong>Avoid this
+tier.</strong></p>
+<p><strong>Tier 1 — ad-hoc signed (free, recommended for
+v1).</strong></p>
+<div class="sourceCode" id="cb15"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="ex">codesign</span> <span class="at">--force</span> <span class="at">--deep</span> <span class="at">--sign</span> <span class="at">-</span> <span class="st">&quot;dist/Recall Score.app&quot;</span></span></code></pre></div>
+<p>The <code>-</code> means “ad-hoc”: a valid signature with no identity
+behind it. The “damaged” error goes away, and the user instead gets
+<em>“Recall Score can’t be opened because Apple cannot check it for
+malicious software”</em> — which is honest and, crucially,
+<strong>bypassable</strong>.</p>
+<p><strong>Send these instructions to your tester, in the release
+notes:</strong></p>
+<blockquote>
+<p>The app is not signed with an Apple developer certificate, so macOS
+will warn you the first time. To open it:</p>
+<ol type="1">
+<li>Drag <strong>Recall Score</strong> to your
+<strong>Applications</strong> folder.</li>
+<li>In Applications, <strong>right-click</strong> (or Control-click)
+Recall Score and choose <strong>Open</strong>.</li>
+<li>Click <strong>Open</strong> in the dialog that appears.</li>
+</ol>
+<p>You only have to do this once — double-clicking works normally from
+then on.</p>
+<p>If macOS still refuses, open <strong>System Settings → Privacy &amp;
+Security</strong>, scroll down, and click <strong>Open Anyway</strong>
+next to the message about Recall Score.</p>
+<p>If you see “damaged and can’t be opened”, open the
+<strong>Terminal</strong> app and run:
+<code>xattr -cr "/Applications/Recall Score.app"</code> then try
+again.</p>
+</blockquote>
+<p><strong>Tier 2 — Developer ID signed and notarized
+($99/year).</strong> Requires an Apple Developer Program membership, a
+Developer ID certificate, and submitting the <code>.dmg</code> to
+Apple’s notary service (<code>xcrun notarytool submit</code>). The user
+then sees <strong>no warning at all</strong>. This is the right answer
+if macOS becomes a supported platform. <strong>It is not worth $99 to
+get one tester’s feedback.</strong> Revisit later.</p>
+<h3 id="microphone-permission">Microphone permission</h3>
+<p>The first time the Tuner or voice control opens the mic, macOS shows
+a permission prompt using your <code>NSMicrophoneUsageDescription</code>
+text. If the user declines, they re-enable it in System Settings →
+Privacy &amp; Security → Microphone.</p>
+<p><strong>Known risk:</strong> the voice worker is a <em>separate
+process</em>. A child process inside a signed bundle normally inherits
+the parent app’s permission identity, but with only an ad-hoc signature
+this is less reliable. If the tester reports “the tuner works but voice
+control never hears anything”, this is the likely cause — and it is a
+reason to defer voice control on macOS rather than debug it deeply.</p>
+<hr />
+<h2 id="testing">7. Testing</h2>
+<p>The pytest suite should pass on macOS unchanged: -
+<code>tests/conftest.py</code> sets
+<code>QT_QPA_PLATFORM=offscreen</code> before PySide6 loads —
+platform-independent. - The autouse fixture blocking
+<code>SynthEngine._init_engine</code> means no audio device is ever
+opened. - The <code>_isolate_persistence</code> fixture redirects
+<code>QStandardPaths</code> to <code>tmp_path</code>.</p>
+<div class="sourceCode" id="cb16"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> <span class="at">-m</span> pytest</span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> <span class="at">-m</span> pytest <span class="at">-m</span> <span class="st">&quot;not slow&quot;</span></span></code></pre></div>
+<p><strong>Add one test</strong> to <code>tests/test_harness.py</code>
+guarding the crash from §3.2 — import
+<code>audio.voice_recognition</code> and assert
+<code>_POPEN_CREATIONFLAGS</code> is an <code>int</code>. It would have
+caught the macOS import failure <em>while running on Windows</em>, which
+is the class of guard worth having for every platform branch you
+add.</p>
+<p><code>tests/manual/parser_fingerprint.py</code> and
+<code>model_fingerprint.py</code> are pure parsing/model code and should
+produce <strong>byte-identical</strong> output on macOS. Running them on
+the Mac and diffing against a Windows baseline is an excellent, cheap
+end-to-end check that the port changed no behaviour. Watch for
+line-ending differences in the comparison (<code>.gitattributes</code>
+already normalises text).</p>
+<hr />
+<h2 id="a-github-actions-build-workflow">8. A GitHub Actions build
+workflow</h2>
+<p>The obstacle: <code>soundfonts/Airfont_380_final.sf2</code> (263 MB)
+and <code>vosk_model_large/</code> (205 MB) are gitignored, so a fresh
+checkout doesn’t have them.</p>
+<p><strong>Three ways to solve it, best first:</strong></p>
+<ol type="1">
+<li><strong>Upload them once as assets on a GitHub Release</strong>
+(e.g. a release tagged <code>build-assets</code>) and have the workflow
+<code>gh release download</code> them. GitHub release assets can be up
+to 2 GB each. Cleanest option, costs nothing, and — importantly — does
+not put them in git history, so the 100 MB file-limit disaster
+documented in CLAUDE.md cannot recur.</li>
+<li><strong>Fetch the soundfont from wherever you originally got
+it</strong> with <code>curl</code>, if it has a stable public URL.
+Downside: an external dependency that can vanish.</li>
+<li><strong>Build without them.</strong> Both are guarded — the spec
+prints <code>[WARN]</code> and continues, and the app runs silently.
+Useless for a real tester, but a valid way to prove the
+<em>pipeline</em> works before solving the asset problem. <strong>Do
+this first.</strong></li>
+</ol>
+<p>Sketch of <code>.github/workflows/build-macos.yml</code>:</p>
+<div class="sourceCode" id="cb17"><pre
+class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="fu">name</span><span class="kw">:</span><span class="at"> Build macOS</span></span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="fu">on</span><span class="kw">:</span></span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">workflow_dispatch</span><span class="kw">:</span><span class="co">        # run it by hand from the Actions tab</span></span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">push</span><span class="kw">:</span></span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">tags</span><span class="kw">:</span><span class="at"> </span><span class="kw">[</span><span class="st">&quot;v*&quot;</span><span class="kw">]</span></span>
+<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a><span class="fu">jobs</span><span class="kw">:</span></span>
+<span id="cb17-8"><a href="#cb17-8" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">build</span><span class="kw">:</span></span>
+<span id="cb17-9"><a href="#cb17-9" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">runs-on</span><span class="kw">:</span><span class="at"> macos-14</span><span class="co">       # Apple Silicon (arm64). Use macos-13 for Intel.</span></span>
+<span id="cb17-10"><a href="#cb17-10" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">steps</span><span class="kw">:</span></span>
+<span id="cb17-11"><a href="#cb17-11" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> actions/checkout@v4</span></span>
+<span id="cb17-12"><a href="#cb17-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-13"><a href="#cb17-13" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> actions/setup-python@v5</span></span>
+<span id="cb17-14"><a href="#cb17-14" aria-hidden="true" tabindex="-1"></a><span class="at">        </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb17-15"><a href="#cb17-15" aria-hidden="true" tabindex="-1"></a><span class="at">          </span><span class="fu">python-version</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;3.13&quot;</span></span>
+<span id="cb17-16"><a href="#cb17-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-17"><a href="#cb17-17" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> Install FluidSynth and packaging tools</span></span>
+<span id="cb17-18"><a href="#cb17-18" aria-hidden="true" tabindex="-1"></a><span class="at">        </span><span class="fu">run</span><span class="kw">:</span><span class="at"> brew install fluid-synth dylibbundler create-dmg</span></span>
+<span id="cb17-19"><a href="#cb17-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-20"><a href="#cb17-20" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> Install Python dependencies</span></span>
+<span id="cb17-21"><a href="#cb17-21" aria-hidden="true" tabindex="-1"></a><span class="fu">        run</span><span class="kw">: </span><span class="ch">|</span></span>
+<span id="cb17-22"><a href="#cb17-22" aria-hidden="true" tabindex="-1"></a>          python -m pip install --upgrade pip</span>
+<span id="cb17-23"><a href="#cb17-23" aria-hidden="true" tabindex="-1"></a>          pip install -r requirements.txt -r requirements-dev.txt -r requirements-build.txt</span>
+<span id="cb17-24"><a href="#cb17-24" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-25"><a href="#cb17-25" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> Run tests</span></span>
+<span id="cb17-26"><a href="#cb17-26" aria-hidden="true" tabindex="-1"></a><span class="at">        </span><span class="fu">run</span><span class="kw">:</span><span class="at"> python -m pytest -m &quot;not slow&quot;</span></span>
+<span id="cb17-27"><a href="#cb17-27" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-28"><a href="#cb17-28" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> Fetch large binaries</span></span>
+<span id="cb17-29"><a href="#cb17-29" aria-hidden="true" tabindex="-1"></a><span class="at">        </span><span class="fu">env</span><span class="kw">:</span></span>
+<span id="cb17-30"><a href="#cb17-30" aria-hidden="true" tabindex="-1"></a><span class="at">          </span><span class="fu">GH_TOKEN</span><span class="kw">:</span><span class="at"> ${{ secrets.GITHUB_TOKEN }}</span></span>
+<span id="cb17-31"><a href="#cb17-31" aria-hidden="true" tabindex="-1"></a><span class="fu">        run</span><span class="kw">: </span><span class="ch">|</span></span>
+<span id="cb17-32"><a href="#cb17-32" aria-hidden="true" tabindex="-1"></a>          mkdir -p soundfonts</span>
+<span id="cb17-33"><a href="#cb17-33" aria-hidden="true" tabindex="-1"></a>          gh release download build-assets --pattern &#39;Airfont_380_final.sf2&#39; \</span>
+<span id="cb17-34"><a href="#cb17-34" aria-hidden="true" tabindex="-1"></a>            --dir soundfonts || echo &quot;::warning::SoundFont unavailable - building without audio&quot;</span>
+<span id="cb17-35"><a href="#cb17-35" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-36"><a href="#cb17-36" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> Collect and relocate FluidSynth dylibs</span></span>
+<span id="cb17-37"><a href="#cb17-37" aria-hidden="true" tabindex="-1"></a><span class="fu">        run</span><span class="kw">: </span><span class="ch">|</span></span>
+<span id="cb17-38"><a href="#cb17-38" aria-hidden="true" tabindex="-1"></a>          mkdir -p macbin</span>
+<span id="cb17-39"><a href="#cb17-39" aria-hidden="true" tabindex="-1"></a>          cp &quot;$(brew --prefix fluid-synth)/lib/libfluidsynth.dylib&quot; macbin/</span>
+<span id="cb17-40"><a href="#cb17-40" aria-hidden="true" tabindex="-1"></a>          dylibbundler -od -b -x macbin/libfluidsynth.dylib -d macbin/ -p @loader_path/</span>
+<span id="cb17-41"><a href="#cb17-41" aria-hidden="true" tabindex="-1"></a>          otool -L macbin/libfluidsynth.dylib</span>
+<span id="cb17-42"><a href="#cb17-42" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-43"><a href="#cb17-43" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> Build the icon</span></span>
+<span id="cb17-44"><a href="#cb17-44" aria-hidden="true" tabindex="-1"></a><span class="at">        </span><span class="fu">run</span><span class="kw">:</span><span class="at"> bash packaging/make_icns.sh</span></span>
+<span id="cb17-45"><a href="#cb17-45" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-46"><a href="#cb17-46" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> Build the app</span></span>
+<span id="cb17-47"><a href="#cb17-47" aria-hidden="true" tabindex="-1"></a><span class="at">        </span><span class="fu">run</span><span class="kw">:</span><span class="at"> python -m PyInstaller packaging/RecallScore-mac.spec --noconfirm</span></span>
+<span id="cb17-48"><a href="#cb17-48" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-49"><a href="#cb17-49" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> Ad-hoc sign</span></span>
+<span id="cb17-50"><a href="#cb17-50" aria-hidden="true" tabindex="-1"></a><span class="at">        </span><span class="fu">run</span><span class="kw">:</span><span class="at"> codesign --force --deep --sign - &quot;dist/Recall Score.app&quot;</span></span>
+<span id="cb17-51"><a href="#cb17-51" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-52"><a href="#cb17-52" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> Build the DMG</span></span>
+<span id="cb17-53"><a href="#cb17-53" aria-hidden="true" tabindex="-1"></a><span class="fu">        run</span><span class="kw">: </span><span class="ch">|</span></span>
+<span id="cb17-54"><a href="#cb17-54" aria-hidden="true" tabindex="-1"></a>          VERSION=$(cat version.txt)</span>
+<span id="cb17-55"><a href="#cb17-55" aria-hidden="true" tabindex="-1"></a>          mkdir -p dist_installer</span>
+<span id="cb17-56"><a href="#cb17-56" aria-hidden="true" tabindex="-1"></a>          create-dmg \</span>
+<span id="cb17-57"><a href="#cb17-57" aria-hidden="true" tabindex="-1"></a>            --volname &quot;Recall Score $VERSION&quot; \</span>
+<span id="cb17-58"><a href="#cb17-58" aria-hidden="true" tabindex="-1"></a>            --window-size 600 400 \</span>
+<span id="cb17-59"><a href="#cb17-59" aria-hidden="true" tabindex="-1"></a>            --icon &quot;Recall Score.app&quot; 150 200 \</span>
+<span id="cb17-60"><a href="#cb17-60" aria-hidden="true" tabindex="-1"></a>            --app-drop-link 450 200 \</span>
+<span id="cb17-61"><a href="#cb17-61" aria-hidden="true" tabindex="-1"></a>            &quot;dist_installer/RecallScore-$VERSION.dmg&quot; \</span>
+<span id="cb17-62"><a href="#cb17-62" aria-hidden="true" tabindex="-1"></a>            &quot;dist/Recall Score.app&quot;</span>
+<span id="cb17-63"><a href="#cb17-63" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-64"><a href="#cb17-64" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="fu">uses</span><span class="kw">:</span><span class="at"> actions/upload-artifact@v4</span></span>
+<span id="cb17-65"><a href="#cb17-65" aria-hidden="true" tabindex="-1"></a><span class="at">        </span><span class="fu">with</span><span class="kw">:</span></span>
+<span id="cb17-66"><a href="#cb17-66" aria-hidden="true" tabindex="-1"></a><span class="at">          </span><span class="fu">name</span><span class="kw">:</span><span class="at"> RecallScore-macOS</span></span>
+<span id="cb17-67"><a href="#cb17-67" aria-hidden="true" tabindex="-1"></a><span class="at">          </span><span class="fu">path</span><span class="kw">:</span><span class="at"> dist_installer/*.dmg</span></span></code></pre></div>
+<p>The voice-worker build (<code>packaging/VoiceWorker-mac.spec</code>)
+would be an extra PyInstaller step <strong>before</strong> the main one,
+mirroring the Windows ordering documented in CLAUDE.md exactly. Omit it
+for v1.</p>
+<hr />
+<h2 id="updating-readme.md">9. Updating <code>README.md</code></h2>
+<p>The current README is out of date independently of macOS. It still
+calls the project <strong>ScoreReader</strong> (the app is
+<strong>Recall Score</strong>), lists only four regions (there are
+five), mentions <code>FluidR3_GM.sf2</code> (superseded by
+<code>Airfont_380_final.sf2</code>), says
+<code>pip install PySide6 pyfluidsynth</code> instead of pointing at
+<code>requirements.txt</code>, mentions only MusicXML (MIDI, Guitar Pro
+and Ultimate Guitar import all exist now), and documents no packaging
+steps at all — for either platform.</p>
+<p>Rewrite it to this structure:</p>
+<pre><code># Recall Score
+  One paragraph. Note the rename from ScoreReader.
+
+## Features
+  - Five regions (add Region 5, the Performance region)
+  - Import: MusicXML (.xml/.musicxml/.mxl), MIDI, Guitar Pro (.gp),
+    Ultimate Guitar chord tabs, saved .ug imports
+  - Screen reader first: NVDA on Windows; VoiceOver on macOS is experimental
+  - Low-latency in-process FluidSynth audio
+  - Live MIDI input, metronome, talking metronome, tuner, voice control
+
+## Platform support
+  | Platform | Status |
+  |---|---|
+  | Windows 10/11 | Supported and tested. Installer provided. |
+  | macOS 12+ (Apple Silicon) | Experimental. Feedback wanted. |
+  | Linux | Not tested. Should mostly work from source. |
+
+## Prerequisites
+### Windows
+  Python 3.13; Microsoft Visual C++ Redistributable;
+  bin/ FluidSynth DLLs and soundfonts/Airfont_380_final.sf2 (both gitignored)
+### macOS
+  xcode-select --install
+  brew install fluid-synth
+  soundfonts/Airfont_380_final.sf2
+  Optional, for voice control: vosk_model_large/
+
+## Running from source
+### Windows
+  python -m venv .venv
+  .venv\Scripts\Activate.ps1
+  pip install -r requirements.txt
+  python main.py
+### macOS
+  python3 -m venv .venv
+  source .venv/bin/activate
+  pip install -r requirements.txt
+  python main.py
+
+## Running the tests      (identical on both platforms)
+  pip install -r requirements-dev.txt
+  python -m pytest
+  python -m pytest -m &quot;not slow&quot;
+
+## Building an installer
+### Windows   -&gt; dist_installer/RecallScore-Setup-&lt;version&gt;.exe
+  Three steps, in this order: VoiceWorker.spec, RecallScore.spec, makensis
+  (copy the exact commands from CLAUDE.md&#39;s Packaging section, including
+   the note about running makensis from inside packaging/)
+### macOS     -&gt; dist_installer/RecallScore-&lt;version&gt;.dmg
+  brew install fluid-synth dylibbundler create-dmg
+  collect dylibs -&gt; build .icns -&gt; RecallScore-mac.spec -&gt; codesign -&gt; create-dmg
+  See ToMac.md for the full explanation of each step.
+
+## Installing on macOS (for testers)
+  The right-click -&gt; Open instructions from ToMac.md section 6, verbatim.
+  This is the part testers most need.
+
+## Keyboard controls
+  Expand the existing four lines: Space play/stop, Ctrl+F find,
+  Z/X/C/V/B region jumps, F/S/D tempo, 0-9 then Enter for a bar number.
+  Point at Help &gt; User Guide / docs/user_guide.md for the full map.
+  Note: on macOS, Ctrl becomes Command.
+
+## Documentation
+  docs/user_guide.md               end-user guide
+  Product Definition Document.md   the authoritative spec
+  CLAUDE.md                        architecture and development notes
+  ToMac.md                         the macOS porting plan
+
+## Version
+  Single source of truth: version.txt
+
+## License
+  MIT. Bundled FluidSynth/GLib/libsndfile/libinstpatch are LGPL -
+  see packaging/THIRD_PARTY_NOTICES.txt.</code></pre>
+<p>When writing the macOS command blocks, remember to convert
+<code>\</code> path separators to <code>/</code>,
+<code>.venv\Scripts\python.exe</code> to <code>.venv/bin/python</code>,
+and <code>Activate.ps1</code> to
+<code>source .venv/bin/activate</code>.</p>
+<hr />
+<h2 id="suggested-order-of-work">10. Suggested order of work</h2>
+<p>Each phase ends in something you can verify. <strong>Do not skip
+ahead</strong> — phase 3 alone might tell you whether the rest is worth
+doing.</p>
+<p><strong>Phase 1 — make the code importable on macOS (½ day, done
+entirely on Windows).</strong> 1. Fix
+<code>audio/voice_recognition.py</code>’s <code>CREATE_NO_WINDOW</code>
+crash (§3.2). 2. Add the <code>sys.platform</code> branches to
+<code>audio/synth_engine.py</code> (§3.1) and <code>main.py</code>
+(§3.3). 3. Add the guard test (§7). 4. Run the full pytest suite on
+Windows. <strong>Nothing may change.</strong> 5. Run
+<code>tests/manual/parser_fingerprint.py --check</code> and
+<code>model_fingerprint.py --check</code> against the current baseline.
+<strong>Zero differences.</strong> 6. Commit.</p>
+<p><strong>Phase 2 — does it run at all? (one evening, needs a
+Mac.)</strong> Have your tester (or a rented cloud Mac) clone,
+<code>brew install fluid-synth</code>,
+<code>pip install -r requirements.txt</code>,
+<code>python main.py</code>. No packaging. Report back: does the window
+open, do the five regions appear, does a score load, is there sound?</p>
+<p><strong>Phase 3 — the question that actually matters (the same
+session).</strong> Have them turn on VoiceOver (<strong>⌘F5</strong>)
+and try to navigate. This is the go/no-go — see §12 for the exact
+questions. If this goes badly, stop and think: packaging an app nobody
+can navigate is wasted work.</p>
+<p><strong>Phase 4 — the build pipeline, with no assets (½
+day).</strong> Write <code>packaging/RecallScore-mac.spec</code> and the
+Actions workflow. Run it <em>without</em> the soundfont. Success
+criterion: a <code>.dmg</code> artifact is produced, and the tester can
+install it and see the window (silently). This proves the packaging with
+the 263 MB problem out of the way.</p>
+<p><strong>Phase 5 — the assets (½ day).</strong> Upload the soundfont
+as a release asset, add the <code>gh release download</code> step, add
+the dylib bundling and ad-hoc signing. Success criterion: the installed
+<code>.app</code> produces sound.</p>
+<p><strong>Phase 6 — polish.</strong> Voice control (or a documented
+decision to defer it), the <code>.icns</code> icon,
+<code>Info.plist</code> document types, the README rewrite, and release
+notes carrying the Gatekeeper instructions.</p>
+<hr />
+<h2 id="things-most-likely-to-go-wrong">11. Things most likely to go
+wrong</h2>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely cause</th>
+<th>Where to look</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>App won’t launch — no window, no error</td>
+<td>The <code>CREATE_NO_WINDOW</code> import crash</td>
+<td>§3.2. Check
+<code>~/Library/Logs/Recall Score/recall_score.log</code></td>
+</tr>
+<tr>
+<td>“Recall Score is damaged”</td>
+<td>Unsigned bundle on Apple Silicon</td>
+<td>§6 — ad-hoc sign, and send the <code>xattr -cr</code>
+instruction</td>
+</tr>
+<tr>
+<td>Launches but silent; log says “SoundFont not found”</td>
+<td>Bundle layout / <code>_MEIPASS</code> resolution</td>
+<td>§5.1 caveat — read the exact path the warning prints</td>
+</tr>
+<tr>
+<td>Launches but silent; log says FluidSynth init failed</td>
+<td><code>wasapi</code> driver name still hardcoded, or the dylib wasn’t
+found</td>
+<td>§3.1</td>
+</tr>
+<tr>
+<td>Audio crackles or drops out</td>
+<td>CoreAudio period settings</td>
+<td>Try <code>audio.periods = 3</code></td>
+</tr>
+<tr>
+<td>Crashes the instant the Tuner opens</td>
+<td>Missing <code>NSMicrophoneUsageDescription</code></td>
+<td>§5.1 — macOS kills the process, it doesn’t just deny</td>
+</tr>
+<tr>
+<td>Works on the build machine, “damaged” on the tester’s</td>
+<td>A <code>/opt/homebrew/…</code> path left in a dylib</td>
+<td><code>otool -L</code> on every <code>.dylib</code> (§5.3)</td>
+</tr>
+<tr>
+<td>A menu item is missing on macOS</td>
+<td>Qt relocated it into the application menu by name</td>
+<td>§3.5 — <code>setMenuRole(NoRole)</code></td>
+</tr>
+<tr>
+<td>The <code>.app</code> runs on one Mac, not another</td>
+<td>Architecture mismatch (arm64 vs Intel)</td>
+<td>§2 — ask which chip they have</td>
+</tr>
+<tr>
+<td>Dialog Alt+U / Alt+D buttons do nothing</td>
+<td>macOS ignores Alt mnemonics</td>
+<td>§3.5 — needs explicit <code>QShortcut</code>s</td>
+</tr>
+<tr>
+<td>VoiceOver reads nothing useful</td>
+<td>Qt’s macOS accessibility bridge</td>
+<td>Not a quick fix. This is the finding, not a bug to squash</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="what-to-ask-the-tester-for">12. What to ask the tester for</h2>
+<p>Send a short, specific list — an open-ended “how was it?” produces
+nothing usable.</p>
+<ol type="1">
+<li>Which Mac and which macOS version? (Apple menu → About This Mac —
+the “Chip” line and the version number.)</li>
+<li>Did the install work, and how many warnings did you have to click
+through?</li>
+<li>Does the app open, and can you load one of the bundled example
+scores?</li>
+<li><strong>With VoiceOver on:</strong> can you Tab between the five
+regions and tell where you are?</li>
+<li><strong>With VoiceOver on:</strong> in the note region, do the arrow
+keys move, and does it read the note out (“F sharp, quarter, beat
+1”)?</li>
+<li><strong>With VoiceOver on:</strong> does Region 2’s on/off toggle
+announce its new state when you press O?</li>
+<li>Do you hear audio when you move between notes? Is it clean, or does
+it crackle?</li>
+<li>Does anything read as a wall of text, or get skipped over
+entirely?</li>
+<li>Does any keyboard shortcut do something unexpected? (macOS may be
+intercepting it.)</li>
+<li>If you use a screen reader every day: is this usable, nearly usable,
+or not usable?</li>
+</ol>
+<p>Question 10 is the one that decides whether macOS becomes a supported
+platform.</p>

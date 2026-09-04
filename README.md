@@ -58,26 +58,79 @@ Current version: see `version.txt`.)*
 
 ## Requirements
 
-* **Windows**, **Python 3.13**.
-* Microsoft Visual C++ Redistributable (for the native FluidSynth DLLs).
+* **Windows** (Python 3.13). macOS support is in progress — see `ToMac.md`.
+* Windows only: Microsoft Visual C++ Redistributable (for the native FluidSynth DLLs).
 * Runtime Python packages (`requirements.txt`): PySide6 6.11, music21 10.5,
   pyfluidsynth 1.4, python-rtmidi 1.5, vosk 0.3, sounddevice 0.5, numpy 2.5.
-* **Local binaries that are not in git** and must be supplied in the working tree:
-  * `bin/` — native FluidSynth DLLs (glib / gobject / gthread / fluidsynth).
-  * `soundfonts/Airfont_380_final.sf2` — the GM SoundFont (~263 MB).
-  * `vosk_model/` — a Vosk English model, only for voice control. Download
-    `vosk-model-small-en-us-0.15` (or similar) from
-    <https://alphacephei.com/vosk/models> and extract it here.
-  * `soundfonts/recall_score_sounds.sf2` (the metronome / announcer sounds) **is**
-    tracked in git.
+* **Native dependencies that are not in git** — the FluidSynth library, a General
+  MIDI SoundFont, and (for voice control) a Vosk model. See
+  [Native dependencies](#native-dependencies-not-in-git) below for how to get each
+  one. If any are missing the app still runs, with the affected feature degrading
+  to a silent no-op (`FLUIDSYNTH_AVAILABLE` / `VOSK_AVAILABLE` / `RTMIDI_AVAILABLE`
+  become `False`).
 
-  If any of these are missing the app still runs — the affected feature degrades
-  silently (`FLUIDSYNTH_AVAILABLE` / `VOSK_AVAILABLE` / `RTMIDI_AVAILABLE` become
-  `False`, playback and voice calls become no-ops).
+---
+
+## Native dependencies (not in git)
+
+These are fetched once and placed in the working tree. The SoundFont alone is
+~263 MB — well over GitHub's 100 MB file limit — so none of this lives in the repo.
+
+### FluidSynth native library
+
+**Windows.** Download the latest `fluidsynth-<version>-win10-x64.zip` (or the
+`-winarm64.zip` variant on an ARM64 machine) from the
+[FluidSynth releases page](https://github.com/FluidSynth/fluidsynth/releases), then
+copy the DLLs out of the zip's `bin/` folder into a `bin/` folder at the root of
+this repo (create it if it doesn't exist). You should end up with:
+
+* `bin/libfluidsynth-3.dll`
+* its bundled dependencies: `libglib-2.0-0.dll`, `libgobject-2.0-0.dll`,
+  `libgthread-2.0-0.dll`, `libsndfile-1.dll`, `libinstpatch-2.dll`, plus the MinGW
+  runtime DLLs (`libgcc_*`, `libwinpthread-1.dll`, `libstdc++-6.dll`,
+  `libintl-8.dll`).
+
+The zip bundles all of these — there is nothing else to install except the
+Microsoft Visual C++ Redistributable (usually already present).
+`audio/synth_engine.py` pre-loads these from `bin/` at import.
+
+**macOS.**
+
+```bash
+xcode-select --install      # Command Line Tools (Homebrew prerequisite)
+brew install fluid-synth
+```
+
+That is all that is needed to run from source — `pyfluidsynth` finds the Homebrew
+library automatically, so there is **no `bin/` folder to populate on macOS**.
+Building a distributable `.app` stages the `.dylib`s into a gitignored `macbin/`
+folder instead; see `ToMac.md` §5.3.
+
+### General MIDI SoundFont
+
+Recall Score needs a GM SoundFont at `soundfonts/Airfont_380_final.sf2`. Any GM
+SoundFont will work, but the app and the packaging specs default to **Airfont 380
+Final** by Milton Paredes (mpj factory studios), ~263 MB:
+
+1. Download it from <https://musical-artifacts.com/artifacts/635>.
+2. If the download is compressed, extract the `.sf2`.
+3. Place it at exactly `soundfonts/Airfont_380_final.sf2` — that is the path
+   `audio/synth_engine.py` and the PyInstaller specs look for.
+
+`soundfonts/recall_score_sounds.sf2` (the click-metronome and position-announcer
+sounds, ~520 KB) **is** tracked in git and arrives with the clone — no action
+needed.
+
+### Vosk model (voice control only)
+
+Download `vosk-model-small-en-us-0.15` (or similar) from
+<https://alphacephei.com/vosk/models> and extract it to `vosk_model/`.
 
 ---
 
 ## Getting Started (development)
+
+Windows (PowerShell):
 
 ```powershell
 git clone git@github.com:Chessel85/RecallScore.git SReader
@@ -90,10 +143,27 @@ pip install --upgrade pip
 pip install -r requirements.txt -r requirements-dev.txt
 ```
 
-Place the local binaries described above into `bin/` and `soundfonts/`, then run:
+macOS (bash / zsh):
+
+```bash
+git clone git@github.com:Chessel85/RecallScore.git SReader
+cd SReader
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+pip install --upgrade pip
+pip install -r requirements.txt -r requirements-dev.txt
+```
+
+With the [native dependencies](#native-dependencies-not-in-git) above in place, run:
 
 ```powershell
-.venv\Scripts\python.exe main.py     # or, with the venv activated:  python main.py
+.venv\Scripts\python.exe main.py     # Windows; or, with the venv activated:  python main.py
+```
+
+```bash
+python main.py                       # macOS, with the venv activated
 ```
 
 VS Code: the launch config is "Python: Current File" (debugpy) — open `main.py` and
@@ -159,4 +229,6 @@ See `docs/user_guide.md` §15 for the exhaustive list.
 ## License
 
 MIT — see `LICENSE`. Bundled LGPL FluidSynth / GLib / libsndfile / libinstpatch DLLs
-are attributed separately in `packaging/THIRD_PARTY_NOTICES.txt`.
+are attributed separately in `packaging/THIRD_PARTY_NOTICES.txt`. The Airfont 380
+SoundFont is the work of Milton Paredes (mpj factory studios) — see its
+[Musical Artifacts page](https://musical-artifacts.com/artifacts/635) for its terms.

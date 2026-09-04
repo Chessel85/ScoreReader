@@ -1,0 +1,99 @@
+RUNNING RECALL SCORE FROM SOURCE ON MACOS
+
+You are helping test whether Recall Score works on macOS, and above all
+whether it is usable with VoiceOver. This takes about 20 minutes. It
+changes nothing on your Mac beyond installing Homebrew and one library,
+plus a self-contained Python environment inside the project folder.
+
+STEP 1. CHECK YOUR MAC
+
+Open the Apple menu, then About This Mac. Note two things and send them
+back to me:
+
+- The Chip line: either "Apple M1", "Apple M2", "Apple M3" and so on
+  (Apple Silicon), or "Intel".
+- The macOS version, for example "Sonoma 14.5". macOS 12 or newer is
+  required.
+
+
+STEP 2. ONE-TIME TOOLS
+
+Open Terminal (in Applications, then Utilities) and run:
+xcode-select --install
+
+Click through the dialog if it appears. If it says the tools are already
+installed, carry on.
+
+If you do not already have Homebrew, install it from https://brew.sh ,
+then run:
+brew install fluid-synth python@3.13
+
+STEP 3. GET THE CODE
+
+The repository is public.
+git clone https://github.com/Chessel85/RecallScore.git
+    cd RecallScore
+
+
+STEP 4. PYTHON ENVIRONMENT
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+
+If pip fails on a package called "vosk" (that one is for voice control,
+which we are not testing), install everything else without it and
+continue:
+
+pip install PySide6==6.11.1 music21==10.5.0 pyfluidsynth==1.4.0 python-rtmidi==1.5.8 numpy==2.5.1
+
+STEP 5. THE SOUND BANK (NEEDED TO HEAR ANYTHING)
+The app runs without this, but silently. To get audio:
+
+1. Download "Airfont 380 Final" from
+https://musical-artifacts.com/artifacts/635
+2. If the download is a zip or other archive, unpack it to get the .sf2
+   file.
+3. Move that file to exactly this path inside the RecallScore folder,
+renaming it if the download has a different name:
+soundfonts/Airfont_380_final.sf2
+
+STEP 6. RUN IT
+python main.py
+
+The first time, macOS will ask for microphone permission. Allow it (the
+in-app tuner uses it). A window should open.
+
+
+STEP 7. WHAT TO REPORT BACK
+
+Try navigating the app with your screen reader as you normally would,
+then tell me:
+
+1. Which Mac and macOS version (from step 1), and did anything in steps 2
+   to 6 fail or print warnings?
+2. Does the window open? Can you open a score with the File menu, then
+   Open, from the "examples" folder inside the project?
+3. Press Tab and Shift Tab. Can you tell which of the five regions you
+   have landed in?
+4. In the note region, do the arrow keys move, and does it speak the
+   note (something like "F sharp, quarter, beat 1")?
+5. Tab to the parts region and press the letter O on a row. Does it
+   announce the new on or off state?
+6. Do you hear audio when you move between notes? Is it clean, or does it
+   crackle or drop out?
+7. Does anything read as a wall of text, or get skipped over entirely?
+8. Does any keyboard shortcut do something unexpected, as if macOS is
+   intercepting it?
+9. As a daily screen reader user: is this usable, nearly usable, or not
+   usable?
+
+Question 9 is the one that decides whether macOS is worth pursuing.
+
+
+REMOVING IT AFTERWARDS
+
+Delete the RecallScore folder. Optionally run "brew uninstall
+fluid-synth". Anything the app saved lives in
+~/Library/Application Support/Recall Score and ~/Library/Logs/Recall
+Score, and is safe to delete.
